@@ -27,6 +27,34 @@ data class SchedulerEvent(
 private const val TIER_B_INTERVAL_MS = 3_000L
 private const val TIER_C_INTERVAL_MS = 20_000L
 
+/**
+ * Sanity clamp: kotlin-obd-api's multi-byte formulas (RPM, module voltage) occasionally fold
+ * extra trailing bytes from adjacent responses into the calculation, producing values off by
+ * many orders of magnitude (observed directly: RPM read back as 3.8 trillion). Rather than fix
+ * that in a third-party library under time pressure, flag anything physically impossible for
+ * the PID rather than storing it as real data, per the blueprint's "detect impossible values,
+ * flag without deleting" reliability rule (section 9). Deliberately generous ranges: the goal is
+ * catching parser garbage, not being a strict physical model.
+ */
+private val PLAUSIBLE_RANGES: Map<String, ClosedFloatingPointRange<Double>> = mapOf(
+    "Engine RPM" to 0.0..10_000.0,
+    "Vehicle Speed" to 0.0..300.0,
+    "Control Module Power Supply" to 0.0..30.0,
+    "Calculated Engine Load" to 0.0..100.0,
+    "Engine Load" to 0.0..100.0,
+    "Mass Air Flow" to 0.0..1000.0,
+    "Commanded Equivalence Ratio" to 0.0..3.0,
+    "Fuel-Air Commanded Equivalence Ratio" to 0.0..3.0,
+    "Short Term Fuel Trim Bank 1" to -100.0..100.0,
+    "Long Term Fuel Trim Bank 1" to -100.0..100.0,
+    "Engine Coolant Temperature" to -40.0..215.0,
+    "Intake Air Temperature" to -40.0..215.0,
+    "Ambient Air Temperature" to -40.0..215.0,
+    "Throttle Position" to 0.0..100.0,
+    "Intake Manifold Pressure" to 0.0..400.0,
+    "Barometric Pressure" to 50.0..150.0,
+)
+
 /** A PID that fails this many times in a row is dropped from rotation for the rest of the session. */
 private const val MAX_CONSECUTIVE_FAILURES = 2
 
@@ -125,7 +153,9 @@ class PidScheduler(
             val response = elmSession.connection.run(command, maxRetries = 3)
             entry.consecutiveFailures = 0
             val latencyMs = response.rawResponse.elapsedTime
-            val numeric = response.value.toDoubleOrNull()
+            val rawNumeric = response.value.toDoubleOrNull()
+            val range = PLAUSIBLE_RANGES[command.name]
+            val implausible = rawNumeric != null && range != null && rawNumeric !in range
             onMeasurement(
                 MeasurementSample(
                     sequence = sequence.incrementAndGet(),
@@ -133,13 +163,23 @@ class PidScheduler(
                     elapsedNs = startNs,
                     pidTag = command.tag,
                     canonicalName = command.name,
-                    valueNumeric = numeric,
-                    valueText = if (numeric == null) response.value else null,
+                    valueNumeric = if (implausible) null else rawNumeric,
+                    valueText = if (rawNumeric == null || implausible) response.value else null,
                     unit = response.unit,
                     latencyMs = latencyMs,
-                    qualityFlag = "OK",
+                    qualityFlag = if (implausible) "IMPLAUSIBLE" else "OK",
                 ),
             )
+            if (implausible) {
+                onEvent(
+                    SchedulerEvent(
+                        elapsedNs = startNs,
+                        eventType = "IMPLAUSIBLE_VALUE",
+                        severity = "WARNING",
+                        message = "${command.name} read $rawNumeric, outside plausible range $range; stored as raw text, not numeric",
+                    ),
+                )
+            }
         } catch (e: BadResponseException) {
             entry.consecutiveFailures++
             if (entry.consecutiveFailures >= MAX_CONSECUTIVE_FAILURES) {
