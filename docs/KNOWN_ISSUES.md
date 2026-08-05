@@ -59,11 +59,33 @@ single attempt**, 6 cooldown cycles across the whole drive, always
 `NoDataException`, never once succeeded. This is a different picture than
 the drive that motivated the fix, there, the same PID eventually succeeded
 after a couple of cooldown retries. The cooldown mechanism is confirmed
-working as designed (it did keep retrying instead of giving up), but *why*
-LTFT specifically won't return data at all in some sessions while STFT on
-the same command family works fine is still open. Worth investigating
-before trusting any `combined_trim_pct` figure, it will be `NaN` whenever
-this happens (both trims are required to combine them).
+working as designed (it did keep retrying instead of giving up, exactly
+every ~31s, matching `COOLDOWN_NS`), but *why* LTFT specifically won't
+return data at all in some sessions while STFT on the same command family
+works fine was still open as of that session.
+
+**Investigated further**: pulled `FuelTrimCommand`'s source at the pinned
+commit. Short-term and long-term trim are the exact same class, same
+single-byte parsing formula, differing only by PID (`06` vs. `08`), so
+this isn't a parsing bug distinguishing the two, ruling that out. The
+first LTFT failure in session 7 came at ~5 seconds into the drive and it
+never once succeeded across the full ~183-second session, so it's not the
+"adapter needed a few seconds to settle after connect" explanation either,
+that would predict eventual success, not zero-for-six. The leading
+explanation now is a genuine vehicle/ECU condition (this specific short,
+mostly-idle, already-warm-from-a-prior-drive trip may never have reached
+whatever closed-loop/adaptation state this ECU requires before it'll
+answer PID 08), not a library or app bug, but this is not confirmed.
+
+**What would confirm it**: the raw-capture fix below now records the exact
+ELM response text for every failed attempt (event type `PID_NO_DATA`), not
+just the exception class name. If it happens again, check whether the
+adapter is returning literal `NO DATA` (genuine ECU non-response, consistent
+with the vehicle-condition theory) versus something else being
+misclassified as `NoDataException` (would point back to a library/parsing
+issue after all). Session 7 predates this fix, so its own raw text was
+never captured, this can only be resolved on the next drive where LTFT
+fails again.
 
 ## DTC decoding is unverified
 
@@ -74,13 +96,32 @@ this vehicle. The core nibble-decode arithmetic has been manually traced
 through with a worked example (`"0171"` → `"P0171"`) and is correct, but
 the more complex `workingData` extraction branch (CAN one-frame vs.
 CAN multi-frame vs. ISO9141/KWP response framing) hasn't been fully
-audited, and no raw ELM response text is captured anywhere in this
-project to allow an independent re-check of a specific code after the
-fact. Given how many other real bugs this library had elsewhere tonight
+audited. Given how many other real bugs this library had elsewhere tonight
 (see above), treat any DTC this project reports as a lead to verify
 against a second scan tool, not a confirmed finding. Session 7 read back
 `C0300` (current), `C0700` (pending), `C0A00` (permanent), all chassis
-codes; unverified against another tool as of this writing.
+codes; unverified against another tool as of this writing, and predates
+the raw-capture fix below so there's no raw text to re-check it against
+either.
+
+## Raw ELM response capture (added, not yet field-tested)
+
+The blueprint originally called for a raw ELM response log; this never
+existed until now. Every measurement (`MeasurementSample.rawResponse` /
+`MeasurementEntity.rawResponse` / CSV's `raw_response` column / DuckDB's
+`raw_response` column) now carries the verbatim adapter text for that
+exact read, on both success and failure, mirrored identically in
+`pc_logger`. Failed attempts also get a dedicated `PID_NO_DATA` event per
+attempt (not just at the cooldown-triggering transition) with the same raw
+text, and one-time reads (VIN, DTCs) log it in their `ONE_TIME_READ`/
+`ONE_TIME_READ_FAILED` event message. This closes the forensic gap the DTC
+and LTFT sections above depend on, going forward, it does not retroactively
+add raw text to any session logged before this change (including session
+7). Not yet exercised against a real drive; Room's schema bumped to
+version 2 with `fallbackToDestructiveMigration(dropAllTables = true)`
+(acceptable for a dev-stage app with no undelivered local-only data, see
+COMMERCIAL_READINESS.md), so the next app run will silently drop any local
+Room history not yet backfilled to the server.
 
 ## VIN doesn't work on the test vehicle
 
@@ -124,6 +165,6 @@ acceptable if this ever handles other people's data. See
 - `Engine Runtime` has parsed to `None` in every session so far; not yet
   investigated.
 - Screen timeout was set to 30 minutes on the test phone for development
-  convenience (`adb shell settings put system screen_off_timeout`); reset
-  it to the device default for normal day-to-day battery life if this
-  becomes a daily-driver setup rather than a testing rig.
+  convenience, then reset back to 30 seconds (`adb shell settings put
+  system screen_off_timeout 30000`) once dev work wrapped up for the
+  session.

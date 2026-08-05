@@ -15,6 +15,11 @@ data class MeasurementSample(
     val unit: String,
     val latencyMs: Long,
     val qualityFlag: String,
+    /** The unprocessed ELM response text for this exact read (before the library's own
+     * whitespace/bus-init/colon stripping), never previously captured anywhere in this
+     * project. Lets a DTC or any other parsed value be independently re-checked later
+     * against what the adapter actually said, rather than trusting the library's parse. */
+    val rawResponse: String?,
 )
 
 data class SchedulerEvent(
@@ -104,21 +109,30 @@ class PidScheduler(
 
     private fun elapsedNs(): Long = System.nanoTime() - startElapsedNs
 
+    /** One successful one-time read: the library's parsed/formatted value plus the verbatim raw
+     * ELM text it came from, so a DTC (or any other one-time read) can be independently
+     * re-checked later against what the adapter actually said, not just the parsed result. */
+    data class OneTimeReadResult(val value: String, val rawResponse: String)
+
     /** Runs one-time metadata reads (VIN, DTCs, etc). Failures are logged, never fatal. */
-    suspend fun runOneTimeReads(): Map<String, String> {
-        val results = mutableMapOf<String, String>()
+    suspend fun runOneTimeReads(): Map<String, OneTimeReadResult> {
+        val results = mutableMapOf<String, OneTimeReadResult>()
         for (factory in PidCatalog.oneTimeReadOnly()) {
             val command = factory()
             try {
                 val response = elmSession.connection.run(command, maxRetries = 3)
-                results[command.tag] = response.formattedValue
+                results[command.tag] = OneTimeReadResult(response.formattedValue, response.rawResponse.value)
             } catch (e: Exception) {
+                // e.toString(), not e.message: BadResponseException and its subtypes never set a
+                // message (they override toString() instead), so e.message is always null and the
+                // event used to silently degrade to just the exception's class name, losing the
+                // one piece of information (the raw response text) that would explain why.
                 onEvent(
                     SchedulerEvent(
                         elapsedNs = elapsedNs(),
                         eventType = "ONE_TIME_READ_FAILED",
                         severity = "INFO",
-                        message = "${command.tag}: ${e.message ?: e::class.simpleName}",
+                        message = "${command.tag}: $e",
                     ),
                 )
             }
@@ -182,6 +196,7 @@ class PidScheduler(
                     unit = response.unit,
                     latencyMs = latencyMs,
                     qualityFlag = if (implausible) "IMPLAUSIBLE" else "OK",
+                    rawResponse = response.rawResponse.value,
                 ),
             )
             if (implausible) {
@@ -196,6 +211,20 @@ class PidScheduler(
             }
         } catch (e: BadResponseException) {
             entry.consecutiveFailures++
+            // e.toString() is the library's own format ("ExceptionName while executing command
+            // [tag], response [value]"); command/response aren't exposed as public properties, so
+            // this is the only way to recover the raw ELM text. Logged on every single failed
+            // attempt, not just the one that triggers cooldown below, so a PID that fails
+            // consistently (e.g. LONG_TERM_BANK_1, see KNOWN_ISSUES.md) leaves a full forensic
+            // trail of exactly what the adapter said each time, not just a exception class name.
+            onEvent(
+                SchedulerEvent(
+                    elapsedNs = startNs,
+                    eventType = "PID_NO_DATA",
+                    severity = "INFO",
+                    message = "${command.tag}: $e",
+                ),
+            )
             if (entry.consecutiveFailures >= MAX_CONSECUTIVE_FAILURES) {
                 entry.cooldownUntilNs = startNs + COOLDOWN_NS
                 entry.consecutiveFailures = 0

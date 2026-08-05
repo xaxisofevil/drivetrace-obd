@@ -71,37 +71,44 @@ def _extract_data_bytes(response: str, mode_reply: str, pid: str) -> list[int]:
     raise AdapterError(f"Could not find {mode_reply}{pid} in response: {response!r}")
 
 
-def query_pid(transport: SerialTransport, pid_def: PidDef) -> tuple[float, int]:
-    """Returns (value, latency_ms). Raises NoDataError/AdapterError/ObdTimeoutError."""
+def query_pid(transport: SerialTransport, pid_def: PidDef) -> tuple[float, int, str]:
+    """Returns (value, latency_ms, raw_response). Raises NoDataError/AdapterError/ObdTimeoutError.
+    raw_response is the verbatim cleaned text from the adapter for this exact read, kept so a
+    parsed value can be independently re-checked later against what was actually said (see
+    KNOWN_ISSUES.md's "DTC decoding is unverified" section, the same gap this closes on the
+    Android side)."""
     mode_reply = f"{int(pid_def.mode, 16) + 0x40:02X}"
     response, latency_ms = transport.send_command(f"{pid_def.mode}{pid_def.pid}")
     data = _extract_data_bytes(response, mode_reply, pid_def.pid)
     if len(data) < pid_def.num_bytes:
         raise AdapterError(f"Expected {pid_def.num_bytes} bytes, got {data} for PID {pid_def.pid}")
-    return pid_def.parse(data[: pid_def.num_bytes]), latency_ms
+    return pid_def.parse(data[: pid_def.num_bytes]), latency_ms, response
 
 
-def read_vin(transport: SerialTransport) -> str | None:
+def read_vin(transport: SerialTransport) -> tuple[str | None, str | None]:
+    """Returns (vin, raw_response). raw_response is kept even on failure/None so a bad VIN read
+    can be inspected later rather than just recorded as absent."""
     try:
         response, _ = transport.send_command("0902", timeout_s=5.0)
         hex_bytes = [int(h, 16) for h in _HEX_PAIR.findall(response)]
-        return decode_vin(hex_bytes) or None
-    except (ObdTimeoutError, NoDataError, AdapterError):
-        return None
+        return decode_vin(hex_bytes) or None, response
+    except (ObdTimeoutError, NoDataError, AdapterError) as e:
+        return None, str(e)
 
 
-def read_dtcs(transport: SerialTransport, mode: str) -> list[str]:
-    """mode: '03' current, '07' pending, '0A' permanent."""
+def read_dtcs(transport: SerialTransport, mode: str) -> tuple[list[str], str | None]:
+    """mode: '03' current, '07' pending, '0A' permanent. Returns (codes, raw_response); see
+    read_vin for why raw_response is kept regardless of outcome."""
     try:
         response, _ = transport.send_command(mode, timeout_s=5.0)
         cleaned = _SEARCHING_PATTERN.sub("", response)
         if any(m in cleaned.upper() for m in _ERROR_MARKERS):
-            return []
+            return [], response
         hex_bytes = [int(h, 16) for h in _HEX_PAIR.findall(cleaned)]
         # Drop the mode-reply echo byte (43/47/4A) if present at the front.
         expected_echo = int(mode, 16) + 0x40
         if hex_bytes and hex_bytes[0] == expected_echo:
             hex_bytes = hex_bytes[1:]
-        return decode_dtcs(hex_bytes)
-    except ObdTimeoutError:
-        return []
+        return decode_dtcs(hex_bytes), response
+    except ObdTimeoutError as e:
+        return [], str(e)

@@ -19,6 +19,7 @@ snake_case).
 | `unit` | `unit` | string | |
 | `latency_ms` | `latencyMs` | int | Round-trip time for that one command |
 | `quality_flag` | `qualityFlag` | string | `"OK"` or `"IMPLAUSIBLE"` (see below) |
+| `raw_response` | `rawResponse` | string, nullable | Verbatim ELM text for this exact read, before the library's own whitespace/bus-init/colon cleanup. Added after session 7; older rows have `null` here, not a bug. See KNOWN_ISSUES.md |
 
 ### Confirmed real PID canonical_name strings
 
@@ -90,8 +91,9 @@ single-device case uses (two devices don't share a monotonic clock).
 
 | event_type | Meaning |
 |---|---|
-| `ONE_TIME_READ` | A session-start read (VIN, DTCs, etc.) succeeded; message is `KEY=value` |
-| `ONE_TIME_READ_FAILED` | Same, but threw; message is `KEY: ExceptionName` |
+| `ONE_TIME_READ` | A session-start read (VIN, DTCs, etc.) succeeded; message is `KEY=value \| raw=<verbatim ELM text>` |
+| `ONE_TIME_READ_FAILED` | Same, but threw; message is `KEY: <exception, including its raw response text>` |
+| `PID_NO_DATA` | A single poll attempt failed (any exception subclass); message includes the verbatim ELM response text for that attempt, logged every time, not just when cooldown triggers |
 | `PID_COOLDOWN` | A PID failed twice in a row and is pausing 30s before retrying (not a permanent drop) |
 | `IMPLAUSIBLE_VALUE` | A measurement was clamped; message includes the raw value and the range it violated |
 | `RECONNECT` | The Bluetooth link dropped and is retrying with exponential backoff |

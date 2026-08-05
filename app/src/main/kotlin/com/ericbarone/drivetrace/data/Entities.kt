@@ -46,6 +46,9 @@ data class MeasurementEntity(
     val unit: String,
     val latencyMs: Long,
     val qualityFlag: String,
+    /** Verbatim ELM response text for this exact read, before the library's own cleanup.
+     * Null for older rows written before this field existed. */
+    val rawResponse: String? = null,
 )
 
 @Entity(

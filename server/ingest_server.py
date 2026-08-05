@@ -70,9 +70,17 @@ def _init_schema() -> None:
                 unit VARCHAR,
                 latency_ms BIGINT,
                 quality_flag VARCHAR,
-                received_at_utc_ms BIGINT
+                received_at_utc_ms BIGINT,
+                raw_response VARCHAR
             )
             """
+        )
+        # ALTER for DBs created before raw_response existed; CREATE TABLE IF NOT EXISTS above
+        # only applies to a brand new file. See KNOWN_ISSUES.md's "DTC decoding is unverified"
+        # section, this is the raw-capture fix that lets a parsed value be independently
+        # re-checked against what the adapter actually said.
+        _conn.execute(
+            "ALTER TABLE measurements ADD COLUMN IF NOT EXISTS raw_response VARCHAR"
         )
         _conn.execute(
             """
@@ -144,6 +152,7 @@ class Measurement(BaseModel):
     unit: str
     latency_ms: int
     quality_flag: str
+    raw_response: Optional[str] = None
 
 
 class Location(BaseModel):
@@ -205,10 +214,10 @@ def post_measurement(m: Measurement):
     with _db_lock:
         _conn.execute(
             """
-            INSERT INTO measurements VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO measurements VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             [m.session_id, m.sequence, m.wall_time_utc_ms, m.elapsed_ns, m.pid, m.canonical_name,
-             m.value_numeric, m.value_text, m.unit, m.latency_ms, m.quality_flag, _now_ms()],
+             m.value_numeric, m.value_text, m.unit, m.latency_ms, m.quality_flag, _now_ms(), m.raw_response],
         )
     return {"ok": True}
 
@@ -248,9 +257,9 @@ def bulk_measurements(session_id: int, items: list[Measurement]):
             _conn.execute("DELETE FROM measurements WHERE session_id = ?", [session_id])
             for m in items:
                 _conn.execute(
-                    "INSERT INTO measurements VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    "INSERT INTO measurements VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                     [m.session_id, m.sequence, m.wall_time_utc_ms, m.elapsed_ns, m.pid, m.canonical_name,
-                     m.value_numeric, m.value_text, m.unit, m.latency_ms, m.quality_flag, now],
+                     m.value_numeric, m.value_text, m.unit, m.latency_ms, m.quality_flag, now, m.raw_response],
                 )
             _conn.execute("COMMIT")
         except Exception:

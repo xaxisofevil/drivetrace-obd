@@ -84,6 +84,16 @@ answer to most of the other items.
   `local.properties`/environment variables by hand. A real product needs
   proper credential issuance and rotation.
 
+## Data durability
+
+Room's schema migrations use `fallbackToDestructiveMigration`, any future
+schema bump silently wipes local on-device history rather than migrating
+it. Fine today (a handful of dev sessions, all already backfilled to the
+server, which is the actual source of truth once a drive completes); not
+fine the moment a real customer's only copy of a drive could be sitting
+unsynced on their phone when an app update bumps the schema. Write real
+`Migration` objects before that's a possibility.
+
 ## Testing coverage
 
 Validated against exactly **one vehicle** (2020 Mazda 6 2.5T) and **one

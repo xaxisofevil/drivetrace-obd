@@ -13,11 +13,11 @@ import platform
 import time
 from pathlib import Path
 
-from .scheduler import Measurement, SchedulerEvent
+from .scheduler import Measurement, OneTimeReadResult, SchedulerEvent
 
 SAMPLES_HEADER = [
     "sequence", "wall_time_utc_ms", "elapsed_ns", "pid", "canonical_name",
-    "value_numeric", "value_text", "unit", "latency_ms", "quality_flag",
+    "value_numeric", "value_text", "unit", "latency_ms", "quality_flag", "raw_response",
 ]
 EVENTS_HEADER = ["elapsed_ns", "wall_time_utc_ms", "event_type", "severity", "message"]
 
@@ -48,7 +48,8 @@ class SessionWriter:
     def write_measurement(self, m: Measurement) -> None:
         self._samples_writer.writerow(
             [m.sequence, m.wall_time_utc_ms, m.elapsed_ns, m.pid, m.canonical_name,
-             m.value_numeric, m.value_text or "", m.unit, m.latency_ms, m.quality_flag]
+             m.value_numeric, m.value_text or "", m.unit, m.latency_ms, m.quality_flag,
+             m.raw_response or ""]
         )
         self._measurement_count += 1
 
@@ -58,10 +59,11 @@ class SessionWriter:
         )
         self._event_count += 1
 
-    def write_one_time_reads(self, results: dict[str, str]) -> None:
+    def write_one_time_reads(self, results: dict[str, OneTimeReadResult]) -> None:
         now_ms = int(time.time() * 1000)
-        for key, value in results.items():
-            self._events_writer.writerow([0, now_ms, "ONE_TIME_READ", "INFO", f"{key}={value}"])
+        for key, result in results.items():
+            message = f"{key}={result.value} | raw={result.raw_response}"
+            self._events_writer.writerow([0, now_ms, "ONE_TIME_READ", "INFO", message])
             self._event_count += 1
 
     def flush(self) -> None:

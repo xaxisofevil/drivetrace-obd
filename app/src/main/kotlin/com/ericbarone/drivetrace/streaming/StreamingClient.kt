@@ -148,6 +148,7 @@ class StreamingClient(private val baseUrl: String, private val token: String) {
             put("unit", sample.unit)
             put("latency_ms", sample.latencyMs)
             put("quality_flag", sample.qualityFlag)
+            put("raw_response", sample.rawResponse)
         }
         postFireAndForget("/measurements", body)
     }
@@ -215,6 +216,7 @@ class StreamingClient(private val baseUrl: String, private val token: String) {
                                 put("unit", m.unit)
                                 put("latency_ms", m.latencyMs)
                                 put("quality_flag", m.qualityFlag)
+                                put("raw_response", m.rawResponse)
                             },
                         )
                     }

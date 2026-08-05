@@ -23,10 +23,13 @@ order, stop and fix rather than proceeding if any of these fail:
 3. **DTC codes are unverified.** DTC decoding involves nontrivial
    string/bit manipulation of exactly the kind that turned out to be buggy
    elsewhere in this library tonight (see KNOWN_ISSUES.md). The algorithm's
-   been traced through and looks correct for the cases checked, but no raw
-   ELM response text is captured anywhere to independently verify a
-   specific code, and no code has been cross-checked against a second scan
-   tool yet. Treat any DTC as a lead to verify, not a confirmed finding.
+   been traced through and looks correct for the cases checked, but no code
+   has been cross-checked against a second scan tool yet. Treat any DTC as
+   a lead to verify, not a confirmed finding. Raw ELM response text is now
+   captured (`raw_response` column, see DATA_SCHEMA.md) for every read
+   going forward, so a session logged **after** this fix can have its DTCs
+   spot-checked against the verbatim adapter text; sessions logged before
+   it (including the one this playbook uses as a worked example) can't.
 4. **How much idle time and how much trip does the session actually have?**
    A 3-minute trip with 20 seconds of idle cannot support a conclusion
    about idle-specific behavior, no matter how clean the data looks.
@@ -134,8 +137,14 @@ project as of this writing:
   known comparison route if possible, matching the original ask, not a
   3-minute errand.
 - **A working LTFT signal**: currently failing 100% of the time in the one
-  real drive checked so far. Worth investigating before trusting any
-  trim-based conclusion.
+  real drive checked so far. Source-level review ruled out a parsing
+  difference between STFT and LTFT (identical command class, differs only
+  by PID), and the failure pattern (starts in the first few seconds, never
+  once recovers across the whole drive) rules out "adapter just needed to
+  settle." Leading theory is a genuine vehicle/ECU condition this specific
+  short trip never reached, unconfirmed. The raw-capture fix (see
+  KNOWN_ISSUES.md) will show the literal adapter text on the next
+  occurrence, that's what actually settles it either way.
 - **A second drive to compare against**: single-drive analysis can flag
   "this looks off" but can't establish "this changed," which is what the
   underlying question actually is.

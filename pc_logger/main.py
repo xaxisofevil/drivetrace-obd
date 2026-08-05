@@ -91,9 +91,9 @@ def run_session(port: str, out_dir: Path) -> None:
                 print("Reading VIN / DTCs...")
                 one_time = scheduler.run_one_time_reads()
                 writer.write_one_time_reads(one_time)
-                for k, v in one_time.items():
-                    print(f"  {k}: {v}")
-                vin = one_time.get("VIN", "")
+                for k, result in one_time.items():
+                    print(f"  {k}: {result.value}")
+                vin = one_time["VIN"].value if "VIN" in one_time else ""
                 if len(vin) < MIN_PLAUSIBLE_VIN_LENGTH:
                     print(
                         "  WARNING: VIN did not come back as a real identifier. The vehicle's "

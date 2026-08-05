@@ -52,9 +52,10 @@ class _FakeTransport:
 
 def test_query_pid_happy_path():
     transport = _FakeTransport("410C1AF8")
-    value, latency = elm.query_pid(transport, get_pid("0C"))
+    value, latency, raw = elm.query_pid(transport, get_pid("0C"))
     assert value == (26 * 256 + 248) / 4
     assert latency == 42
+    assert raw == "410C1AF8"
     assert transport.sent == ["010C"]
 
 
@@ -67,17 +68,22 @@ def test_query_pid_raises_on_short_response():
 def test_read_dtcs_strips_mode_echo_and_decodes():
     # 43 (mode echo) 01 71 (P0171) 00 00 (filler, no more codes)
     transport = _FakeTransport("4301710000")
-    codes = elm.read_dtcs(transport, "03")
+    codes, raw = elm.read_dtcs(transport, "03")
     assert codes == ["P0171"]
+    assert raw == "4301710000"
 
 
 def test_read_dtcs_returns_empty_on_no_data():
     transport = _FakeTransport("NO DATA")
-    assert elm.read_dtcs(transport, "03") == []
+    codes, raw = elm.read_dtcs(transport, "03")
+    assert codes == []
+    assert raw == "NO DATA"
 
 
 def test_read_vin_happy_path():
     vin_ascii = "1YVHP80C785M12345"
     hex_payload = "".join(f"{ord(c):02X}" for c in vin_ascii)
     transport = _FakeTransport("490201" + hex_payload)
-    assert elm.read_vin(transport) == vin_ascii
+    vin, raw = elm.read_vin(transport)
+    assert vin == vin_ascii
+    assert raw == "490201" + hex_payload

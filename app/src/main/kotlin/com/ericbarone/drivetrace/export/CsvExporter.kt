@@ -78,7 +78,7 @@ class CsvExporter(private val context: Context) {
     private fun buildSamplesCsv(measurements: List<MeasurementEntity>): String =
         buildString {
             appendLine(
-                "sequence,wall_time_utc_ms,elapsed_ns,pid,canonical_name,value_numeric,value_text,unit,latency_ms,quality_flag",
+                "sequence,wall_time_utc_ms,elapsed_ns,pid,canonical_name,value_numeric,value_text,unit,latency_ms,quality_flag,raw_response",
             )
             for (m in measurements) {
                 appendLine(
@@ -93,6 +93,7 @@ class CsvExporter(private val context: Context) {
                         csvSafe(m.unit),
                         m.latencyMs,
                         m.qualityFlag,
+                        m.rawResponse?.let { csvSafe(it) } ?: "",
                     ).joinToString(","),
                 )
             }

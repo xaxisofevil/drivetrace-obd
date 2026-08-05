@@ -36,6 +36,15 @@ class Measurement:
     unit: str
     latency_ms: int
     quality_flag: str
+    # Verbatim adapter text for this exact read; see KNOWN_ISSUES.md's
+    # "DTC decoding is unverified" section for why this exists.
+    raw_response: str | None = None
+
+
+@dataclass
+class OneTimeReadResult:
+    value: str
+    raw_response: str | None
 
 
 @dataclass
@@ -87,14 +96,14 @@ class PidScheduler:
     def _elapsed_ns(self) -> int:
         return time.monotonic_ns() - self.start_monotonic_ns
 
-    def run_one_time_reads(self) -> dict[str, str]:
-        results: dict[str, str] = {}
-        vin = elm.read_vin(self.transport)
+    def run_one_time_reads(self) -> dict[str, OneTimeReadResult]:
+        results: dict[str, OneTimeReadResult] = {}
+        vin, vin_raw = elm.read_vin(self.transport)
         if vin:
-            results["VIN"] = vin
+            results["VIN"] = OneTimeReadResult(vin, vin_raw)
         for mode, label in [("03", "CURRENT_DTCS"), ("07", "PENDING_DTCS"), ("0A", "PERMANENT_DTCS")]:
-            codes = elm.read_dtcs(self.transport, mode)
-            results[label] = ",".join(codes) if codes else "(none)"
+            codes, raw = elm.read_dtcs(self.transport, mode)
+            results[label] = OneTimeReadResult(",".join(codes) if codes else "(none)", raw)
         return results
 
     def run(self, should_continue: Callable[[], bool]) -> None:
@@ -126,7 +135,7 @@ class PidScheduler:
         wall_ms = int(time.time() * 1000)
         self._sequence += 1
         try:
-            value, latency_ms = elm.query_pid(self.transport, entry.pid_def)
+            value, latency_ms, raw = elm.query_pid(self.transport, entry.pid_def)
             entry.consecutive_failures = 0
             self.on_measurement(
                 Measurement(
@@ -140,10 +149,23 @@ class PidScheduler:
                     unit=entry.pid_def.unit,
                     latency_ms=latency_ms,
                     quality_flag="OK",
+                    raw_response=raw,
                 )
             )
         except (elm.NoDataError, elm.AdapterError, ObdTimeoutError) as e:
             entry.consecutive_failures += 1
+            # Logged on every failed attempt, not just the one that triggers cooldown: str(e)
+            # already carries the adapter's raw text (see elm.py's error markers), and a PID that
+            # fails consistently (e.g. LONG_TERM_BANK_1, see KNOWN_ISSUES.md) should leave a full
+            # trail of what the adapter actually said each time.
+            self.on_event(
+                SchedulerEvent(
+                    elapsed_ns=elapsed_ns,
+                    event_type="PID_NO_DATA",
+                    severity="INFO",
+                    message=f"{entry.pid_def.name}: {e}",
+                )
+            )
             if entry.consecutive_failures >= MAX_CONSECUTIVE_FAILURES:
                 entry.cooldown_until_ns = elapsed_ns + int(COOLDOWN_S * 1e9)
                 entry.consecutive_failures = 0

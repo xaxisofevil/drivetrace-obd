@@ -209,6 +209,7 @@ class DriveLoggingService : Service() {
                                     unit = sample.unit,
                                     latencyMs = sample.latencyMs,
                                     qualityFlag = sample.qualityFlag,
+                                    rawResponse = sample.rawResponse,
                                 ),
                             )
                             streamingClient.postMeasurement(sessionId, sample)
@@ -241,10 +242,13 @@ class DriveLoggingService : Service() {
                     )
 
                     val oneTimeResults = scheduler.runOneTimeReads()
-                    for ((key, value) in oneTimeResults) {
-                        recordEvent(System.nanoTime() - startElapsedNs, "ONE_TIME_READ", "INFO", "$key=$value")
+                    for ((key, result) in oneTimeResults) {
+                        recordEvent(
+                            System.nanoTime() - startElapsedNs, "ONE_TIME_READ", "INFO",
+                            "$key=${result.value} | raw=${result.rawResponse}",
+                        )
                     }
-                    val vin = oneTimeResults["VIN"]
+                    val vin = oneTimeResults["VIN"]?.value
                     LoggingStatus.state.value = LoggingStatus.state.value.copy(
                         vinFound = if ((vin?.length ?: 0) >= MIN_PLAUSIBLE_VIN_LENGTH) TriState.YES else TriState.NO,
                     )
