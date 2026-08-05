@@ -97,19 +97,38 @@ fun LoggingScreen(status: LoggingUiState, onStop: () -> Unit, onNewSession: () -
                     color = if (status.backfillStatus == TriState.NO) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
+            if (status.backfillStatus == TriState.YES) {
+                TriStateRow("PC analysis", status.analysisStatus)
+                val analysis = status.analysisSummary
+                when {
+                    status.analysisStatus == TriState.PENDING ->
+                        Text("Waiting on the PC to analyze this drive...", style = MaterialTheme.typography.bodySmall)
+                    status.analysisStatus == TriState.NO ->
+                        Text(status.analysisMessage, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
+                    analysis != null -> {
+                        analysis.overallMpg?.let { StatusRow("Trip MPG (PC, careful)", "%.1f".format(it)) }
+                        analysis.distanceGpsKm?.let { StatusRow("Distance", "%.2f km".format(it)) }
+                        analysis.idleFractionPct?.let { StatusRow("Idle fraction", "%.1f%%".format(it)) }
+                        analysis.warmupMinutes?.let { StatusRow("Warm-up", "%.1f min".format(it)) }
+                        for (flag in analysis.flags) {
+                            Text("- $flag", style = MaterialTheme.typography.bodySmall)
+                        }
+                    }
+                }
+            }
+
             val summary = tripSummary
             when {
-                summary == null -> StatusRow("Trip MPG (est.)", "calculating...")
-                summary.overallMpg == null -> StatusRow("Trip MPG (est.)", "n/a (no fuel data)")
+                summary == null -> StatusRow("Trip MPG (on-device est.)", "calculating...")
+                summary.overallMpg == null -> StatusRow("Trip MPG (on-device est.)", "n/a (no fuel data)")
                 else -> {
-                    StatusRow("Distance (GPS)", "%.2f km".format(summary.distanceKm))
-                    StatusRow("Trip MPG (est.)", "%.1f".format(summary.overallMpg))
+                    StatusRow("Distance (GPS, on-device)", "%.2f km".format(summary.distanceKm))
+                    StatusRow("Trip MPG (on-device est.)", "%.1f".format(summary.overallMpg))
                 }
             }
             Text(
-                "Rough on-device estimate: total distance / total fuel burned, not gated on " +
-                    "stoichiometric operation like the PC script. Run analyze_drive.py on the " +
-                    "exported CSV for the careful version.",
+                "On-device estimate is rougher: total distance / total fuel burned, not gated " +
+                    "on stoichiometric operation like the PC analysis above.",
                 style = MaterialTheme.typography.bodySmall,
             )
         }

@@ -27,6 +27,8 @@ import duckdb
 from fastapi import Depends, FastAPI, Header, HTTPException
 from pydantic import BaseModel
 
+from . import analysis_worker
+
 DB_PATH = Path(os.environ.get("DRIVETRACE_DB_PATH", Path(__file__).resolve().parent / "drivetrace.duckdb"))
 EXPECTED_TOKEN = os.environ.get("DRIVETRACE_INGEST_TOKEN")
 
@@ -294,6 +296,20 @@ def bulk_events(session_id: int, items: list[Event]):
             _conn.execute("ROLLBACK")
             raise
     return {"ok": True, "count": len(items)}
+
+
+@app.post("/sessions/{session_id}/analyze", dependencies=[Depends(_require_auth)])
+def trigger_analysis(session_id: int):
+    """Signal to run once the app's stop-time backfill has succeeded: local data is now
+    guaranteed complete in DuckDB, safe to analyze. Runs in a background thread so this
+    returns immediately; poll /sessions/{id}/analysis for the result."""
+    analysis_worker.request_analysis(session_id, _conn, _db_lock)
+    return {"ok": True, "status": "running"}
+
+
+@app.get("/sessions/{session_id}/analysis", dependencies=[Depends(_require_auth)])
+def get_analysis(session_id: int):
+    return analysis_worker.get_status(session_id)
 
 
 @app.get("/health")

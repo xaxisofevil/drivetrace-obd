@@ -30,6 +30,23 @@ private val JSON = "application/json; charset=utf-8".toMediaType()
 
 data class BackfillResult(val success: Boolean, val measurementCount: Int, val locationCount: Int, val eventCount: Int, val error: String? = null)
 
+data class AnalysisSummary(
+    val idleFractionPct: Double?,
+    val warmupMinutes: Double?,
+    val distanceGpsKm: Double?,
+    val overallMpg: Double?,
+    val flags: List<String>,
+)
+
+sealed class AnalysisPollResult {
+    data object Running : AnalysisPollResult()
+    data class Done(val summary: AnalysisSummary) : AnalysisPollResult()
+    data class Failed(val error: String) : AnalysisPollResult()
+}
+
+private fun JSONObject.optDoubleOrNull(key: String): Double? =
+    if (has(key) && !isNull(key)) getDouble(key) else null
+
 /**
  * Best-effort live stream to the home ingest server (see server/). This is
  * NEVER the authoritative data path, local Room + CSV stays authoritative
@@ -267,4 +284,60 @@ class StreamingClient(private val baseUrl: String, private val token: String) {
             }
         }
     }
+
+    /** Tells the server backfilled data is complete and safe to analyze. Fire-once, not
+     * fire-and-forget: caller should know if this failed to send, since without it the
+     * analysis never starts and polling would wait forever. */
+    suspend fun requestAnalysis(sessionId: Long): Boolean =
+        withContext(Dispatchers.IO) {
+            if (!enabled) return@withContext false
+            try {
+                val request = Request.Builder()
+                    .url("$baseUrl/sessions/$sessionId/analyze")
+                    .addHeader("Authorization", "Bearer $token")
+                    .post("".toRequestBody(null))
+                    .build()
+                backfillClient.newCall(request).execute().use { it.isSuccessful }
+            } catch (e: Exception) {
+                Log.w(TAG, "requestAnalysis failed: ${e.message}")
+                false
+            }
+        }
+
+    suspend fun pollAnalysis(sessionId: Long): AnalysisPollResult =
+        withContext(Dispatchers.IO) {
+            try {
+                val request = Request.Builder()
+                    .url("$baseUrl/sessions/$sessionId/analysis")
+                    .addHeader("Authorization", "Bearer $token")
+                    .get()
+                    .build()
+                backfillClient.newCall(request).execute().use { response ->
+                    if (!response.isSuccessful) return@withContext AnalysisPollResult.Failed("HTTP ${response.code}")
+                    val json = JSONObject(response.body?.string() ?: "{}")
+                    when (json.optString("status")) {
+                        "done" -> {
+                            val result = json.getJSONObject("result")
+                            val flags = mutableListOf<String>()
+                            result.optJSONArray("flags")?.let { arr ->
+                                for (i in 0 until arr.length()) flags.add(arr.getString(i))
+                            }
+                            AnalysisPollResult.Done(
+                                AnalysisSummary(
+                                    idleFractionPct = result.optDoubleOrNull("idle_fraction_pct"),
+                                    warmupMinutes = result.optDoubleOrNull("warmup_minutes"),
+                                    distanceGpsKm = result.optDoubleOrNull("distance_gps_km"),
+                                    overallMpg = result.optDoubleOrNull("overall_mpg"),
+                                    flags = flags,
+                                ),
+                            )
+                        }
+                        "failed" -> AnalysisPollResult.Failed(json.optString("error", "unknown error"))
+                        else -> AnalysisPollResult.Running // "running" or "not_requested" both just mean keep waiting
+                    }
+                }
+            } catch (e: Exception) {
+                AnalysisPollResult.Failed(e.message ?: e::class.simpleName ?: "unknown")
+            }
+        }
 }

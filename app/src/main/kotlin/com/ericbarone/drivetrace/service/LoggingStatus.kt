@@ -1,5 +1,6 @@
 package com.ericbarone.drivetrace.service
 
+import com.ericbarone.drivetrace.streaming.AnalysisSummary
 import kotlinx.coroutines.flow.MutableStateFlow
 
 enum class ConnectionState {
@@ -35,6 +36,11 @@ data class LoggingUiState(
     /** Set once the post-Stop backfill (see StreamingClient.backfillSession) finishes. */
     val backfillStatus: TriState = TriState.PENDING,
     val backfillMessage: String = "",
+    /** Set once the server-side analysis (see analysis_worker.py), triggered right after a
+     * successful backfill, finishes or times out. */
+    val analysisStatus: TriState = TriState.PENDING,
+    val analysisSummary: AnalysisSummary? = null,
+    val analysisMessage: String = "",
 )
 
 /**
