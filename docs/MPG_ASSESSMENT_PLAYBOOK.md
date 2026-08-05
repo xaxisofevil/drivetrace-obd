@@ -74,6 +74,15 @@ order, stop and fix rather than proceeding if any of these fail:
   sensibly at matched RPM/throttle, a MAF badly out of calibration can
   produce a load reading that doesn't match throttle position the way it
   should.
+- **Live open example on this car**: two real drives both showed
+  DriveTrace's MAF-derived MPG running well above the vehicle's own trip
+  computer (20.8 vs. 17, 25.1 vs. 19), with GPS-vs-OBD distance agreeing
+  to within 0.6% (ruling out a distance/odometer explanation). A MAF
+  under-reporting airflow would produce exactly this pattern. Can't
+  confirm via LTFT, the normal check, since it's dead on this vehicle
+  (see KNOWN_ISSUES.md's two entries on this). Treat the dash reading as
+  the more trustworthy absolute number until this resolves one way or
+  the other.
 
 ### O2 sensor bias / stuck sensor
 

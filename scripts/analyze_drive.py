@@ -245,9 +245,21 @@ def add_derived_columns(snap: pd.DataFrame) -> pd.DataFrame:
         snap["combined_trim_pct"] = snap["stft1_pct"] + snap["ltft1_pct"]
 
     # MAF-estimated fuel consumption: only trustworthy near stoichiometric operation.
+    # Commanded Equivalence Ratio (PID 44) is fuel/air relative to stoich (SAE J1979): actual
+    # AFR = stoich AFR / ce_ratio, so fuel_g_s = maf_gs / actual_AFR = maf_gs * ce_ratio / stoich
+    # AFR. Previously missing the "* ce_ratio" term entirely, silently assuming exactly
+    # stoichiometric combustion for every in-band sample instead of scaling by the real
+    # commanded value. Small effect in practice (ce_ratio stays close to 1.0 within the
+    # near-stoich gate by construction), confirmed directly on two real drives (MPG moved
+    # 20.5->20.8 and 24.7->25.1 with the fix), not the explanation for a much larger gap
+    # against the vehicle's own trip computer, but still the mathematically correct formula.
     if "maf_gs" in snap:
-        near_stoich = snap["ce_ratio"].between(0.9, 1.1) if "ce_ratio" in snap else pd.Series(True, index=snap.index)
-        fuel_g_s = snap["maf_gs"] / STOICH_AFR_GASOLINE
+        if "ce_ratio" in snap:
+            near_stoich = snap["ce_ratio"].between(0.9, 1.1)
+            fuel_g_s = (snap["maf_gs"] * snap["ce_ratio"]) / STOICH_AFR_GASOLINE
+        else:
+            near_stoich = pd.Series(True, index=snap.index)
+            fuel_g_s = snap["maf_gs"] / STOICH_AFR_GASOLINE
         fuel_gal_hr = (fuel_g_s * 3600) / (GASOLINE_DENSITY_G_PER_L * LITERS_PER_GALLON)
         snap["est_fuel_gal_hr"] = fuel_gal_hr.where(near_stoich)
 

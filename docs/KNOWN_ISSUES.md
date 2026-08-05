@@ -265,6 +265,49 @@ Fine for a single personal user's own data over a low-value channel, not
 acceptable if this ever handles other people's data. See
 [COMMERCIAL_READINESS.md](COMMERCIAL_READINESS.md).
 
+## MPG estimate runs well above the vehicle's own trip computer
+
+Two real drives (city/backroad, ~3.5-3.8 km each): DriveTrace's
+`overall_mpg` came out 20.5-24.7, the vehicle's own dash trip computer
+showed 17 and 19 for the same two drives (user-reported, matches the
+~19 MPG tank-average baseline from the blueprint). GPS-vs-OBD distance
+agreement is excellent on both (0-0.6%), so this is not a distance/
+odometer issue, it's specifically the fuel side of the MPG calculation.
+
+Checked and ruled out as the explanation:
+- **Stoich-gating dropping non-stoichiometric samples to zero fuel**:
+  only 0.5-3.7% of samples per drive fell outside the 0.9-1.1 equivalence
+  ratio gate. Not enough volume to produce a 15-25% gap.
+- **Missing equivalence-ratio multiplier** (found and fixed regardless,
+  see below): moved MPG from 20.5→20.8 and 24.7→25.1, the wrong direction
+  to close the gap and too small to matter either way.
+
+**Still open, and can't currently rule out**: DriveTrace's fuel-burned
+estimate is entirely MAF-derived (airflow × assumed stoichiometric ratio);
+the vehicle's own trip computer almost certainly integrates direct
+injector pulse width, a fundamentally more direct fuel measurement. Some
+gap between the two is expected on principle. A gap this large and this
+consistent is also exactly what a MAF sensor under-reporting actual
+airflow would produce (lower reported airflow → lower estimated fuel →
+higher estimated MPG), which is one of the blueprint's original
+diagnostic hypotheses. The normal way to check that (does LONG_TERM trim
+sit persistently positive, i.e. has the ECU learned to inject more than
+a biased-low MAF calls for) isn't available, LTFT is dead on this
+vehicle (see above). Until either LTFT starts working or another way to
+cross-check MAF turns up, treat the vehicle's own trip computer as the
+more trustworthy absolute MPG number, and DriveTrace's estimate as useful
+for relative comparisons across drives (same methodology every time) more
+than as a replacement for the dash reading.
+
+**Fixed while investigating**: `add_derived_columns`'s fuel-rate formula
+computed `fuel_g_s = maf_gs / STOICH_AFR_GASOLINE` for every sample inside
+the near-stoich gate, never actually multiplying by the real commanded
+equivalence ratio value. Per SAE J1979, actual AFR = stoich AFR /
+ce_ratio, so the correct formula is `fuel_g_s = maf_gs * ce_ratio /
+STOICH_AFR_GASOLINE`. Confirmed the fix's actual effect on two real
+drives before concluding it wasn't the answer to the bigger question
+above, rather than assuming.
+
 ## Miscellaneous
 
 - Fuel Rail Pressure and Fuel Consumption Rate frequently return

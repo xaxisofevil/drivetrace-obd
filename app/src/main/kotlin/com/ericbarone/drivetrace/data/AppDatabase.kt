@@ -7,7 +7,14 @@ import androidx.room.RoomDatabase
 
 @Database(
     entities = [SessionEntity::class, MeasurementEntity::class, LocationEntity::class, EventEntity::class],
-    version = 2, // v2: MeasurementEntity gained rawResponse (see KNOWN_ISSUES.md, raw-capture)
+    // v2: MeasurementEntity gained rawResponse (see KNOWN_ISSUES.md, raw-capture).
+    // v3: SessionEntity.sessionId dropped autoGenerate (see KNOWN_ISSUES.md, ID collision fix).
+    // Both changes altered Room's computed schema identity hash even with exportSchema=false,
+    // exportSchema only controls whether the schema JSON gets written to disk for migration
+    // tooling, it does NOT skip the runtime identity check against room_master_table. Forgetting
+    // to bump the version here crashed the app with "Room cannot verify the data integrity" the
+    // moment any DB write happened (pressing Start Logging), confirmed via a real crash log.
+    version = 3,
     exportSchema = false,
 )
 abstract class AppDatabase : RoomDatabase() {
