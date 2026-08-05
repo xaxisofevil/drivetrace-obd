@@ -100,15 +100,20 @@ class DriveLoggingService : Service() {
         val dao = AppDatabase.getInstance(applicationContext).sessionDao()
         acquireWakeLock()
 
+        val startWallTimeUtc = System.currentTimeMillis()
         val session = SessionEntity(
-            startWallTimeUtc = System.currentTimeMillis(),
+            // See Entities.kt: must be wall-clock-derived, not a local autoincrement, so a Room
+            // wipe can never make a new session collide with (and overwrite) old server history.
+            sessionId = startWallTimeUtc,
+            startWallTimeUtc = startWallTimeUtc,
             startElapsedNs = System.nanoTime(),
             vehicleProfile = VEHICLE_PROFILE,
             adapterAddress = deviceAddress,
             appVersion = packageManager.getPackageInfo(packageName, 0).versionName ?: "unknown",
             phoneModel = "${Build.MANUFACTURER} ${Build.MODEL}",
         )
-        val sessionId = dao.insertSession(session)
+        dao.insertSession(session)
+        val sessionId = session.sessionId
         currentSessionId = sessionId
         val startElapsedNs = session.startElapsedNs
         val sharedSequence = AtomicLong(0)

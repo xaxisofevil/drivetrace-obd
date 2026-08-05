@@ -87,6 +87,99 @@ issue after all). Session 7 predates this fix, so its own raw text was
 never captured, this can only be resolved on the next drive where LTFT
 fails again.
 
+**Confirmed, two drives later**: both post-fix drives show the adapter
+returning literal `response [NO DATA]` for every single LONG_TERM_BANK_1
+attempt, no exceptions. One was a ~13-minute drive with a large real-data
+gap (see the battery-optimization issue below) so partly inconclusive; the
+other was a full, clean ~16.4-minute drive with continuous Tier A coverage
+throughout (STFT succeeded ~800 times in that same window) and LTFT still
+failed literally every attempt (93 for 93). This rules out a parsing
+misclassification: the adapter is genuinely telling the ECU's request
+for Mode 01 PID 08 gets nothing back, consistently, regardless of drive
+length or conditions. Treat LONG_TERM_BANK_1 as effectively unsupported via
+generic Mode 01 on this vehicle/adapter combination going forward, not as
+an intermittent fault worth continuing to chase. If another app genuinely
+shows LTFT for this car, it's reading it through a different (likely
+manufacturer-specific) PID or mode, not this one.
+
+## Missing GPS/OBD data for most of a drive: OnePlus battery optimization
+
+A ~13-minute drive logged with the screen off showed GPS and OBD data only
+for the last ~50 seconds, despite the scheduler loop clearly running the
+whole time (continuous `PID_NO_DATA`/`PID_COOLDOWN` events for LTFT/fuel
+rail/fuel consumption throughout). Root cause: OnePlus's OxygenOS layers
+its own aggressive background-process/network throttling on top of stock
+Android's, which can suppress GPS and Bluetooth I/O even from a correctly
+declared foreground service (`connectedDevice|location` foreground service
+type was already correctly set in the manifest, this wasn't a missing-
+permission issue). Fixed by disabling battery optimization for the app in
+OnePlus's settings (Settings → Battery → DriveTrace → "Don't optimize",
+plus OnePlus's separate "Advanced/deep optimization" toggle if present).
+Confirmed fixed: the next drive, same phone, same settings otherwise,
+covered the full session with no gap. Worth adding to setup instructions
+for any OnePlus (or likely other aggressive-OEM) device before a real
+diagnostic drive.
+
+## Backfill chunking silently destroyed all but the last chunk (found and fixed)
+
+**Severe, confirmed via direct reproduction.** `/sessions/{id}/measurements
+(/locations/events)/bulk` deleted all of a session's existing rows, then
+inserted, on *every* call, not once per full reconciliation. The Android
+client (and PC-side migration tooling) splits a backfill into chunks of
+`BACKFILL_CHUNK_SIZE = 500`, sending one bulk call per chunk. With more
+than one chunk, each chunk's own DELETE wiped out every earlier chunk's
+INSERT, so only the final chunk survived. Verified directly: posted two
+one-row chunks for a throwaway session id, only the second row remained
+after both calls completed successfully (no error, no indication anything
+was wrong). Then confirmed it was the actual cause of a real, badly wrong
+result: a genuine ~16-minute, 5881-measurement drive backfilled down to
+just its last 381 rows (the final ~63 seconds, mostly stopped), producing
+an analysis of 100% idle fraction and 259 MPG. After the fix, the same
+drive's full 5881/987/231 rows landed correctly and analyzed to a normal,
+plausible 25.9 MPG with GPS and OBD distance agreeing to within 20m over
+7.7km.
+
+Any historical session over 500 measurements should, in principle, have
+been vulnerable to this same truncation on its own original backfill.
+Checked all of them directly (`SELECT session_id, COUNT(*), MIN/MAX(elapsed_ns)
+FROM measurements GROUP BY session_id`): sessions 2, 4, 5, and 7 all show a
+measurement count and elapsed-time span consistent with a complete,
+untruncated drive (not just a short tail), so they appear unaffected in
+practice, this bug's precise trigger conditions (how much of a role the
+live per-item stream played in already having the data present before a
+truncating backfill overwrote-then-reinserted the same rows) weren't fully
+pinned down, only decisively reproduced and fixed. Don't assume a session
+that predates this fix is trustworthy purely by size; spot-check
+`MIN(elapsed_ns)` vs. the session's real duration before relying on one
+that's suspiciously small for its `end_wall_time_utc_ms - start_wall_time_utc_ms`.
+
+**Fix**: `/bulk` endpoints now take `{"items": [...], "is_first_chunk":
+bool}` instead of a bare array; the DELETE only runs when `is_first_chunk`
+is true. Android's `StreamingClient.backfillSession()` sets this per chunk
+index. Any other client hitting these endpoints directly (ad hoc scripts,
+future PC-logger server integration) must do the same or it will silently
+reproduce this exact bug again.
+
+## Session ID collision after a local Room wipe (found and fixed)
+
+`SessionEntity.sessionId` used to be a Room `autoGenerate` autoincrement
+column, which restarts from 1 after any local wipe (an app-schema-version
+bump's destructive migration, a data clear, a device change). The server's
+session_id is the same number, and its backfill is delete-then-insert
+full-replace keyed on it, so a restarted local counter colliding with an
+already-used server-side id doesn't create a duplicate, it **silently and
+permanently destroys the older session's data**. Confirmed happening for
+real: a Room wipe (done here to add the `rawResponse` column, see below)
+reset the counter to 1, and the next drive's backfill overwrote an original
+session 1 that had nothing to do with it. That data is gone.
+
+**Fix**: `sessionId` is no longer autoGenerate; the app now assigns it
+directly from `System.currentTimeMillis()` at session start (the same value
+already stored in `startWallTimeUtc`). Two sessions can only collide if
+they start in the exact same millisecond, not realistic for a manually-
+started single-device app. A local wipe can no longer produce a colliding
+ID regardless of what triggered the wipe.
+
 ## DTC decoding is unverified
 
 Current/pending/permanent trouble codes are read and parsed
@@ -104,7 +197,7 @@ codes; unverified against another tool as of this writing, and predates
 the raw-capture fix below so there's no raw text to re-check it against
 either.
 
-## Raw ELM response capture (added, not yet field-tested)
+## Raw ELM response capture (added, field-confirmed working)
 
 The blueprint originally called for a raw ELM response log; this never
 existed until now. Every measurement (`MeasurementSample.rawResponse` /
@@ -117,11 +210,13 @@ text, and one-time reads (VIN, DTCs) log it in their `ONE_TIME_READ`/
 `ONE_TIME_READ_FAILED` event message. This closes the forensic gap the DTC
 and LTFT sections above depend on, going forward, it does not retroactively
 add raw text to any session logged before this change (including session
-7). Not yet exercised against a real drive; Room's schema bumped to
-version 2 with `fallbackToDestructiveMigration(dropAllTables = true)`
-(acceptable for a dev-stage app with no undelivered local-only data, see
-COMMERCIAL_READINESS.md), so the next app run will silently drop any local
-Room history not yet backfilled to the server.
+7). Confirmed working on two real drives since, it's what let the LTFT
+question above finally get resolved (literal `NO DATA` from the adapter,
+not a parsing issue). Room's schema bumped to version 2 with
+`fallbackToDestructiveMigration(dropAllTables = true)` (acceptable for a
+dev-stage app with no undelivered local-only data, see
+COMMERCIAL_READINESS.md) to add the column; this is what triggered the
+session-ID collision below.
 
 ## VIN doesn't work on the test vehicle
 

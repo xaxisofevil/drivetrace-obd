@@ -243,19 +243,43 @@ def post_event(e: Event):
     return {"ok": True}
 
 
+class BulkMeasurements(BaseModel):
+    items: list[Measurement]
+    # True only for the first chunk of a multi-chunk backfill. CONFIRMED REAL BUG (not
+    # theoretical): the old version deleted-then-inserted on every chunk call independently,
+    # so with BACKFILL_CHUNK_SIZE=500 on the client, any session with more than 500
+    # measurements had every chunk but the last one silently deleted by the next chunk's
+    # DELETE. Verified directly: two sequential bulk calls for one session left only the
+    # second chunk's row. Delete must happen exactly once per reconciliation, not once per
+    # HTTP call, hence this flag.
+    is_first_chunk: bool = True
+
+
+class BulkLocations(BaseModel):
+    items: list[Location]
+    is_first_chunk: bool = True
+
+
+class BulkEvents(BaseModel):
+    items: list[Event]
+    is_first_chunk: bool = True
+
+
 @app.post("/sessions/{session_id}/measurements/bulk", dependencies=[Depends(_require_auth)])
-def bulk_measurements(session_id: int, items: list[Measurement]):
-    """Full-replace backfill, run once at Stop: local Room is authoritative, this makes the
-    server's copy match it exactly regardless of what the live per-item stream missed during
-    the drive. Delete-then-insert in one transaction rather than trying to dedup against
-    whatever already streamed in, simpler and provably correct since this only runs after
-    logging has already stopped (no concurrent live writes to race against)."""
+def bulk_measurements(session_id: int, body: BulkMeasurements):
+    """Full-replace backfill, run once at Stop (across possibly several chunked calls): local
+    Room is authoritative, this makes the server's copy match it exactly regardless of what the
+    live per-item stream missed during the drive. Delete-then-insert rather than trying to dedup
+    against whatever already streamed in, simpler and provably correct since this only runs
+    after logging has already stopped (no concurrent live writes to race against). Delete only
+    on the first chunk, see BulkMeasurements.is_first_chunk."""
     now = _now_ms()
     with _db_lock:
         _conn.execute("BEGIN TRANSACTION")
         try:
-            _conn.execute("DELETE FROM measurements WHERE session_id = ?", [session_id])
-            for m in items:
+            if body.is_first_chunk:
+                _conn.execute("DELETE FROM measurements WHERE session_id = ?", [session_id])
+            for m in body.items:
                 _conn.execute(
                     "INSERT INTO measurements VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                     [m.session_id, m.sequence, m.wall_time_utc_ms, m.elapsed_ns, m.pid, m.canonical_name,
@@ -265,17 +289,18 @@ def bulk_measurements(session_id: int, items: list[Measurement]):
         except Exception:
             _conn.execute("ROLLBACK")
             raise
-    return {"ok": True, "count": len(items)}
+    return {"ok": True, "count": len(body.items)}
 
 
 @app.post("/sessions/{session_id}/locations/bulk", dependencies=[Depends(_require_auth)])
-def bulk_locations(session_id: int, items: list[Location]):
+def bulk_locations(session_id: int, body: BulkLocations):
     now = _now_ms()
     with _db_lock:
         _conn.execute("BEGIN TRANSACTION")
         try:
-            _conn.execute("DELETE FROM locations WHERE session_id = ?", [session_id])
-            for loc in items:
+            if body.is_first_chunk:
+                _conn.execute("DELETE FROM locations WHERE session_id = ?", [session_id])
+            for loc in body.items:
                 _conn.execute(
                     "INSERT INTO locations VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                     [loc.session_id, loc.elapsed_ns, loc.wall_time_utc_ms, loc.latitude, loc.longitude,
@@ -285,17 +310,18 @@ def bulk_locations(session_id: int, items: list[Location]):
         except Exception:
             _conn.execute("ROLLBACK")
             raise
-    return {"ok": True, "count": len(items)}
+    return {"ok": True, "count": len(body.items)}
 
 
 @app.post("/sessions/{session_id}/events/bulk", dependencies=[Depends(_require_auth)])
-def bulk_events(session_id: int, items: list[Event]):
+def bulk_events(session_id: int, body: BulkEvents):
     now = _now_ms()
     with _db_lock:
         _conn.execute("BEGIN TRANSACTION")
         try:
-            _conn.execute("DELETE FROM events WHERE session_id = ?", [session_id])
-            for e in items:
+            if body.is_first_chunk:
+                _conn.execute("DELETE FROM events WHERE session_id = ?", [session_id])
+            for e in body.items:
                 _conn.execute(
                     "INSERT INTO events VALUES (?, ?, ?, ?, ?, ?, ?)",
                     [e.session_id, e.elapsed_ns, e.wall_time_utc_ms, e.event_type, e.severity, e.message, now],
@@ -304,7 +330,7 @@ def bulk_events(session_id: int, items: list[Event]):
         except Exception:
             _conn.execute("ROLLBACK")
             raise
-    return {"ok": True, "count": len(items)}
+    return {"ok": True, "count": len(body.items)}
 
 
 @app.post("/sessions/{session_id}/analyze", dependencies=[Depends(_require_auth)])

@@ -199,8 +199,15 @@ class StreamingClient(private val baseUrl: String, private val token: String) {
                 return@withContext BackfillResult(false, 0, 0, 0, "Streaming not configured")
             }
             try {
+                // CONFIRMED REAL BUG, fixed here and server-side: the server's bulk endpoints used
+                // to delete-then-insert on EVERY chunk call independently, so with more than one
+                // chunk (any session over BACKFILL_CHUNK_SIZE measurements), each chunk's DELETE
+                // wiped out the previous chunk's INSERT, leaving only the last chunk's data.
+                // Verified directly against a real drive: 5881 measurements sent, only the final
+                // 381 (the last chunk) survived. is_first_chunk tells the server to delete only
+                // once per reconciliation, not once per HTTP call.
                 var measurementCount = 0
-                for (chunk in measurements.chunked(BACKFILL_CHUNK_SIZE)) {
+                for ((index, chunk) in measurements.chunked(BACKFILL_CHUNK_SIZE).withIndex()) {
                     val arr = JSONArray()
                     for (m in chunk) {
                         arr.put(
@@ -220,12 +227,13 @@ class StreamingClient(private val baseUrl: String, private val token: String) {
                             },
                         )
                     }
-                    executeBulk("/sessions/$sessionId/measurements/bulk", arr)
+                    val body = JSONObject().apply { put("items", arr); put("is_first_chunk", index == 0) }
+                    executeBulk("/sessions/$sessionId/measurements/bulk", body)
                     measurementCount += chunk.size
                 }
 
                 var locationCount = 0
-                for (chunk in locations.chunked(BACKFILL_CHUNK_SIZE)) {
+                for ((index, chunk) in locations.chunked(BACKFILL_CHUNK_SIZE).withIndex()) {
                     val arr = JSONArray()
                     for (l in chunk) {
                         arr.put(
@@ -243,12 +251,13 @@ class StreamingClient(private val baseUrl: String, private val token: String) {
                             },
                         )
                     }
-                    executeBulk("/sessions/$sessionId/locations/bulk", arr)
+                    val body = JSONObject().apply { put("items", arr); put("is_first_chunk", index == 0) }
+                    executeBulk("/sessions/$sessionId/locations/bulk", body)
                     locationCount += chunk.size
                 }
 
                 var eventCount = 0
-                for (chunk in events.chunked(BACKFILL_CHUNK_SIZE)) {
+                for ((index, chunk) in events.chunked(BACKFILL_CHUNK_SIZE).withIndex()) {
                     val arr = JSONArray()
                     for (e in chunk) {
                         arr.put(
@@ -262,7 +271,8 @@ class StreamingClient(private val baseUrl: String, private val token: String) {
                             },
                         )
                     }
-                    executeBulk("/sessions/$sessionId/events/bulk", arr)
+                    val body = JSONObject().apply { put("items", arr); put("is_first_chunk", index == 0) }
+                    executeBulk("/sessions/$sessionId/events/bulk", body)
                     eventCount += chunk.size
                 }
 
@@ -274,7 +284,7 @@ class StreamingClient(private val baseUrl: String, private val token: String) {
         }
 
     /** Synchronous (unlike postFireAndForget), throws on any failure so the caller sees it. */
-    private fun executeBulk(path: String, body: JSONArray) {
+    private fun executeBulk(path: String, body: JSONObject) {
         val request = Request.Builder()
             .url("$baseUrl$path")
             .addHeader("Authorization", "Bearer $token")

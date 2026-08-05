@@ -7,7 +7,17 @@ import androidx.room.PrimaryKey
 
 @Entity(tableName = "sessions")
 data class SessionEntity(
-    @PrimaryKey(autoGenerate = true) val sessionId: Long = 0,
+    // Deliberately NOT autoGenerate: an autoincrement counter restarts from 1 after any local
+    // Room wipe (a schema-version bump's destructive migration, an app data clear, a device
+    // change), and this ID is also the server's session_id, so a restarted counter collides with
+    // whatever history already used that number there. The server's backfill is a delete-then-
+    // insert full replace keyed on this ID (see server/README.md), so a collision doesn't just
+    // create confusing duplicate data, it silently and permanently destroys the older session.
+    // Confirmed happening for real: a Room wipe here overwrote an original session 1 with a new
+    // drive that reused the same ID. Caller must supply a value derived from wall-clock time
+    // (e.g. System.currentTimeMillis()), which two sessions can only collide on if they started
+    // in the exact same millisecond, not realistic for a manually-started single-device app.
+    @PrimaryKey val sessionId: Long,
     val startWallTimeUtc: Long,
     val startElapsedNs: Long,
     var endWallTimeUtc: Long? = null,

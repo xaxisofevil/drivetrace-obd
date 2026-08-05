@@ -100,7 +100,15 @@ single-device case uses (two devices don't share a monotonic clock).
 
 ## Metadata (session-level)
 
-`sessionId`, `startWallTimeUtc`, `endWallTimeUtc`, `vehicleProfile`,
+`sessionId` is assigned by the app as `System.currentTimeMillis()` at
+session start (same value as `startWallTimeUtc`), **not** a Room
+autoincrement column. This is deliberate: an autoincrement counter resets
+to 1 after any local database wipe, and since this ID is also the server's
+`session_id` with delete-then-replace backfill semantics, a reset counter
+colliding with existing server history would silently destroy it. See
+KNOWN_ISSUES.md for the real incident this fixed.
+
+`startWallTimeUtc`, `endWallTimeUtc`, `vehicleProfile`,
 `adapterName`, `adapterAddress`, `protocol` (detected via `ATDP`),
 `appVersion`, `phoneModel`, `notes`, `completionStatus`
 (`IN_PROGRESS`/`COMPLETED`/`INTERRUPTED`), `measurementCount`,
