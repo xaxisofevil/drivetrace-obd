@@ -10,3 +10,4 @@
 .cxx
 data/raw/
 output/
+.venv/
