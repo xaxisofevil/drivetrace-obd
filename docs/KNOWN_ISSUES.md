@@ -232,19 +232,23 @@ dev-stage app with no undelivered local-only data, see
 COMMERCIAL_READINESS.md) to add the column; this is what triggered the
 session-ID collision below.
 
-## VIN doesn't work on the test vehicle
+## VIN doesn't work on the test vehicle (check removed)
 
-`VINCommand` (Mode 09 PID 02) throws `NonNumericResponseException` every
+`VINCommand` (Mode 09 PID 02) threw `NonNumericResponseException` every
 time on the 2020 Mazda 6 test vehicle, even with the engine running and
-real data flowing on every other PID. Not yet root-caused, whether it's
+real data flowing on every other PID. Never root-caused, whether it's
 vehicle-specific (some manufacturers require an extended diagnostic
 session for Mode 09 that a generic ELM327 clone in default mode won't
 establish), adapter-specific, or a library parsing issue.
 
-Deprioritized deliberately (the user's call): don't spend more time on this
-unless it starts blocking something else. The vehicle-awake detection
-already accounts for it by treating RPM plausibility as an independent,
-equally-weighted signal rather than depending on VIN alone.
+Deprioritized deliberately early on (the user's call), and later removed
+entirely: an always-failing check every single session carries no
+information, it was just a wasted round-trip at session start and a
+permanently-"no" row cluttering the UI (its associated warning banner
+fired every session regardless of whether the vehicle was actually
+awake). Vehicle-awake detection now relies solely on RPM plausibility.
+Sessions logged before this change still have `ONE_TIME_READ_FAILED`
+events for VIN in their data if anything ever needs to look back at that.
 
 ## Vehicle-awake detection can show a brief false "no"
 

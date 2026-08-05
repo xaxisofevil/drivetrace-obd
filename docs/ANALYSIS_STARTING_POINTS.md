@@ -112,12 +112,15 @@ nothing here does that yet. Concretely:
   flags or very low sample count will make any derived statistic from it
   meaningless, not just noisy.
 - Check `vehicle_awake_flags()`'s output for that session before trusting
-  *anything* else in it. If VIN failed and RPM never exceeded the idle
-  floor, the whole session may be placeholder data from a sleeping ECU.
-- VIN has not worked at all on the test vehicle so far (see
-  KNOWN_ISSUES.md); don't treat a VIN failure alone as proof of a dead
-  session the way you would on a vehicle where VIN is known to work, cross-
-  check against the RPM-plausibility signal too.
+  *anything* else in it. If RPM never exceeded the idle floor, the whole
+  session may be placeholder data from a sleeping ECU.
+- VIN never worked at all on the test vehicle (see KNOWN_ISSUES.md) and
+  the Android app dropped the check entirely; sessions logged with it
+  removed have no VIN event at all, not a failure, `vehicle_awake_flags()`
+  correctly stays quiet on VIN for those and relies on RPM plausibility
+  alone. Older sessions (or anything logged via `pc_logger`, which still
+  attempts VIN) may still carry a VIN-failure flag, that's normal, not a
+  sign something broke.
 - `age_s_<key>` columns in the snapshot matter more for slow Tier C PIDs
   (barometric pressure, ambient temp, sampled every ~20s) than fast Tier A
   ones. A cruise-window calculation using a barometric reading that's 18

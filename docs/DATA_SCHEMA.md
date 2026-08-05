@@ -53,15 +53,16 @@ anywhere (see `scripts/analyze_drive.py`'s `PID_KEYWORDS`), use these:
 | 2D | `EGR Error` | % | C | |
 | 2F | `Fuel Level` | % | C | |
 
-One-time reads at session start: VIN (Mode 09 PID 02, **has not worked on
-the test vehicle**, throws `NonNumericResponseException`, unresolved and
-deprioritized, see KNOWN_ISSUES), fuel type, MIL status, current/pending/
+One-time reads at session start: fuel type, MIL status, current/pending/
 permanent DTCs (read-only, this app and pc_logger never clear codes), and
 the ECU's own declared supported-PID bitmask across all five Mode 01
 ranges (PID 00/20/40/60/80, tags `AVAILABLE_COMMANDS_PIDS_01_TO_20` etc.,
 via `AvailablePIDsCommand`), added to independently verify whether a PID
 that keeps returning `NO DATA` (e.g. LONG_TERM_BANK_1, see KNOWN_ISSUES)
-is genuinely absent from this ECU or just not answering.
+is genuinely absent from this ECU or just not answering. The Android app
+no longer reads VIN (Mode 09 PID 02, removed, see KNOWN_ISSUES), it never
+once worked on the test vehicle; `pc_logger` still attempts it since
+nobody's asked to change that side, and it has no UI to clutter.
 
 ### quality_flag values
 

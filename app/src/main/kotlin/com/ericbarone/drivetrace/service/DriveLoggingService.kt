@@ -48,7 +48,6 @@ private const val ANALYSIS_MAX_POLLS = 20 // ~60s total before giving up
 // to conclude the engine genuinely isn't running rather than just not sampled yet.
 private const val PLAUSIBLE_RPM_FLOOR = 100.0
 private const val RPM_SAMPLES_BEFORE_CONCLUDING_ENGINE_OFF = 5
-private const val MIN_PLAUSIBLE_VIN_LENGTH = 11 // real VINs are 17 chars; a few are truncated/partial on some ECUs
 
 class DriveLoggingService : Service() {
 
@@ -253,10 +252,6 @@ class DriveLoggingService : Service() {
                             "$key=${result.value} | raw=${result.rawResponse}",
                         )
                     }
-                    val vin = oneTimeResults["VIN"]?.value
-                    LoggingStatus.state.value = LoggingStatus.state.value.copy(
-                        vinFound = if ((vin?.length ?: 0) >= MIN_PLAUSIBLE_VIN_LENGTH) TriState.YES else TriState.NO,
-                    )
 
                     backoffMs = INITIAL_BACKOFF_MS // reset after a successful (re)connect
                     updateNotification()
@@ -418,7 +413,7 @@ class DriveLoggingService : Service() {
 
     private fun updateNotification() {
         val state = LoggingStatus.state.value
-        val warning = if (state.vinFound == TriState.NO || state.engineDetected == TriState.NO) {
+        val warning = if (state.engineDetected == TriState.NO) {
             " | No real vehicle data - check ignition"
         } else {
             ""

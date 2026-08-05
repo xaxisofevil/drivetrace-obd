@@ -16,9 +16,10 @@ enum class ConnectionState {
 /**
  * Some cheap ELM327 clones don't return a clean error when the ECU is asleep; they fabricate
  * plausible-looking placeholder frames instead (all-zero values, 0xFFFF sentinels). "A response
- * arrived" isn't proof the vehicle is actually awake, so this tracks two independent, cheap
- * checks instead: does the VIN read back as a real identifier, and has RPM ever shown a
- * plausible non-zero value.
+ * arrived" isn't proof the vehicle is actually awake, so this is a cheap check instead: has RPM
+ * ever shown a plausible non-zero value. Used to also cross-check against a VIN read, dropped
+ * (see KNOWN_ISSUES.md) since VIN has never once worked on the test vehicle, an always-"no"
+ * signal carries no information and was just clutter in the UI.
  */
 enum class TriState { PENDING, YES, NO }
 
@@ -31,7 +32,6 @@ data class LoggingUiState(
     val lastSampleAtMs: Long? = null,
     val reconnectCount: Int = 0,
     val statusMessage: String = "",
-    val vinFound: TriState = TriState.PENDING,
     val engineDetected: TriState = TriState.PENDING,
     /** Set once the post-Stop backfill (see StreamingClient.backfillSession) finishes. */
     val backfillStatus: TriState = TriState.PENDING,

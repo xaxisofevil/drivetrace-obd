@@ -12,9 +12,10 @@ A failure mode isn't ruled out just because the data doesn't show it, if
 the data itself is bad, "doesn't show it" is meaningless. Check in this
 order, stop and fix rather than proceeding if any of these fail:
 
-1. **`vehicle_awake_flags()` output for the session.** If VIN failed and
-   RPM never exceeded the idle floor, the session may be entirely
-   placeholder data. Don't proceed.
+1. **`vehicle_awake_flags()` output for the session.** If RPM never
+   exceeded the idle floor, the session may be entirely placeholder data.
+   Don't proceed. (VIN used to double as a second signal here; dropped,
+   see KNOWN_ISSUES.md, it never worked on the test vehicle.)
 2. **`pid_coverage_report()`** for the specific PIDs the failure mode below
    depends on. A PID with a low sample count or that never once returned
    `OK` (check `quality_flag` breakdown, and check for `PID_COOLDOWN`

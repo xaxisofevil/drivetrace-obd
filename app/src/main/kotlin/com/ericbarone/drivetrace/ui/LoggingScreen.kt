@@ -82,9 +82,8 @@ fun LoggingScreen(status: LoggingUiState, onStop: () -> Unit, onNewSession: () -
         StatusRow("Measurements", status.measurementCount.toString())
         StatusRow("GPS fixes", status.locationCount.toString())
         StatusRow("Last sample", lastSampleAgeSeconds?.let { "${it}s ago" } ?: "-")
-        TriStateRow("Vehicle responding (VIN)", status.vinFound)
         TriStateRow("Engine detected", status.engineDetected)
-        if (status.vinFound == TriState.NO || status.engineDetected == TriState.NO) {
+        if (status.engineDetected == TriState.NO) {
             Text(
                 "Not getting real data from the vehicle. A response arriving isn't proof the " +
                     "car's awake, this adapter can fabricate placeholder values instead of " +

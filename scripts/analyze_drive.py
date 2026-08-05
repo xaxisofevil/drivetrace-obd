@@ -424,7 +424,13 @@ def vehicle_awake_flags(samples: pd.DataFrame, events: pd.DataFrame) -> list[str
             (events["event_type"] == "ONE_TIME_READ_FAILED")
             & events["message"].astype(str).str.startswith("VIN:")
         ]
-        if vin_failed.any().any() or len(vin_value) < MIN_PLAUSIBLE_VIN_LENGTH:
+        # The Android app dropped the VIN check entirely (see KNOWN_ISSUES.md, it never once
+        # worked on the test vehicle and was pure UI clutter), so newer sessions have neither a
+        # success nor a failure event for it at all. Only flag an actual failed/empty read, not
+        # "wasn't attempted" - those aren't the same thing and conflating them would flag every
+        # future session for a check that no longer exists.
+        vin_attempted = not vin_success.empty or not vin_failed.empty
+        if vin_attempted and (vin_failed.any().any() or len(vin_value) < MIN_PLAUSIBLE_VIN_LENGTH):
             detail = vin_failed.iloc[0]["message"] if not vin_failed.empty else f"got {vin_value!r}"
             flags.append(
                 f"VIN did not come back as a real identifier at session start ({detail}). "

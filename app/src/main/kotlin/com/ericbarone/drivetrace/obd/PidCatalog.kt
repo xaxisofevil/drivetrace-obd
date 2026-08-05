@@ -20,7 +20,6 @@ import com.github.eltonvs.obd.command.control.AvailablePIDsCommand
 import com.github.eltonvs.obd.command.control.TroubleCodesCommand
 import com.github.eltonvs.obd.command.control.PendingTroubleCodesCommand
 import com.github.eltonvs.obd.command.control.PermanentTroubleCodesCommand
-import com.github.eltonvs.obd.command.control.VINCommand
 import com.github.eltonvs.obd.command.fuel.FuelTypeCommand
 import com.github.eltonvs.obd.command.control.MILOnCommand
 
@@ -68,10 +67,11 @@ object PidCatalog {
             { FuelLevelCommand() },
         )
 
-    /** Read once at session start. Never includes anything that clears/writes to the ECU. */
+    /** Read once at session start. Never includes anything that clears/writes to the ECU.
+     * No VINCommand: it has never once worked on the test vehicle (see KNOWN_ISSUES.md),
+     * an always-failing read every session was pure overhead with no signal. */
     fun oneTimeReadOnly(): List<() -> ObdCommand> =
         listOf(
-            { VINCommand() },
             { FuelTypeCommand() },
             { MILOnCommand() },
             { TroubleCodesCommand() },

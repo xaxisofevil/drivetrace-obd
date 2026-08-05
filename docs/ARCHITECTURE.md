@@ -41,8 +41,8 @@ blueprint/              The original spec this project was built from.
    whichever bonded device's name contains "OBD".
 2. **Start Logging** → `DriveLoggingService` starts as a foreground service
    (`connectedDevice|location` type), connects, runs the ELM327 AT init
-   sequence, reads VIN/DTCs once, then polls the tiered PID list
-   continuously.
+   sequence, reads DTCs/fuel type/supported-PIDs once, then polls the
+   tiered PID list continuously.
 3. Every measurement/location/event:
    - writes to **local Room** first, synchronously — this is the
      authoritative copy, always complete regardless of network
@@ -105,8 +105,10 @@ undiscovered bug turns out to be.
 
 **"A response arrived" is not "the vehicle is awake."** Some cheap ELM327
 clones fabricate plausible-looking placeholder frames (all zeros, 0xFFFF
-sentinels) instead of a clean error when the ECU is asleep. Two independent
-checks catch this live: does VIN read back as a real identifier, has RPM
-ever shown a value above a sane idle floor. Both surface directly in the UI
-so you know within seconds of starting a session whether it's capturing
-real data, rather than discovering it after a whole drive.
+sentinels) instead of a clean error when the ECU is asleep. Catches this
+live by checking whether RPM has ever shown a value above a sane idle
+floor, surfaced directly in the UI so you know within seconds of starting
+a session whether it's capturing real data, rather than discovering it
+after a whole drive. Originally cross-checked against a VIN read too;
+dropped (see KNOWN_ISSUES.md) since VIN never once worked on the test
+vehicle, an always-"no" signal added no information, just UI clutter.
