@@ -1,23 +1,27 @@
 """
 Tiered PID scheduler: mirrors PidScheduler.kt in the Android app. Tier A
 polls continuously, Tier B/C are time-gated so slow PIDs never starve the
-fast ones. A PID that fails repeatedly gets dropped from rotation for the
-rest of the session rather than retried forever.
+fast ones. A PID that fails repeatedly goes into cooldown rather than being
+permanently dropped: confirmed on a real drive that a PID (LTFT) can fail
+twice right after connecting (adapter still settling) and then never get
+retried for the rest of the session under a permanent-drop policy, despite
+genuinely being supported by the vehicle.
 """
 
 from __future__ import annotations
 
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Callable
 
 from . import elm
-from .pids import ALL_PIDS, PidDef, TIER_A, TIER_B, TIER_C
+from .pids import PidDef, TIER_A, TIER_B, TIER_C
 from .transport import ObdTimeoutError, SerialTransport
 
 TIER_B_INTERVAL_S = 3.0
 TIER_C_INTERVAL_S = 20.0
 MAX_CONSECUTIVE_FAILURES = 2
+COOLDOWN_S = 30.0
 
 
 @dataclass
@@ -46,7 +50,10 @@ class SchedulerEvent:
 class _Rotating:
     pid_def: PidDef
     consecutive_failures: int = 0
-    dropped: bool = False
+    cooldown_until_ns: int = 0
+
+    def is_available(self, now_ns: int) -> bool:
+        return now_ns >= self.cooldown_until_ns
 
 
 class PidScheduler:
@@ -64,10 +71,6 @@ class PidScheduler:
         self.on_event = on_event
         self._sequence = sequence_start
 
-    @property
-    def sequence(self) -> int:
-        return self._sequence
-
         self.tier_a = [_Rotating(p) for p in TIER_A]
         self.tier_b = [_Rotating(p) for p in TIER_B]
         self.tier_c = [_Rotating(p) for p in TIER_C]
@@ -76,6 +79,10 @@ class PidScheduler:
         self._tier_c_idx = 0
         self._last_tier_b_ns = 0
         self._last_tier_c_ns = 0
+
+    @property
+    def sequence(self) -> int:
+        return self._sequence
 
     def _elapsed_ns(self) -> int:
         return time.monotonic_ns() - self.start_monotonic_ns
@@ -95,19 +102,20 @@ class PidScheduler:
             self._poll_next(self.tier_a, "_tier_a_idx")
 
             now = self._elapsed_ns()
-            if now - self._last_tier_b_ns >= TIER_B_INTERVAL_S * 1e9 and any(not r.dropped for r in self.tier_b):
+            if now - self._last_tier_b_ns >= TIER_B_INTERVAL_S * 1e9 and any(r.is_available(now) for r in self.tier_b):
                 self._poll_next(self.tier_b, "_tier_b_idx")
                 self._last_tier_b_ns = now
-            if now - self._last_tier_c_ns >= TIER_C_INTERVAL_S * 1e9 and any(not r.dropped for r in self.tier_c):
+            if now - self._last_tier_c_ns >= TIER_C_INTERVAL_S * 1e9 and any(r.is_available(now) for r in self.tier_c):
                 self._poll_next(self.tier_c, "_tier_c_idx")
                 self._last_tier_c_ns = now
 
     def _poll_next(self, tier: list[_Rotating], idx_attr: str) -> None:
-        if not tier or all(r.dropped for r in tier):
+        now = self._elapsed_ns()
+        if not tier or not any(r.is_available(now) for r in tier):
             return
         idx = getattr(self, idx_attr) % len(tier)
         attempts = 0
-        while tier[idx].dropped and attempts < len(tier):
+        while not tier[idx].is_available(now) and attempts < len(tier):
             idx = (idx + 1) % len(tier)
             attempts += 1
         self._poll_one(tier[idx])
@@ -137,12 +145,13 @@ class PidScheduler:
         except (elm.NoDataError, elm.AdapterError, ObdTimeoutError) as e:
             entry.consecutive_failures += 1
             if entry.consecutive_failures >= MAX_CONSECUTIVE_FAILURES:
-                entry.dropped = True
+                entry.cooldown_until_ns = elapsed_ns + int(COOLDOWN_S * 1e9)
+                entry.consecutive_failures = 0
                 self.on_event(
                     SchedulerEvent(
                         elapsed_ns=elapsed_ns,
-                        event_type="PID_UNSUPPORTED",
+                        event_type="PID_COOLDOWN",
                         severity="INFO",
-                        message=f"{entry.pid_def.name} dropped after repeated {e.__class__.__name__}",
+                        message=f"{entry.pid_def.name} paused {COOLDOWN_S:.0f}s after repeated {e.__class__.__name__}, will retry",
                     )
                 )

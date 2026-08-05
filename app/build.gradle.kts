@@ -72,8 +72,11 @@ dependencies {
     // Location
     implementation("com.google.android.gms:play-services-location:21.4.0")
 
-    // OBD command parsing (Apache-2.0)
-    implementation("com.github.eltonvs:kotlin-obd-api:1.4.1")
+    // OBD command parsing (Apache-2.0). Pinned to a commit past v1.4.1 (latest tag) via JitPack:
+    // this commit fixes RPMCommand's unbounded-byte-fold bug (confirmed: RPM read back as 3.8
+    // trillion on a real drive before this pin). Several other commands have the identical bug
+    // still unfixed even here; those are worked around locally in obd/SafeCommands.kt instead.
+    implementation("com.github.eltonvs:kotlin-obd-api:30014eb6e8cd35334ba8f7ea627500f6b1942ff5")
 
     // Coroutines
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.11.0")

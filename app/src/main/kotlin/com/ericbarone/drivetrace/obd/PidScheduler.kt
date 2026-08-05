@@ -28,12 +28,14 @@ private const val TIER_B_INTERVAL_MS = 3_000L
 private const val TIER_C_INTERVAL_MS = 20_000L
 
 /**
- * Sanity clamp: kotlin-obd-api's multi-byte formulas (RPM, module voltage) occasionally fold
- * extra trailing bytes from adjacent responses into the calculation, producing values off by
- * many orders of magnitude (observed directly: RPM read back as 3.8 trillion). Rather than fix
- * that in a third-party library under time pressure, flag anything physically impossible for
- * the PID rather than storing it as real data, per the blueprint's "detect impossible values,
- * flag without deleting" reliability rule (section 9). Deliberately generous ranges: the goal is
+ * Sanity clamp, kept as defense-in-depth even after fixing the actual root cause (see
+ * SafeCommands.kt and the pinned kotlin-obd-api commit in build.gradle.kts): several of the
+ * library's multi-byte formulas called bytesToInt() without bounding bytesToProcess, which
+ * defaults to unbounded and folds every byte in the whole response into one number instead of
+ * just the PID's real data bytes (confirmed directly: RPM read back as 3.8 trillion, module
+ * voltage as tens of billions). Flag anything physically impossible for the PID rather than
+ * storing it as real data either way, per the blueprint's "detect impossible values, flag
+ * without deleting" reliability rule (section 9). Deliberately generous ranges: the goal is
  * catching parser garbage, not being a strict physical model.
  */
 private val PLAUSIBLE_RANGES: Map<String, ClosedFloatingPointRange<Double>> = mapOf(
@@ -53,14 +55,26 @@ private val PLAUSIBLE_RANGES: Map<String, ClosedFloatingPointRange<Double>> = ma
     "Throttle Position" to 0.0..100.0,
     "Intake Manifold Pressure" to 0.0..400.0,
     "Barometric Pressure" to 50.0..150.0,
+    "Distance traveled since codes cleared" to 0.0..100_000.0,
+    "Engine Runtime" to 0.0..86_400.0,
+    "Fuel Level" to 0.0..100.0,
 )
 
-/** A PID that fails this many times in a row is dropped from rotation for the rest of the session. */
+/**
+ * A PID that fails this many times in a row goes into cooldown rather than being permanently
+ * dropped. Confirmed directly: LONG_TERM_BANK_1 failed twice 17s into a real drive (adapter
+ * likely still settling right after connect) and a permanent-drop policy then blacklisted it
+ * for the remaining ~8.7 minutes despite this vehicle genuinely supporting it. Retrying after a
+ * cooldown costs almost nothing for a truly unsupported PID and recovers a supported one that
+ * just had a transient hiccup.
+ */
 private const val MAX_CONSECUTIVE_FAILURES = 2
+private const val COOLDOWN_NS = 30_000_000_000L // 30s
 
 private class RotatingCommand(val factory: () -> ObdCommand) {
     var consecutiveFailures = 0
-    var dropped = false
+    var cooldownUntilNs = 0L
+    fun isAvailable(nowNs: Long) = nowNs >= cooldownUntilNs
 }
 
 /**
@@ -118,11 +132,11 @@ class PidScheduler(
             pollNext(tierA) { tierAIndex }?.let { tierAIndex = it }
 
             val now = elapsedNs()
-            if (now - lastTierBRunNs >= TIER_B_INTERVAL_MS * 1_000_000L && tierB.any { !it.dropped }) {
+            if (now - lastTierBRunNs >= TIER_B_INTERVAL_MS * 1_000_000L && tierB.any { it.isAvailable(now) }) {
                 pollNext(tierB) { tierBIndex }?.let { tierBIndex = it }
                 lastTierBRunNs = now
             }
-            if (now - lastTierCRunNs >= TIER_C_INTERVAL_MS * 1_000_000L && tierC.any { !it.dropped }) {
+            if (now - lastTierCRunNs >= TIER_C_INTERVAL_MS * 1_000_000L && tierC.any { it.isAvailable(now) }) {
                 pollNext(tierC) { tierCIndex }?.let { tierCIndex = it }
                 lastTierCRunNs = now
             }
@@ -130,13 +144,13 @@ class PidScheduler(
     }
 
     private suspend fun pollNext(tier: MutableList<RotatingCommand>, currentIndex: () -> Int): Int? {
-        val active = tier.filter { !it.dropped }
-        if (active.isEmpty()) return null
+        val now = elapsedNs()
+        if (tier.none { it.isAvailable(now) }) return null
 
         var idx = currentIndex() % tier.size
-        // advance to the next non-dropped entry
+        // advance to the next entry not currently in cooldown
         var attempts = 0
-        while (tier[idx].dropped && attempts < tier.size) {
+        while (!tier[idx].isAvailable(now) && attempts < tier.size) {
             idx = (idx + 1) % tier.size
             attempts++
         }
@@ -183,13 +197,14 @@ class PidScheduler(
         } catch (e: BadResponseException) {
             entry.consecutiveFailures++
             if (entry.consecutiveFailures >= MAX_CONSECUTIVE_FAILURES) {
-                entry.dropped = true
+                entry.cooldownUntilNs = startNs + COOLDOWN_NS
+                entry.consecutiveFailures = 0
                 onEvent(
                     SchedulerEvent(
                         elapsedNs = startNs,
-                        eventType = "PID_UNSUPPORTED",
+                        eventType = "PID_COOLDOWN",
                         severity = "INFO",
-                        message = "${command.tag} dropped after repeated ${e::class.simpleName}",
+                        message = "${command.tag} paused ${COOLDOWN_NS / 1_000_000_000}s after repeated ${e::class.simpleName}, will retry",
                     ),
                 )
             }
