@@ -64,7 +64,7 @@ PID_KEYWORDS: dict[str, list[str]] = {
     "stft1_pct": [r"short term.*bank 1"],
     "ltft1_pct": [r"long term.*bank 1"],
     "ce_ratio": [r"equivalence ratio"],
-    "voltage": [r"module voltage"],
+    "voltage": [r"module voltage", r"power supply"],  # kotlin-obd-api actually names PID 42 "Control Module Power Supply"
     "coolant_c": [r"coolant"],
     "iat_c": [r"intake air temp", r"air intake temp"],
     "throttle_pct": [r"throttle position"],

@@ -47,6 +47,14 @@ private fun hasAllPermissions(context: Context): Boolean =
         ContextCompat.checkSelfPermission(context, it) == PackageManager.PERMISSION_GRANTED
     }
 
+/**
+ * There's only ever one real OBD adapter among the bonded devices (the rest are earbuds,
+ * other cars' kits, etc.), so default to it by name rather than making every session start
+ * with hunting through the full bonded-devices list.
+ */
+private fun defaultObdDeviceAddress(devices: List<BluetoothDevice>): String? =
+    devices.firstOrNull { it.name?.contains("OBD", ignoreCase = true) == true }?.address
+
 @Composable
 fun SetupScreen(onStartLogging: (String) -> Unit) {
     val context = LocalContext.current
@@ -61,11 +69,13 @@ fun SetupScreen(onStartLogging: (String) -> Unit) {
         permissionsGranted = results.values.all { it }
         if (permissionsGranted) {
             devices = BluetoothTransport(context).bondedDevices()
+            if (selectedAddress == null) selectedAddress = defaultObdDeviceAddress(devices)
         }
     }
 
     if (permissionsGranted && devices.isEmpty()) {
         devices = BluetoothTransport(context).bondedDevices()
+        if (selectedAddress == null) selectedAddress = defaultObdDeviceAddress(devices)
     }
 
     Column(

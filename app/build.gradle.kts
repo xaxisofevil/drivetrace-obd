@@ -1,7 +1,16 @@
+import java.util.Properties
+
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.plugin.compose")
     id("com.google.devtools.ksp")
+}
+
+// Ingest server URL/token live in local.properties (gitignored, machine-specific),
+// never committed, matching sdk.dir's existing pattern in this file.
+val localProperties = Properties().apply {
+    val f = rootProject.file("local.properties")
+    if (f.exists()) f.inputStream().use { load(it) }
 }
 
 android {
@@ -14,6 +23,9 @@ android {
         targetSdk = 37
         versionCode = 1
         versionName = "0.1.0"
+
+        buildConfigField("String", "INGEST_BASE_URL", "\"${localProperties.getProperty("ingest.baseUrl", "")}\"")
+        buildConfigField("String", "INGEST_TOKEN", "\"${localProperties.getProperty("ingest.token", "")}\"")
     }
 
     buildTypes {
@@ -30,6 +42,7 @@ android {
 
     buildFeatures {
         compose = true
+        buildConfig = true
     }
 
     packaging {
@@ -64,6 +77,9 @@ dependencies {
 
     // Coroutines
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.11.0")
+
+    // Best-effort live streaming to the home ingest server (see server/)
+    implementation("com.squareup.okhttp3:okhttp:5.4.0")
 
     debugImplementation("androidx.compose.ui:ui-tooling")
 }

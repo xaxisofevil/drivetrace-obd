@@ -40,7 +40,9 @@ class BluetoothTransport(private val context: Context) {
             val adapter = BluetoothAdapter.getDefaultAdapter()
                 ?: error("No Bluetooth adapter on this device")
             val device = adapter.getRemoteDevice(deviceAddress)
-            adapter.cancelDiscovery()
+            // Deliberately no cancelDiscovery() here: we never scan (bonded-devices-only
+            // per the blueprint), and cancelDiscovery() itself requires BLUETOOTH_SCAN,
+            // a permission this app never requests since it has no use for it otherwise.
             val newSocket = device.createRfcommSocketToServiceRecord(SPP_UUID)
             newSocket.connect()
             socket = newSocket

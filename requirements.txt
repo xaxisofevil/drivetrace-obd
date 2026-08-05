@@ -4,3 +4,6 @@ matplotlib
 tabulate
 pyserial
 pytest
+fastapi
+uvicorn[standard]
+duckdb

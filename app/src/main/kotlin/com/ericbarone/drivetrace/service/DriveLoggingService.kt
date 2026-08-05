@@ -11,8 +11,10 @@ import android.os.Build
 import android.os.IBinder
 import android.os.PowerManager
 import androidx.core.app.NotificationCompat
+import com.ericbarone.drivetrace.BuildConfig
 import com.ericbarone.drivetrace.MainActivity
 import com.ericbarone.drivetrace.R
+import com.ericbarone.drivetrace.streaming.StreamingClient
 import com.ericbarone.drivetrace.data.AppDatabase
 import com.ericbarone.drivetrace.data.EventEntity
 import com.ericbarone.drivetrace.data.LocationEntity
@@ -59,6 +61,8 @@ class DriveLoggingService : Service() {
     private var sessionJob: Job? = null
     private var wakeLock: PowerManager.WakeLock? = null
     private var currentSessionId: Long? = null
+    // Best-effort live stream (see server/), never the authoritative path; Room/CSV are.
+    private val streamingClient = StreamingClient(BuildConfig.INGEST_BASE_URL, BuildConfig.INGEST_TOKEN)
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -98,6 +102,31 @@ class DriveLoggingService : Service() {
         val startElapsedNs = session.startElapsedNs
         val sharedSequence = AtomicLong(0)
 
+        suspend fun recordEvent(elapsedNs: Long, eventType: String, severity: String, message: String) {
+            val wallTimeUtc = System.currentTimeMillis()
+            dao.insertEvent(
+                EventEntity(
+                    sessionId = sessionId,
+                    elapsedNs = elapsedNs,
+                    wallTimeUtc = wallTimeUtc,
+                    eventType = eventType,
+                    severity = severity,
+                    message = message,
+                ),
+            )
+            streamingClient.postEvent(sessionId, elapsedNs, wallTimeUtc, eventType, severity, message)
+        }
+
+        streamingClient.startSession(
+            sessionId = sessionId,
+            startWallTimeUtc = session.startWallTimeUtc,
+            vehicleProfile = session.vehicleProfile,
+            adapterName = session.adapterName,
+            adapterAddress = session.adapterAddress,
+            appVersion = session.appVersion,
+            phoneModel = session.phoneModel,
+        )
+
         LoggingStatus.state.value = LoggingUiState(
             connectionState = ConnectionState.CONNECTING,
             sessionId = sessionId,
@@ -121,6 +150,7 @@ class DriveLoggingService : Service() {
                         provider = sample.provider,
                     ),
                 )
+                streamingClient.postLocation(sessionId, sample)
                 val current = LoggingStatus.state.value
                 LoggingStatus.state.value = current.copy(locationCount = current.locationCount + 1)
             }
@@ -167,6 +197,7 @@ class DriveLoggingService : Service() {
                                     qualityFlag = sample.qualityFlag,
                                 ),
                             )
+                            streamingClient.postMeasurement(sessionId, sample)
                             val current = LoggingStatus.state.value
                             LoggingStatus.state.value = current.copy(
                                 connectionState = ConnectionState.LOGGING,
@@ -175,32 +206,14 @@ class DriveLoggingService : Service() {
                             )
                         },
                         onEvent = { event ->
-                            dao.insertEvent(
-                                EventEntity(
-                                    sessionId = sessionId,
-                                    elapsedNs = event.elapsedNs,
-                                    wallTimeUtc = System.currentTimeMillis(),
-                                    eventType = event.eventType,
-                                    severity = event.severity,
-                                    message = event.message,
-                                ),
-                            )
+                            recordEvent(event.elapsedNs, event.eventType, event.severity, event.message)
                         },
                         sequence = sharedSequence,
                     )
 
                     val oneTimeResults = scheduler.runOneTimeReads()
                     for ((key, value) in oneTimeResults) {
-                        dao.insertEvent(
-                            EventEntity(
-                                sessionId = sessionId,
-                                elapsedNs = System.nanoTime() - startElapsedNs,
-                                wallTimeUtc = System.currentTimeMillis(),
-                                eventType = "ONE_TIME_READ",
-                                severity = "INFO",
-                                message = "$key=$value",
-                            ),
-                        )
+                        recordEvent(System.nanoTime() - startElapsedNs, "ONE_TIME_READ", "INFO", "$key=$value")
                     }
 
                     backoffMs = INITIAL_BACKOFF_MS // reset after a successful (re)connect
@@ -215,15 +228,9 @@ class DriveLoggingService : Service() {
                         reconnectCount = current.reconnectCount + 1,
                         statusMessage = "Reconnecting: ${e.message ?: e::class.simpleName}",
                     )
-                    dao.insertEvent(
-                        EventEntity(
-                            sessionId = sessionId,
-                            elapsedNs = System.nanoTime() - startElapsedNs,
-                            wallTimeUtc = System.currentTimeMillis(),
-                            eventType = "RECONNECT",
-                            severity = "WARNING",
-                            message = e.message ?: e::class.simpleName ?: "unknown error",
-                        ),
+                    recordEvent(
+                        System.nanoTime() - startElapsedNs, "RECONNECT", "WARNING",
+                        e.message ?: e::class.simpleName ?: "unknown error",
                     )
                     delay(backoffMs)
                     backoffMs = (backoffMs * 2).coerceAtMost(MAX_BACKOFF_MS)
@@ -242,11 +249,11 @@ class DriveLoggingService : Service() {
         serviceScope.launch {
             if (sessionId != null) {
                 val dao = AppDatabase.getInstance(applicationContext).sessionDao()
+                val endWallTimeUtc = System.currentTimeMillis()
                 dao.getSession(sessionId)?.let { s ->
-                    dao.updateSession(
-                        s.copy(endWallTimeUtc = System.currentTimeMillis(), completionStatus = "COMPLETED"),
-                    )
+                    dao.updateSession(s.copy(endWallTimeUtc = endWallTimeUtc, completionStatus = "COMPLETED"))
                 }
+                streamingClient.endSession(sessionId, endWallTimeUtc, "COMPLETED")
             }
             sessionJob?.cancel()
             sessionJob = null
