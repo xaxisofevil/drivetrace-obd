@@ -53,6 +53,7 @@ object PidCatalog {
             { SafeFuelRailPressureCommand() }, // library's FuelRailPressureCommand still has the unbounded-byte bug
             { SafeFuelConsumptionRateCommand() }, // ditto FuelConsumptionRateCommand
             { TimingAdvanceCommand() }, // not in the library; added for octane/knock-retard checks
+            { SafeAbsoluteLoadCommand() }, // library's AbsoluteLoadCommand has the unbounded-byte bug too
         )
 
     /** Sample roughly every 10-30 seconds; slow-changing context. */

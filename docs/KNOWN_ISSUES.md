@@ -318,11 +318,35 @@ fault required, this is a real, mundane, non-mechanical candidate
 explanation for the original MPG-drop question, worth checking before
 chasing anything else.
 
+**Timeline detail that matters**: the user noticed the original MPG drop
+while still buying 93, and kept buying 93 for a long time afterward, only
+switching to 87 in the last few months to save money. This rules out
+"switched fuel grade" as the explanation for the *original* drop, that
+happened entirely on premium fuel. It reframes the useful question:
+could the engine have been retarding timing *unnecessarily even on 93*,
+a real fault (bad knock sensor, carbon buildup on the direct-injection
+valves/chamber increasing knock tendency independent of fuel, a cooling
+issue raising intake/chamber temps) rather than the engine just doing
+what it's designed to do on cheaper gas. The recent 87 switch is a
+separate, later layer on top of whatever the original issue was.
+
+**The test this suggests**: log a drive on 87 (current), then run a tank
+of 93 and log a comparable drive. If Timing Advance normalizes on 93,
+the engine's behaving as designed and the 87 switch alone explains the
+recent numbers. If it's still retarded on 93 similar to what shows up on
+87, that's real evidence of a persistent, fuel-independent problem worth
+chasing further (knock sensor, carbon buildup, cooling), not just a fuel
+grade choice.
+
 Timing Advance (PID 0E) wasn't logged before tonight; kotlin-obd-api
 doesn't have a command for it. Added a custom `TimingAdvanceCommand` (see
-`SafeCommands.kt`) to Tier B. Not yet checked against a real drive under
-load, if timing is more retarded than expected for the RPM/load at hand,
-that's direct ECU-side evidence of knock mitigation in progress,
+`SafeCommands.kt`) to Tier B, alongside a corrected `SafeAbsoluteLoadCommand`
+(PID 43, the library's `AbsoluteLoadCommand` had the same unbounded-byte
+bug as everything else tonight) for boost-aware load context, a turbo
+engine's actual cylinder filling under boost isn't well represented by
+the plain Engine Load PID. Neither checked against a real drive under
+load yet, if timing is more retarded than expected for the RPM/load at
+hand, that's direct ECU-side evidence of knock mitigation in progress,
 independent of what octane anyone remembers buying.
 
 ## Miscellaneous

@@ -3,6 +3,7 @@ package com.ericbarone.drivetrace.obd
 import com.github.eltonvs.obd.command.ObdCommand
 import com.github.eltonvs.obd.command.ObdRawResponse
 import com.github.eltonvs.obd.command.bytesToInt
+import com.github.eltonvs.obd.command.calculatePercentage
 
 /**
  * Replacements for kotlin-obd-api command classes confirmed buggy: their handlers call
@@ -89,6 +90,23 @@ class SafeEngineRuntimeCommand : ObdCommand() {
     override val defaultUnit = "s"
     override val handler = { response: ObdRawResponse ->
         bytesToInt(response.bufferedValue, bytesToProcess = 2).toString()
+    }
+}
+
+/**
+ * Same unbounded-bytesToProcess bug as bytesToInt, confirmed against the library's real source
+ * (ParserFunctions.kt): calculatePercentage(bufferedValue) defaults bytesToProcess to -1, taking
+ * every remaining byte instead of just PID 43's real 2 data bytes. AbsoluteLoadCommand never
+ * passes bytesToProcess, so it hits this every time.
+ */
+class SafeAbsoluteLoadCommand : ObdCommand() {
+    override val tag = "ENGINE_ABSOLUTE_LOAD"
+    override val name = "Engine Absolute Load"
+    override val mode = "01"
+    override val pid = "43"
+    override val defaultUnit = "%"
+    override val handler = { response: ObdRawResponse ->
+        "%.1f".format(calculatePercentage(response.bufferedValue, bytesToProcess = 2))
     }
 }
 

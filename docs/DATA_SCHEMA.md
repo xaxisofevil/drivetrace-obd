@@ -32,6 +32,7 @@ anywhere (see `scripts/analyze_drive.py`'s `PID_KEYWORDS`), use these:
 | 0C | `Engine RPM` | RPM | A | Fixed upstream (pinned commit), see KNOWN_ISSUES |
 | 0D | `Vehicle Speed` | km/h | A | |
 | 04 | `Engine Load` | % | A | Not "Calculated Engine Load" |
+| 43 | `Engine Absolute Load` | % | B | Uses `SafeAbsoluteLoadCommand`; library's `AbsoluteLoadCommand` has the unbounded-byte bug too. Can read over 100% under boost, a better turbo-load signal than PID 04 |
 | 10 | `Mass Air Flow` | g/s | A | Uses `SafeMassAirFlowCommand`, see KNOWN_ISSUES |
 | 06 | `Short Term Fuel Trim Bank 1` | % | A | |
 | 08 | `Long Term Fuel Trim Bank 1` | % | A | Prone to early-cooldown, see KNOWN_ISSUES |

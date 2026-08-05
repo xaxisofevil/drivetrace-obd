@@ -49,6 +49,7 @@ private val PLAUSIBLE_RANGES: Map<String, ClosedFloatingPointRange<Double>> = ma
     "Control Module Power Supply" to 0.0..30.0,
     "Calculated Engine Load" to 0.0..100.0,
     "Engine Load" to 0.0..100.0,
+    "Engine Absolute Load" to 0.0..300.0, // can legitimately exceed 100% under boost
     "Mass Air Flow" to 0.0..1000.0,
     "Commanded Equivalence Ratio" to 0.0..3.0,
     "Fuel-Air Commanded Equivalence Ratio" to 0.0..3.0,
