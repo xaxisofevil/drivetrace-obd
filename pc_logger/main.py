@@ -31,6 +31,13 @@ INITIAL_BACKOFF_S = 1.0
 MAX_BACKOFF_S = 15.0
 VEHICLE_PROFILE = "2020 Mazda 6 2.5T"
 
+# Some cheap ELM327 clones fabricate plausible-looking zero data instead of a clean error when
+# the ECU is asleep, so "a response arrived" isn't proof the vehicle is actually awake. See the
+# matching check in the Android app's DriveLoggingService.kt.
+PLAUSIBLE_RPM_FLOOR = 100.0
+RPM_SAMPLES_BEFORE_CONCLUDING_ENGINE_OFF = 5
+MIN_PLAUSIBLE_VIN_LENGTH = 11
+
 
 def _wait_for_enter(stop_event: threading.Event) -> None:
     try:
@@ -64,10 +71,19 @@ def run_session(port: str, out_dir: Path) -> None:
                 writer.protocol = protocol
                 print(f"Protocol: {protocol}")
 
+                rpm_state = {"samples_seen": 0, "plausible_seen": False}
+
+                def on_measurement(m):
+                    writer.write_measurement(m)
+                    if m.canonical_name == "Engine RPM":
+                        rpm_state["samples_seen"] += 1
+                        if (m.value_numeric or 0.0) > PLAUSIBLE_RPM_FLOOR:
+                            rpm_state["plausible_seen"] = True
+
                 scheduler = PidScheduler(
                     transport=transport,
                     start_monotonic_ns=start_monotonic_ns,
-                    on_measurement=writer.write_measurement,
+                    on_measurement=on_measurement,
                     on_event=writer.write_event,
                     sequence_start=sequence,
                 )
@@ -77,6 +93,12 @@ def run_session(port: str, out_dir: Path) -> None:
                 writer.write_one_time_reads(one_time)
                 for k, v in one_time.items():
                     print(f"  {k}: {v}")
+                vin = one_time.get("VIN", "")
+                if len(vin) < MIN_PLAUSIBLE_VIN_LENGTH:
+                    print(
+                        "  WARNING: VIN did not come back as a real identifier. The vehicle's "
+                        "bus may be fully asleep; check the ignition before trusting this session."
+                    )
 
                 backoff_s = INITIAL_BACKOFF_S  # reset after a successful (re)connect
                 last_status_print = time.monotonic()
@@ -86,7 +108,16 @@ def run_session(port: str, out_dir: Path) -> None:
                     if time.monotonic() - last_status_print > 5:
                         last_status_print = time.monotonic()
                         writer.flush()
-                        print(f"\r  measurements={writer.measurement_count}  reconnects={reconnects}   ", end="")
+                        engine_status = (
+                            "yes" if rpm_state["plausible_seen"]
+                            else "NO - check ignition" if rpm_state["samples_seen"] >= RPM_SAMPLES_BEFORE_CONCLUDING_ENGINE_OFF
+                            else "checking..."
+                        )
+                        print(
+                            f"\r  measurements={writer.measurement_count}  reconnects={reconnects}  "
+                            f"engine_detected={engine_status}   ",
+                            end="",
+                        )
                         sys.stdout.flush()
                     return not stop_event.is_set()
 

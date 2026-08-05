@@ -379,6 +379,45 @@ def pid_coverage_report(samples: pd.DataFrame) -> pd.DataFrame:
 # Anomaly flags (deliberately cautious; see blueprint section 15)
 # ---------------------------------------------------------------------------
 
+PLAUSIBLE_RPM_FLOOR = 100.0
+MIN_PLAUSIBLE_VIN_LENGTH = 11
+
+
+def vehicle_awake_flags(samples: pd.DataFrame, events: pd.DataFrame) -> list[str]:
+    """Retrospective version of the same check the app/pc_logger do live: a response arriving
+    isn't proof the vehicle was actually awake, some cheap ELM327 clones fabricate plausible-
+    looking placeholder data instead of a clean error when the ECU is asleep."""
+    flags: list[str] = []
+
+    if not events.empty:
+        # A successful read looks like "VIN=<value>" (event_type ONE_TIME_READ); a failed one
+        # looks like "VIN: <exception>" (event_type ONE_TIME_READ_FAILED) - real adapters throw
+        # rather than return empty just as often as they return blank, so check for both.
+        vin_success = events[events["message"].astype(str).str.startswith("VIN=")]
+        vin_value = vin_success.iloc[0]["message"].split("=", 1)[1] if not vin_success.empty else ""
+        vin_failed = events[
+            (events["event_type"] == "ONE_TIME_READ_FAILED")
+            & events["message"].astype(str).str.startswith("VIN:")
+        ]
+        if vin_failed.any().any() or len(vin_value) < MIN_PLAUSIBLE_VIN_LENGTH:
+            detail = vin_failed.iloc[0]["message"] if not vin_failed.empty else f"got {vin_value!r}"
+            flags.append(
+                f"VIN did not come back as a real identifier at session start ({detail}). "
+                "Consistent with the vehicle's bus being fully asleep rather than a logging "
+                "problem; treat the rest of this session's OBD data with suspicion."
+            )
+
+    rpm = samples[samples["canonical_name"] == "Engine RPM"]["value_numeric"].dropna()
+    if not rpm.empty and (rpm <= PLAUSIBLE_RPM_FLOOR).all():
+        flags.append(
+            "RPM never exceeded a plausible idle floor for the entire session. Either the engine "
+            "genuinely never ran, or the adapter was returning placeholder zeros instead of real "
+            "ECU data; check the VIN flag above and the raw samples before trusting this session's "
+            "engine-derived metrics."
+        )
+
+    return flags
+
 
 def anomaly_flags(snap: pd.DataFrame, cruise: pd.DataFrame, events: pd.DataFrame) -> list[str]:
     flags: list[str] = []
@@ -597,7 +636,7 @@ def main() -> None:
     cruise = find_cruise_windows(snap, warmup_s)
     phases = phase_breakdown(snap)
     coverage = pid_coverage_report(data.samples)
-    flags = anomaly_flags(snap, cruise, data.events)
+    flags = vehicle_awake_flags(data.samples, data.events) + anomaly_flags(snap, cruise, data.events)
 
     out_dir = args.out or Path(__file__).resolve().parent.parent / "output" / str(data.metadata.get("sessionId", "session"))
     out_dir.mkdir(parents=True, exist_ok=True)

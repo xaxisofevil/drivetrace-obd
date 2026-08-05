@@ -12,6 +12,15 @@ enum class ConnectionState {
     FAILED,
 }
 
+/**
+ * Some cheap ELM327 clones don't return a clean error when the ECU is asleep; they fabricate
+ * plausible-looking placeholder frames instead (all-zero values, 0xFFFF sentinels). "A response
+ * arrived" isn't proof the vehicle is actually awake, so this tracks two independent, cheap
+ * checks instead: does the VIN read back as a real identifier, and has RPM ever shown a
+ * plausible non-zero value.
+ */
+enum class TriState { PENDING, YES, NO }
+
 data class LoggingUiState(
     val connectionState: ConnectionState = ConnectionState.DISCONNECTED,
     val sessionId: Long? = null,
@@ -21,6 +30,8 @@ data class LoggingUiState(
     val lastSampleAtMs: Long? = null,
     val reconnectCount: Int = 0,
     val statusMessage: String = "",
+    val vinFound: TriState = TriState.PENDING,
+    val engineDetected: TriState = TriState.PENDING,
 )
 
 /**

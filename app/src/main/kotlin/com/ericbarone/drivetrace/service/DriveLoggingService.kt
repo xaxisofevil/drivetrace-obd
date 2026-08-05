@@ -39,6 +39,14 @@ private const val VEHICLE_PROFILE = "2020 Mazda 6 2.5T"
 private const val INITIAL_BACKOFF_MS = 1_000L
 private const val MAX_BACKOFF_MS = 15_000L
 
+// Some cheap ELM327 clones fabricate plausible-looking zero data instead of a clean error when
+// the ECU is asleep, so "a response arrived" isn't proof of a live vehicle. RPM > this is a cheap
+// plausibility floor (real idle is normally 600-1000); this many samples without one is enough
+// to conclude the engine genuinely isn't running rather than just not sampled yet.
+private const val PLAUSIBLE_RPM_FLOOR = 100.0
+private const val RPM_SAMPLES_BEFORE_CONCLUDING_ENGINE_OFF = 5
+private const val MIN_PLAUSIBLE_VIN_LENGTH = 11 // real VINs are 17 chars; a few are truncated/partial on some ECUs
+
 class DriveLoggingService : Service() {
 
     companion object {
@@ -101,6 +109,9 @@ class DriveLoggingService : Service() {
         currentSessionId = sessionId
         val startElapsedNs = session.startElapsedNs
         val sharedSequence = AtomicLong(0)
+        // Persist across reconnects within the same session, not reset per attempt.
+        var rpmSamplesSeen = 0
+        var plausibleRpmSeen = false
 
         suspend fun recordEvent(elapsedNs: Long, eventType: String, severity: String, message: String) {
             val wallTimeUtc = System.currentTimeMillis()
@@ -198,11 +209,26 @@ class DriveLoggingService : Service() {
                                 ),
                             )
                             streamingClient.postMeasurement(sessionId, sample)
+
+                            var engineDetected = LoggingStatus.state.value.engineDetected
+                            if (sample.canonicalName == "Engine RPM") {
+                                rpmSamplesSeen++
+                                if ((sample.valueNumeric ?: 0.0) > PLAUSIBLE_RPM_FLOOR) {
+                                    plausibleRpmSeen = true
+                                }
+                                engineDetected = when {
+                                    plausibleRpmSeen -> TriState.YES
+                                    rpmSamplesSeen >= RPM_SAMPLES_BEFORE_CONCLUDING_ENGINE_OFF -> TriState.NO
+                                    else -> TriState.PENDING
+                                }
+                            }
+
                             val current = LoggingStatus.state.value
                             LoggingStatus.state.value = current.copy(
                                 connectionState = ConnectionState.LOGGING,
                                 measurementCount = current.measurementCount + 1,
                                 lastSampleAtMs = System.currentTimeMillis(),
+                                engineDetected = engineDetected,
                             )
                         },
                         onEvent = { event ->
@@ -215,6 +241,10 @@ class DriveLoggingService : Service() {
                     for ((key, value) in oneTimeResults) {
                         recordEvent(System.nanoTime() - startElapsedNs, "ONE_TIME_READ", "INFO", "$key=$value")
                     }
+                    val vin = oneTimeResults["VIN"]
+                    LoggingStatus.state.value = LoggingStatus.state.value.copy(
+                        vinFound = if ((vin?.length ?: 0) >= MIN_PLAUSIBLE_VIN_LENGTH) TriState.YES else TriState.NO,
+                    )
 
                     backoffMs = INITIAL_BACKOFF_MS // reset after a successful (re)connect
                     updateNotification()
@@ -315,7 +345,12 @@ class DriveLoggingService : Service() {
 
     private fun updateNotification() {
         val state = LoggingStatus.state.value
-        val text = "Samples: ${state.measurementCount} | GPS: ${state.locationCount} | ${state.connectionState}"
+        val warning = if (state.vinFound == TriState.NO || state.engineDetected == TriState.NO) {
+            " | No real vehicle data - check ignition"
+        } else {
+            ""
+        }
+        val text = "Samples: ${state.measurementCount} | GPS: ${state.locationCount} | ${state.connectionState}$warning"
         val manager = getSystemService(NotificationManager::class.java)
         manager.notify(NOTIFICATION_ID, buildNotification(text))
     }

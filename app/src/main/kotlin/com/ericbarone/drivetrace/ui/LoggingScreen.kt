@@ -23,9 +23,11 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.core.content.FileProvider
+import androidx.compose.ui.graphics.Color
 import com.ericbarone.drivetrace.export.CsvExporter
 import com.ericbarone.drivetrace.service.ConnectionState
 import com.ericbarone.drivetrace.service.LoggingUiState
+import com.ericbarone.drivetrace.service.TriState
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
@@ -62,6 +64,17 @@ fun LoggingScreen(status: LoggingUiState, onStop: () -> Unit, onNewSession: () -
         StatusRow("Measurements", status.measurementCount.toString())
         StatusRow("GPS fixes", status.locationCount.toString())
         StatusRow("Last sample", lastSampleAgeSeconds?.let { "${it}s ago" } ?: "-")
+        TriStateRow("Vehicle responding (VIN)", status.vinFound)
+        TriStateRow("Engine detected", status.engineDetected)
+        if (status.vinFound == TriState.NO || status.engineDetected == TriState.NO) {
+            Text(
+                "Not getting real data from the vehicle. A response arriving isn't proof the " +
+                    "car's awake, this adapter can fabricate placeholder values instead of " +
+                    "erroring. Check the ignition and adapter connection.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.error,
+            )
+        }
         if (status.reconnectCount > 0) {
             StatusRow("Reconnects", status.reconnectCount.toString())
         }
@@ -116,6 +129,16 @@ fun LoggingScreen(status: LoggingUiState, onStop: () -> Unit, onNewSession: () -
 @Composable
 private fun StatusRow(label: String, value: String) {
     Text("$label: $value", style = MaterialTheme.typography.bodyLarge)
+}
+
+@Composable
+private fun TriStateRow(label: String, state: TriState) {
+    val (text, color) = when (state) {
+        TriState.PENDING -> "checking..." to MaterialTheme.colorScheme.onSurfaceVariant
+        TriState.YES -> "yes" to Color(0xFF2E7D32)
+        TriState.NO -> "no" to MaterialTheme.colorScheme.error
+    }
+    Text("$label: $text", style = MaterialTheme.typography.bodyLarge, color = color)
 }
 
 private fun formatDuration(totalSeconds: Long): String {
