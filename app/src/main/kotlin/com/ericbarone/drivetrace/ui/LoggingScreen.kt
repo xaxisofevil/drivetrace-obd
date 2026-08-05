@@ -5,6 +5,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.systemBarsPadding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
@@ -65,9 +66,14 @@ fun LoggingScreen(status: LoggingUiState, onStop: () -> Unit, onNewSession: () -
     // The post-drive summary (PC analysis, flags, on-device estimate) can easily push past
     // screen height, especially with several anomaly flags; without scroll, the New Session /
     // Export buttons below become genuinely unreachable, not just hidden until you resize.
+    // systemBarsPadding() first: content was drawing straight under the status bar and the
+    // on-screen nav bar (confirmed from a real screenshot, "New Session" nearly touching the
+    // nav bar), not just missing a few dp, the 24dp padding after it is on top of that, not a
+    // replacement for it.
     Column(
         modifier = Modifier
             .fillMaxSize()
+            .systemBarsPadding()
             .verticalScroll(rememberScrollState())
             .padding(24.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp),

@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.systemBarsPadding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.selection.selectable
@@ -78,8 +79,10 @@ fun SetupScreen(onStartLogging: (String) -> Unit) {
         if (selectedAddress == null) selectedAddress = defaultObdDeviceAddress(devices)
     }
 
+    // See LoggingScreen.kt for why systemBarsPadding() comes first: content was drawing
+    // straight under the status/nav bars, not just missing a few dp of breathing room.
     Column(
-        modifier = Modifier.fillMaxSize().padding(24.dp),
+        modifier = Modifier.fillMaxSize().systemBarsPadding().padding(24.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp),
     ) {
         Text("DriveTrace", style = MaterialTheme.typography.headlineMedium)
