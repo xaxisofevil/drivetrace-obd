@@ -232,6 +232,70 @@ def post_event(e: Event):
     return {"ok": True}
 
 
+@app.post("/sessions/{session_id}/measurements/bulk", dependencies=[Depends(_require_auth)])
+def bulk_measurements(session_id: int, items: list[Measurement]):
+    """Full-replace backfill, run once at Stop: local Room is authoritative, this makes the
+    server's copy match it exactly regardless of what the live per-item stream missed during
+    the drive. Delete-then-insert in one transaction rather than trying to dedup against
+    whatever already streamed in, simpler and provably correct since this only runs after
+    logging has already stopped (no concurrent live writes to race against)."""
+    now = _now_ms()
+    with _db_lock:
+        _conn.execute("BEGIN TRANSACTION")
+        try:
+            _conn.execute("DELETE FROM measurements WHERE session_id = ?", [session_id])
+            for m in items:
+                _conn.execute(
+                    "INSERT INTO measurements VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    [m.session_id, m.sequence, m.wall_time_utc_ms, m.elapsed_ns, m.pid, m.canonical_name,
+                     m.value_numeric, m.value_text, m.unit, m.latency_ms, m.quality_flag, now],
+                )
+            _conn.execute("COMMIT")
+        except Exception:
+            _conn.execute("ROLLBACK")
+            raise
+    return {"ok": True, "count": len(items)}
+
+
+@app.post("/sessions/{session_id}/locations/bulk", dependencies=[Depends(_require_auth)])
+def bulk_locations(session_id: int, items: list[Location]):
+    now = _now_ms()
+    with _db_lock:
+        _conn.execute("BEGIN TRANSACTION")
+        try:
+            _conn.execute("DELETE FROM locations WHERE session_id = ?", [session_id])
+            for loc in items:
+                _conn.execute(
+                    "INSERT INTO locations VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    [loc.session_id, loc.elapsed_ns, loc.wall_time_utc_ms, loc.latitude, loc.longitude,
+                     loc.altitude_m, loc.speed_mps, loc.bearing_deg, loc.horizontal_accuracy_m, loc.provider, now],
+                )
+            _conn.execute("COMMIT")
+        except Exception:
+            _conn.execute("ROLLBACK")
+            raise
+    return {"ok": True, "count": len(items)}
+
+
+@app.post("/sessions/{session_id}/events/bulk", dependencies=[Depends(_require_auth)])
+def bulk_events(session_id: int, items: list[Event]):
+    now = _now_ms()
+    with _db_lock:
+        _conn.execute("BEGIN TRANSACTION")
+        try:
+            _conn.execute("DELETE FROM events WHERE session_id = ?", [session_id])
+            for e in items:
+                _conn.execute(
+                    "INSERT INTO events VALUES (?, ?, ?, ?, ?, ?, ?)",
+                    [e.session_id, e.elapsed_ns, e.wall_time_utc_ms, e.event_type, e.severity, e.message, now],
+                )
+            _conn.execute("COMMIT")
+        except Exception:
+            _conn.execute("ROLLBACK")
+            raise
+    return {"ok": True, "count": len(items)}
+
+
 @app.get("/health")
 def health():
     with _db_lock:

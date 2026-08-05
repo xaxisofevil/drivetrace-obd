@@ -89,6 +89,14 @@ fun LoggingScreen(status: LoggingUiState, onStop: () -> Unit, onNewSession: () -
             StatusRow("Reconnects", status.reconnectCount.toString())
         }
         if (sessionComplete) {
+            TriStateRow("Server backfill (upload verified complete)", status.backfillStatus)
+            if (status.backfillMessage.isNotBlank()) {
+                Text(
+                    status.backfillMessage,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = if (status.backfillStatus == TriState.NO) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
             val summary = tripSummary
             when {
                 summary == null -> StatusRow("Trip MPG (est.)", "calculating...")

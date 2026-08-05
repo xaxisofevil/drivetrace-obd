@@ -32,6 +32,9 @@ data class LoggingUiState(
     val statusMessage: String = "",
     val vinFound: TriState = TriState.PENDING,
     val engineDetected: TriState = TriState.PENDING,
+    /** Set once the post-Stop backfill (see StreamingClient.backfillSession) finishes. */
+    val backfillStatus: TriState = TriState.PENDING,
+    val backfillMessage: String = "",
 )
 
 /**

@@ -1,8 +1,13 @@
 package com.ericbarone.drivetrace.streaming
 
 import android.util.Log
+import com.ericbarone.drivetrace.data.EventEntity
+import com.ericbarone.drivetrace.data.LocationEntity
+import com.ericbarone.drivetrace.data.MeasurementEntity
 import com.ericbarone.drivetrace.obd.MeasurementSample
 import com.ericbarone.drivetrace.location.LocationSample
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import okhttp3.Call
 import okhttp3.Callback
 import okhttp3.MediaType.Companion.toMediaType
@@ -10,6 +15,7 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import okhttp3.Response
+import org.json.JSONArray
 import org.json.JSONObject
 import java.io.IOException
 import java.util.concurrent.TimeUnit
@@ -19,7 +25,10 @@ import java.util.concurrent.atomic.AtomicLong
 private const val TAG = "StreamingClient"
 private const val MAX_CONSECUTIVE_FAILURES = 5
 private const val COOLDOWN_MS = 30_000L
+private const val BACKFILL_CHUNK_SIZE = 500
 private val JSON = "application/json; charset=utf-8".toMediaType()
+
+data class BackfillResult(val success: Boolean, val measurementCount: Int, val locationCount: Int, val eventCount: Int, val error: String? = null)
 
 /**
  * Best-effort live stream to the home ingest server (see server/). This is
@@ -35,6 +44,14 @@ class StreamingClient(private val baseUrl: String, private val token: String) {
     private val client = OkHttpClient.Builder()
         .connectTimeout(2, TimeUnit.SECONDS)
         .callTimeout(3, TimeUnit.SECONDS)
+        .build()
+
+    // Backfill wants patience, not fast-fail: it runs once at Stop, not per-measurement in a
+    // polling loop, so a slower cellular connection finishing late is fine, wrongly giving up
+    // when it would've succeeded a few seconds later is not.
+    private val backfillClient = client.newBuilder()
+        .connectTimeout(10, TimeUnit.SECONDS)
+        .callTimeout(30, TimeUnit.SECONDS)
         .build()
 
     private val consecutiveFailures = AtomicInteger(0)
@@ -144,5 +161,110 @@ class StreamingClient(private val baseUrl: String, private val token: String) {
             put("message", message)
         }
         postFireAndForget("/events", body)
+    }
+
+    /**
+     * Run once at Stop, not fire-and-forget: local Room is authoritative, this makes the
+     * server's copy match it exactly regardless of what the live per-item stream missed
+     * during the drive (dead zones, the circuit breaker pausing, etc). Unlike every other
+     * method here this suspends and can fail loudly, callers should surface [BackfillResult]
+     * to the user rather than swallow it, that's the whole point: know for certain, not hope.
+     */
+    suspend fun backfillSession(
+        sessionId: Long,
+        measurements: List<MeasurementEntity>,
+        locations: List<LocationEntity>,
+        events: List<EventEntity>,
+    ): BackfillResult =
+        withContext(Dispatchers.IO) {
+            if (!enabled) {
+                return@withContext BackfillResult(false, 0, 0, 0, "Streaming not configured")
+            }
+            try {
+                var measurementCount = 0
+                for (chunk in measurements.chunked(BACKFILL_CHUNK_SIZE)) {
+                    val arr = JSONArray()
+                    for (m in chunk) {
+                        arr.put(
+                            JSONObject().apply {
+                                put("session_id", sessionId)
+                                put("sequence", m.sequence)
+                                put("wall_time_utc_ms", m.wallTimeUtc)
+                                put("elapsed_ns", m.elapsedNs)
+                                put("pid", m.pidTag)
+                                put("canonical_name", m.canonicalName)
+                                put("value_numeric", m.valueNumeric ?: JSONObject.NULL)
+                                put("value_text", m.valueText)
+                                put("unit", m.unit)
+                                put("latency_ms", m.latencyMs)
+                                put("quality_flag", m.qualityFlag)
+                            },
+                        )
+                    }
+                    executeBulk("/sessions/$sessionId/measurements/bulk", arr)
+                    measurementCount += chunk.size
+                }
+
+                var locationCount = 0
+                for (chunk in locations.chunked(BACKFILL_CHUNK_SIZE)) {
+                    val arr = JSONArray()
+                    for (l in chunk) {
+                        arr.put(
+                            JSONObject().apply {
+                                put("session_id", sessionId)
+                                put("elapsed_ns", l.elapsedNs)
+                                put("wall_time_utc_ms", l.wallTimeUtc)
+                                put("latitude", l.latitude)
+                                put("longitude", l.longitude)
+                                put("altitude_m", l.altitudeM ?: JSONObject.NULL)
+                                put("speed_mps", l.speedMps ?: JSONObject.NULL)
+                                put("bearing_deg", l.bearingDeg ?: JSONObject.NULL)
+                                put("horizontal_accuracy_m", l.horizontalAccuracyM ?: JSONObject.NULL)
+                                put("provider", l.provider)
+                            },
+                        )
+                    }
+                    executeBulk("/sessions/$sessionId/locations/bulk", arr)
+                    locationCount += chunk.size
+                }
+
+                var eventCount = 0
+                for (chunk in events.chunked(BACKFILL_CHUNK_SIZE)) {
+                    val arr = JSONArray()
+                    for (e in chunk) {
+                        arr.put(
+                            JSONObject().apply {
+                                put("session_id", sessionId)
+                                put("elapsed_ns", e.elapsedNs)
+                                put("wall_time_utc_ms", e.wallTimeUtc)
+                                put("event_type", e.eventType)
+                                put("severity", e.severity)
+                                put("message", e.message)
+                            },
+                        )
+                    }
+                    executeBulk("/sessions/$sessionId/events/bulk", arr)
+                    eventCount += chunk.size
+                }
+
+                BackfillResult(true, measurementCount, locationCount, eventCount)
+            } catch (e: Exception) {
+                Log.w(TAG, "Backfill failed: ${e.message}")
+                BackfillResult(false, 0, 0, 0, e.message ?: e::class.simpleName)
+            }
+        }
+
+    /** Synchronous (unlike postFireAndForget), throws on any failure so the caller sees it. */
+    private fun executeBulk(path: String, body: JSONArray) {
+        val request = Request.Builder()
+            .url("$baseUrl$path")
+            .addHeader("Authorization", "Bearer $token")
+            .post(body.toString().toRequestBody(JSON))
+            .build()
+        backfillClient.newCall(request).execute().use { response ->
+            if (!response.isSuccessful) {
+                error("HTTP ${response.code} for $path")
+            }
+        }
     }
 }

@@ -277,6 +277,8 @@ class DriveLoggingService : Service() {
     private fun stopSession() {
         val sessionId = currentSessionId
         serviceScope.launch {
+            sessionJob?.cancel()
+            sessionJob = null
             if (sessionId != null) {
                 val dao = AppDatabase.getInstance(applicationContext).sessionDao()
                 val endWallTimeUtc = System.currentTimeMillis()
@@ -284,9 +286,27 @@ class DriveLoggingService : Service() {
                     dao.updateSession(s.copy(endWallTimeUtc = endWallTimeUtc, completionStatus = "COMPLETED"))
                 }
                 streamingClient.endSession(sessionId, endWallTimeUtc, "COMPLETED")
+
+                LoggingStatus.state.value = LoggingStatus.state.value.copy(
+                    statusMessage = "Verifying complete upload...",
+                )
+                // Local Room is authoritative; this backfill makes the server's copy match it
+                // exactly regardless of what the live per-item stream missed during the drive.
+                val result = streamingClient.backfillSession(
+                    sessionId = sessionId,
+                    measurements = dao.getMeasurements(sessionId),
+                    locations = dao.getLocations(sessionId),
+                    events = dao.getEvents(sessionId),
+                )
+                LoggingStatus.state.value = LoggingStatus.state.value.copy(
+                    backfillStatus = if (result.success) TriState.YES else TriState.NO,
+                    backfillMessage = if (result.success) {
+                        "${result.measurementCount} measurements, ${result.locationCount} GPS, ${result.eventCount} events"
+                    } else {
+                        result.error ?: "Backfill failed"
+                    },
+                )
             }
-            sessionJob?.cancel()
-            sessionJob = null
             releaseWakeLock()
             LoggingStatus.state.value = LoggingStatus.state.value.copy(
                 connectionState = ConnectionState.DISCONNECTED,
