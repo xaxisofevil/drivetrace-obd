@@ -292,6 +292,19 @@ def compute_trip_distance(snap: pd.DataFrame) -> dict[str, float | None]:
     return result
 
 
+def compute_overall_mpg(snap: pd.DataFrame, distance_km: float | None) -> float | None:
+    """Trip-average MPG: total distance / total fuel burned, not an average of the
+    per-second (speed-suppressed) instantaneous estimates. Correctly comes out near 0 for a
+    session where the car never moved but the engine burned fuel at idle."""
+    if "est_fuel_gal_hr" not in snap or distance_km is None:
+        return None
+    total_gallons = float(np.nansum(snap["est_fuel_gal_hr"].fillna(0)) * GRID_INTERVAL_S / 3600)
+    if total_gallons <= 0:
+        return None
+    miles = distance_km * 0.621371
+    return miles / total_gallons
+
+
 def find_cruise_windows(snap: pd.DataFrame, warmup_end_s: float | None) -> pd.DataFrame:
     """Stable-speed, low-acceleration, already-warmed segments: the best
     apples-to-apples comparison points across the drive."""
@@ -571,6 +584,7 @@ def write_report(
     idle_fraction: float | None,
     warmup_s: float | None,
     distance: dict,
+    overall_mpg: float | None,
     cruise: pd.DataFrame,
     phases: pd.DataFrame,
     flags: list[str],
@@ -589,6 +603,7 @@ def write_report(
         f"- Warm-up duration (est.): {warmup_s / 60:.1f} min" if warmup_s is not None else "- Warm-up duration: n/a",
         f"- Trip distance, GPS: {distance.get('gps_km'):.2f} km" if distance.get("gps_km") is not None else "- Trip distance, GPS: n/a",
         f"- Trip distance, OBD speed: {distance.get('obd_km'):.2f} km" if distance.get("obd_km") is not None else "- Trip distance, OBD: n/a",
+        f"- Overall trip MPG (est., distance/fuel-burned): {overall_mpg:.1f}" if overall_mpg is not None else "- Overall trip MPG: n/a (no fuel data or all suppressed)",
         "",
         "## Anomaly flags (cautious; not a diagnosis)",
     ]
@@ -633,6 +648,7 @@ def main() -> None:
     idle_fraction = compute_idle_fraction(snap)
     warmup_s = compute_warmup_duration_s(snap)
     distance = compute_trip_distance(snap)
+    overall_mpg = compute_overall_mpg(snap, distance.get("gps_km") or distance.get("obd_km"))
     cruise = find_cruise_windows(snap, warmup_s)
     phases = phase_breakdown(snap)
     coverage = pid_coverage_report(data.samples)
@@ -643,7 +659,7 @@ def main() -> None:
 
     snap.to_csv(out_dir / "snapshot_1s.csv", index=False)
     make_plots(snap, out_dir)
-    write_report(out_dir, data, snap, coverage, idle_fraction, warmup_s, distance, cruise, phases, flags)
+    write_report(out_dir, data, snap, coverage, idle_fraction, warmup_s, distance, overall_mpg, cruise, phases, flags)
 
     print(f"Wrote analysis to {out_dir}")
     for f in flags:

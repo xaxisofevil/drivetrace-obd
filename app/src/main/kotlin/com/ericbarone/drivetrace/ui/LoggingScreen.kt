@@ -25,6 +25,8 @@ import androidx.compose.ui.unit.dp
 import androidx.core.content.FileProvider
 import androidx.compose.ui.graphics.Color
 import com.ericbarone.drivetrace.export.CsvExporter
+import com.ericbarone.drivetrace.export.TripSummary
+import com.ericbarone.drivetrace.export.computeTripSummary
 import com.ericbarone.drivetrace.service.ConnectionState
 import com.ericbarone.drivetrace.service.LoggingUiState
 import com.ericbarone.drivetrace.service.TriState
@@ -38,6 +40,7 @@ fun LoggingScreen(status: LoggingUiState, onStop: () -> Unit, onNewSession: () -
     var showStopConfirm by remember { mutableStateOf(false) }
     var nowMs by remember { mutableLongStateOf(System.currentTimeMillis()) }
     var exporting by remember { mutableStateOf(false) }
+    var tripSummary by remember { mutableStateOf<TripSummary?>(null) }
 
     LaunchedEffect(Unit) {
         while (true) {
@@ -49,6 +52,13 @@ fun LoggingScreen(status: LoggingUiState, onStop: () -> Unit, onNewSession: () -
     val elapsedSeconds = status.startedAtMs?.let { (nowMs - it) / 1000 } ?: 0
     val lastSampleAgeSeconds = status.lastSampleAtMs?.let { (nowMs - it) / 1000 }
     val sessionComplete = status.connectionState == ConnectionState.DISCONNECTED && status.sessionId != null
+
+    LaunchedEffect(sessionComplete, status.sessionId) {
+        val id = status.sessionId
+        if (sessionComplete && id != null) {
+            tripSummary = computeTripSummary(context, id)
+        }
+    }
 
     Column(
         modifier = Modifier.fillMaxSize().padding(24.dp),
@@ -77,6 +87,23 @@ fun LoggingScreen(status: LoggingUiState, onStop: () -> Unit, onNewSession: () -
         }
         if (status.reconnectCount > 0) {
             StatusRow("Reconnects", status.reconnectCount.toString())
+        }
+        if (sessionComplete) {
+            val summary = tripSummary
+            when {
+                summary == null -> StatusRow("Trip MPG (est.)", "calculating...")
+                summary.overallMpg == null -> StatusRow("Trip MPG (est.)", "n/a (no fuel data)")
+                else -> {
+                    StatusRow("Distance (GPS)", "%.2f km".format(summary.distanceKm))
+                    StatusRow("Trip MPG (est.)", "%.1f".format(summary.overallMpg))
+                }
+            }
+            Text(
+                "Rough on-device estimate: total distance / total fuel burned, not gated on " +
+                    "stoichiometric operation like the PC script. Run analyze_drive.py on the " +
+                    "exported CSV for the careful version.",
+                style = MaterialTheme.typography.bodySmall,
+            )
         }
         if (status.statusMessage.isNotBlank()) {
             Text(status.statusMessage, style = MaterialTheme.typography.bodySmall)
