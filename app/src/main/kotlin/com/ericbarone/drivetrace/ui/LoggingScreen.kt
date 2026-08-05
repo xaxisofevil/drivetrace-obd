@@ -5,6 +5,8 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.MaterialTheme
@@ -60,8 +62,14 @@ fun LoggingScreen(status: LoggingUiState, onStop: () -> Unit, onNewSession: () -
         }
     }
 
+    // The post-drive summary (PC analysis, flags, on-device estimate) can easily push past
+    // screen height, especially with several anomaly flags; without scroll, the New Session /
+    // Export buttons below become genuinely unreachable, not just hidden until you resize.
     Column(
-        modifier = Modifier.fillMaxSize().padding(24.dp),
+        modifier = Modifier
+            .fillMaxSize()
+            .verticalScroll(rememberScrollState())
+            .padding(24.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp),
     ) {
         Text(
