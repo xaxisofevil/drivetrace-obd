@@ -94,13 +94,27 @@ gap (see the battery-optimization issue below) so partly inconclusive; the
 other was a full, clean ~16.4-minute drive with continuous Tier A coverage
 throughout (STFT succeeded ~800 times in that same window) and LTFT still
 failed literally every attempt (93 for 93). This rules out a parsing
-misclassification: the adapter is genuinely telling the ECU's request
-for Mode 01 PID 08 gets nothing back, consistently, regardless of drive
-length or conditions. Treat LONG_TERM_BANK_1 as effectively unsupported via
-generic Mode 01 on this vehicle/adapter combination going forward, not as
-an intermittent fault worth continuing to chase. If another app genuinely
-shows LTFT for this car, it's reading it through a different (likely
-manufacturer-specific) PID or mode, not this one.
+misclassification: the adapter is genuinely telling this app that the
+ECU's response to Mode 01 PID 08 is `NO DATA`, consistently, regardless of
+drive length or conditions, on these two drives specifically.
+
+**Not settled, though**: the user has directly seen LTFT populated in
+other apps on this same car before. That's real, credible counter-evidence
+and outweighs two drives' worth of "NO DATA" from this app alone, it does
+NOT mean the ECU doesn't have the data, only that Mode 01 PID 08 hasn't
+produced it here yet. Possible explanations, none confirmed: those apps
+read it under conditions these two drives didn't hit (e.g. sustained
+highway cruise long enough for full closed-loop trim adaptation, whereas
+both drives here were city/backroad-heavy); those apps use a different,
+possibly manufacturer-specific PID or mode instead of generic Mode 01 PID
+08; or something specific to this adapter/firmware mishandles PID 08 while
+a genuine ELM327 or different clone (whatever the other apps were paired
+with) doesn't. Added `AvailablePIDsCommand` (all five PID-support ranges,
+Mode 01 PID 00/20/40/60/80) as a one-time read to get the ECU's own
+declared list of supported PIDs, this settles definitively whether PID 08
+is even claimed as supported by this ECU, independent of whether this
+adapter can successfully retrieve it. Check that result on the next drive
+before drawing any further conclusion.
 
 ## Missing GPS/OBD data for most of a drive: OnePlus battery optimization
 

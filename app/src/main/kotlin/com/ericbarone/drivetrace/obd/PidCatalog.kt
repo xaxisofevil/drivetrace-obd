@@ -17,6 +17,7 @@ import com.github.eltonvs.obd.command.pressure.IntakeManifoldPressureCommand
 import com.github.eltonvs.obd.command.temperature.AirIntakeTemperatureCommand
 import com.github.eltonvs.obd.command.temperature.AmbientAirTemperatureCommand
 import com.github.eltonvs.obd.command.temperature.EngineCoolantTemperatureCommand
+import com.github.eltonvs.obd.command.control.AvailablePIDsCommand
 import com.github.eltonvs.obd.command.control.TroubleCodesCommand
 import com.github.eltonvs.obd.command.control.PendingTroubleCodesCommand
 import com.github.eltonvs.obd.command.control.PermanentTroubleCodesCommand
@@ -75,6 +76,16 @@ object PidCatalog {
             { TroubleCodesCommand() },
             { PendingTroubleCodesCommand() },
             { PermanentTroubleCodesCommand() },
+            // The ECU's own declared list of which Mode 01 PIDs it supports (a real Mode 01
+            // PID 00/20/40/60/80 bitmask query, not an inference from trying a PID and seeing
+            // what comes back). Added specifically to settle whether LONG_TERM_BANK_1 (PID 08,
+            // in the 01-20 range) is genuinely absent from this ECU vs. present-but-not-
+            // answering, see KNOWN_ISSUES.md. Covers every PID this app polls, not just that one.
+            { AvailablePIDsCommand(AvailablePIDsCommand.AvailablePIDsRanges.PIDS_01_TO_20) },
+            { AvailablePIDsCommand(AvailablePIDsCommand.AvailablePIDsRanges.PIDS_21_TO_40) },
+            { AvailablePIDsCommand(AvailablePIDsCommand.AvailablePIDsRanges.PIDS_41_TO_60) },
+            { AvailablePIDsCommand(AvailablePIDsCommand.AvailablePIDsRanges.PIDS_61_TO_80) },
+            { AvailablePIDsCommand(AvailablePIDsCommand.AvailablePIDsRanges.PIDS_81_TO_A0) },
         )
 }
 
