@@ -107,6 +107,11 @@ class DriveData:
 
 
 def load_bundle(path: Path) -> DriveData:
+    """Loads an export bundle. locations.csv is optional: the PC logger has
+    no GPS of its own (see load_gpslogger_csv), so a bundle may legitimately
+    have none. elapsed_s is NOT computed here; see finalize_timing, which
+    needs to see every loaded source before it can pick a shared t0.
+    """
     if path.is_file() and path.suffix == ".zip":
         tmp_dir = Path(tempfile.mkdtemp(prefix="drivetrace_"))
         with zipfile.ZipFile(path) as zf:
@@ -119,17 +124,59 @@ def load_bundle(path: Path) -> DriveData:
 
     metadata = json.loads((folder / "metadata.json").read_text())
     samples = pd.read_csv(folder / "samples_long.csv")
-    locations = pd.read_csv(folder / "locations.csv")
+    locations_path = folder / "locations.csv"
+    locations = pd.read_csv(locations_path) if locations_path.exists() else pd.DataFrame()
     events_path = folder / "events.csv"
     events = pd.read_csv(events_path) if events_path.exists() else pd.DataFrame()
 
-    samples["elapsed_s"] = samples["elapsed_ns"] / 1e9
-    if not locations.empty:
-        locations["elapsed_s"] = locations["elapsed_ns"] / 1e9
-    if not events.empty:
-        events["elapsed_s"] = events["elapsed_ns"] / 1e9
-
     return DriveData(metadata=metadata, samples=samples, locations=locations, events=events)
+
+
+# GPSLogger's real CSV columns, confirmed from its CSVFileLogger.java source
+# (not guessed): time, lat, lon, elevation, accuracy, bearing, speed,
+# satellites, provider, hdop, vdop, pdop, geoidheight, ageofdgpsdata, dgpsid,
+# activity, battery, annotation, timestamp_ms, time_offset, distance,
+# starttimestamp_ms, profile_name, battery_charging. speed is in m/s
+# (Android Location.getSpeed()), matching this project's internal schema.
+def load_gpslogger_csv(path: Path) -> pd.DataFrame:
+    """Loads a raw GPSLogger export (phone-side GPS, separate device/clock
+    from the PC OBD logger) and maps it onto this project's locations schema."""
+    raw = pd.read_csv(path)
+    return pd.DataFrame(
+        {
+            "wall_time_utc_ms": raw["timestamp_ms"],
+            "latitude": raw["lat"],
+            "longitude": raw["lon"],
+            "altitude_m": raw.get("elevation"),
+            "speed_mps": raw.get("speed"),
+            "bearing_deg": raw.get("bearing"),
+            "horizontal_accuracy_m": raw.get("accuracy"),
+            "provider": raw.get("provider"),
+        }
+    )
+
+
+def finalize_timing(data: DriveData, external_locations: pd.DataFrame | None = None) -> DriveData:
+    """Assigns elapsed_s to every source, anchored to a shared wall-clock t0
+    (the earliest wall_time_utc_ms across whatever's loaded). This works for
+    both the single-device Android export (where elapsed_ns would also have
+    worked) and the cross-device PC+phone case (where it's the only option,
+    since the two devices don't share a monotonic clock)."""
+    locations = external_locations if external_locations is not None else data.locations
+
+    timestamps = [data.samples["wall_time_utc_ms"]]
+    if not locations.empty:
+        timestamps.append(locations["wall_time_utc_ms"])
+    t0_ms = min(s.min() for s in timestamps if not s.empty)
+
+    data.samples["elapsed_s"] = (data.samples["wall_time_utc_ms"] - t0_ms) / 1000
+    if not locations.empty:
+        locations = locations.copy()
+        locations["elapsed_s"] = (locations["wall_time_utc_ms"] - t0_ms) / 1000
+    if not data.events.empty:
+        data.events["elapsed_s"] = (data.events["wall_time_utc_ms"] - t0_ms) / 1000
+
+    return DriveData(metadata=data.metadata, samples=data.samples, locations=locations, events=data.events)
 
 
 def match_pid(canonical_names: pd.Series, patterns: list[str]) -> pd.Series:
@@ -531,10 +578,16 @@ def write_report(
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("bundle", type=Path, help="Path to the export .zip or an unzipped export folder")
+    parser.add_argument(
+        "--gps", type=Path, default=None,
+        help="Path to a raw GPSLogger CSV, for when OBD (PC logger) and GPS (phone) come from separate devices",
+    )
     parser.add_argument("--out", type=Path, default=None, help="Output directory (default: ./output/<session-id>/)")
     args = parser.parse_args()
 
     data = load_bundle(args.bundle)
+    external_locations = load_gpslogger_csv(args.gps) if args.gps else None
+    data = finalize_timing(data, external_locations)
     snap, _per_pid = build_snapshot(data)
     snap = add_derived_columns(snap)
 

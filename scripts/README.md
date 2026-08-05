@@ -8,13 +8,22 @@ Anaconda base env, which currently has a broken numpy/pandas ABI mismatch.
 ```powershell
 cd projects\drivetrace-obd
 python -m venv .venv
-.venv\Scripts\pip install -r scripts\requirements.txt
+.venv\Scripts\pip install -r requirements.txt
 ```
+
+(Same `.venv` used by `pc_logger/`, see its README.)
 
 ## Run
 
 ```powershell
 .venv\Scripts\python scripts\analyze_drive.py path\to\drivetrace_..._session-N.zip
+```
+
+If OBD and GPS came from separate devices (the PC logger + phone GPSLogger
+setup), add `--gps`:
+
+```powershell
+.venv\Scripts\python scripts\analyze_drive.py data\raw\pc_session_<ts> --gps path\to\gpslogger_export.csv
 ```
 
 Output (plots + analysis_report.md + snapshot_1s.csv) goes to
