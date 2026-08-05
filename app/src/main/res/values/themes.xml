@@ -1,0 +1,3 @@
+<resources>
+    <style name="Theme.DriveTrace" parent="android:Theme.Material.Light.NoActionBar" />
+</resources>

@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- Simple gauge: outer ring + needle, kept inside the adaptive-icon safe zone -->
+    <path
+        android:strokeColor="#4FD1C5"
+        android:strokeWidth="6"
+        android:pathData="M54,24 A30,30 0 1 1 53.9,24"
+        android:fillColor="#00000000" />
+    <path
+        android:fillColor="#4FD1C5"
+        android:pathData="M54,54 L74,40 L58,50 Z" />
+    <path
+        android:fillColor="#4FD1C5"
+        android:pathData="M54,54 m-4,0 a4,4 0 1 0 8,0 a4,4 0 1 0 -8,0" />
+</vector>
