@@ -308,14 +308,36 @@ STOICH_AFR_GASOLINE`. Confirmed the fix's actual effect on two real
 drives before concluding it wasn't the answer to the bigger question
 above, rather than assuming.
 
+## Octane-driven timing retard (new lead, not yet checked)
+
+This vehicle is a SKYACTIV-G 2.5 Turbo, factory-rated 250hp on 93 octane
+vs. ~225hp on 87, via the ECU's knock sensor dynamically retarding timing
+(and reducing boost) on lower-octane fuel, not a fixed detune. Retarded
+timing to avoid knock measurably hurts fuel economy on its own, no sensor
+fault required, this is a real, mundane, non-mechanical candidate
+explanation for the original MPG-drop question, worth checking before
+chasing anything else.
+
+Timing Advance (PID 0E) wasn't logged before tonight; kotlin-obd-api
+doesn't have a command for it. Added a custom `TimingAdvanceCommand` (see
+`SafeCommands.kt`) to Tier B. Not yet checked against a real drive under
+load, if timing is more retarded than expected for the RPM/load at hand,
+that's direct ECU-side evidence of knock mitigation in progress,
+independent of what octane anyone remembers buying.
+
 ## Miscellaneous
 
 - Fuel Rail Pressure and Fuel Consumption Rate frequently return
   `NoDataException` on the test vehicle (now correctly cycling through
   cooldown rather than being permanently dropped, but still often
   genuinely unsupported, not a bug).
-- `Engine Runtime` has parsed to `None` in every session so far; not yet
-  investigated.
+- `Engine Runtime` **root-caused**: the library's `RuntimeCommand` queries
+  PID `0F`, which is actually Intake Air Temperature per SAE J1979, not
+  Engine Runtime (that's PID `1F`), confirmed directly against the
+  library's real source. It was silently formatting an intake-air-temp
+  byte as a fake `HH:MM:SS` string, which never parses as a number, hence
+  "always None." Fixed via `SafeEngineRuntimeCommand` (correct PID, plain
+  numeric seconds).
 - Screen timeout was set to 30 minutes on the test phone for development
   convenience, then reset back to 30 seconds (`adb shell settings put
   system screen_off_timeout 30000`) once dev work wrapped up for the

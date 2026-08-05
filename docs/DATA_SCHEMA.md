@@ -45,7 +45,8 @@ anywhere (see `scripts/analyze_drive.py`'s `PID_KEYWORDS`), use these:
 | 5E | `Fuel Consumption Rate` | L/h | B | Uses `SafeFuelConsumptionRateCommand`; often `NoDataException` on this vehicle |
 | 33 | `Barometric Pressure` | kPa | C | |
 | 46 | `Ambient Air Temperature` | °C | C | |
-| 1F | `Engine Runtime` | s | C | Parsing has failed (returns null) in testing so far, not yet root-caused |
+| 0E | `Timing Advance` | ° | B | Not in kotlin-obd-api; custom `TimingAdvanceCommand`, added to check for knock-related timing retard (see KNOWN_ISSUES.md) |
+| 1F | `Engine Runtime` | s | C | Uses `SafeEngineRuntimeCommand`; library's `RuntimeCommand` queries PID 0F (Intake Air Temp) instead of 1F, root cause of the old "always parses to null" note |
 | 31 | `Distance traveled since codes cleared` | km | C | Uses `SafeDistanceSinceCodesClearedCommand` |
 | 2C | `Commanded EGR` | % | C | |
 | 2D | `EGR Error` | % | C | |

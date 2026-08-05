@@ -58,6 +58,7 @@ private val PLAUSIBLE_RANGES: Map<String, ClosedFloatingPointRange<Double>> = ma
     "Intake Air Temperature" to -40.0..215.0,
     "Ambient Air Temperature" to -40.0..215.0,
     "Throttle Position" to 0.0..100.0,
+    "Timing Advance" to -64.0..63.5, // full range the PID 0E formula can express (A/2 - 64)
     "Intake Manifold Pressure" to 0.0..400.0,
     "Barometric Pressure" to 50.0..150.0,
     "Distance traveled since codes cleared" to 0.0..100_000.0,

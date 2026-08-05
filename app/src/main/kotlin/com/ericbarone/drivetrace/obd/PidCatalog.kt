@@ -5,7 +5,6 @@ import com.github.eltonvs.obd.command.egr.CommandedEgrCommand
 import com.github.eltonvs.obd.command.egr.EgrErrorCommand
 import com.github.eltonvs.obd.command.engine.LoadCommand
 import com.github.eltonvs.obd.command.engine.RPMCommand
-import com.github.eltonvs.obd.command.engine.RuntimeCommand
 import com.github.eltonvs.obd.command.engine.SpeedCommand
 import com.github.eltonvs.obd.command.engine.ThrottlePositionCommand
 import com.github.eltonvs.obd.command.fuel.FuelLevelCommand
@@ -53,6 +52,7 @@ object PidCatalog {
             { IntakeManifoldPressureCommand() },
             { SafeFuelRailPressureCommand() }, // library's FuelRailPressureCommand still has the unbounded-byte bug
             { SafeFuelConsumptionRateCommand() }, // ditto FuelConsumptionRateCommand
+            { TimingAdvanceCommand() }, // not in the library; added for octane/knock-retard checks
         )
 
     /** Sample roughly every 10-30 seconds; slow-changing context. */
@@ -60,7 +60,7 @@ object PidCatalog {
         listOf(
             { BarometricPressureCommand() },
             { AmbientAirTemperatureCommand() },
-            { RuntimeCommand() },
+            { SafeEngineRuntimeCommand() }, // library's RuntimeCommand queries the wrong PID (0F, not 1F)
             { SafeDistanceSinceCodesClearedCommand() }, // library's version still has the unbounded-byte bug
             { CommandedEgrCommand() },
             { EgrErrorCommand() },

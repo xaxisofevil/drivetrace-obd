@@ -71,3 +71,42 @@ class SafeDistanceSinceCodesClearedCommand : ObdCommand() {
         bytesToInt(response.bufferedValue, bytesToProcess = 2).toString()
     }
 }
+
+/**
+ * A different bug from the byte-overflow one above: the library's RuntimeCommand queries PID
+ * "0F", which is actually Intake Air Temperature per SAE J1979, not Engine Runtime (that's PID
+ * "1F"). Confirmed directly against the library's real source (Engine.kt): RuntimeCommand sends
+ * "010F" and formats whatever comes back as a fake "HH:MM:SS" string, which explains the
+ * existing "Engine Runtime always parses to null" note in KNOWN_ISSUES.md, the ECU is really
+ * answering an intake-air-temperature request, and the resulting string never parses as a
+ * number. This replacement queries the correct PID and returns a plain numeric seconds value.
+ */
+class SafeEngineRuntimeCommand : ObdCommand() {
+    override val tag = "ENGINE_RUNTIME"
+    override val name = "Engine Runtime"
+    override val mode = "01"
+    override val pid = "1F"
+    override val defaultUnit = "s"
+    override val handler = { response: ObdRawResponse ->
+        bytesToInt(response.bufferedValue, bytesToProcess = 2).toString()
+    }
+}
+
+/**
+ * Not a library bug, just a PID this project didn't log before: Timing Advance (PID 0E), added
+ * specifically to check for ignition-timing retard, the ECU's actual knock-mitigation response
+ * on lower-octane fuel on this engine (SKYACTIV-G Turbo, factory-rated 250hp on 93 octane vs.
+ * ~225hp on 87, via dynamic timing/boost adjustment from the knock sensor, not a fixed detune).
+ * Retarded timing under load is real, ECU-reported evidence of what the engine is doing,
+ * independent of what octane anyone remembers buying.
+ */
+class TimingAdvanceCommand : ObdCommand() {
+    override val tag = "TIMING_ADVANCE"
+    override val name = "Timing Advance"
+    override val mode = "01"
+    override val pid = "0E"
+    override val defaultUnit = "°"
+    override val handler = { response: ObdRawResponse ->
+        "%.1f".format(bytesToInt(response.bufferedValue, bytesToProcess = 1) / 2f - 64f)
+    }
+}
