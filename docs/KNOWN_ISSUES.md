@@ -54,6 +54,34 @@ initialization had been stranded as unreachable dead code inside the
 have crashed immediately on first real use. Never caught before because
 pc_logger hadn't been run against real hardware.
 
+**Update, session 7 (post-fix)**: long-term fuel trim still failed **every
+single attempt**, 6 cooldown cycles across the whole drive, always
+`NoDataException`, never once succeeded. This is a different picture than
+the drive that motivated the fix, there, the same PID eventually succeeded
+after a couple of cooldown retries. The cooldown mechanism is confirmed
+working as designed (it did keep retrying instead of giving up), but *why*
+LTFT specifically won't return data at all in some sessions while STFT on
+the same command family works fine is still open. Worth investigating
+before trusting any `combined_trim_pct` figure, it will be `NaN` whenever
+this happens (both trims are required to combine them).
+
+## DTC decoding is unverified
+
+Current/pending/permanent trouble codes are read and parsed
+(`BaseTroubleCodesCommand.parseTroubleCodesList()` in the pinned library
+commit), but nothing has independently confirmed the output is correct on
+this vehicle. The core nibble-decode arithmetic has been manually traced
+through with a worked example (`"0171"` → `"P0171"`) and is correct, but
+the more complex `workingData` extraction branch (CAN one-frame vs.
+CAN multi-frame vs. ISO9141/KWP response framing) hasn't been fully
+audited, and no raw ELM response text is captured anywhere in this
+project to allow an independent re-check of a specific code after the
+fact. Given how many other real bugs this library had elsewhere tonight
+(see above), treat any DTC this project reports as a lead to verify
+against a second scan tool, not a confirmed finding. Session 7 read back
+`C0300` (current), `C0700` (pending), `C0A00` (permanent), all chassis
+codes; unverified against another tool as of this writing.
+
 ## VIN doesn't work on the test vehicle
 
 `VINCommand` (Mode 09 PID 02) throws `NonNumericResponseException` every
