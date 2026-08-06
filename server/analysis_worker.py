@@ -115,12 +115,18 @@ def _analyze(session_id: int, conn: duckdb.DuckDBPyConnection, db_lock: threadin
     phases = ad.phase_breakdown(snap)
     coverage = ad.pid_coverage_report(data.samples)
     flags = ad.vehicle_awake_flags(data.samples, data.events) + ad.anomaly_flags(snap, cruise, data.events)
+    driving_phase = ad.classify_phases(snap)
+    braking_events = ad.find_braking_waste_events(snap, driving_phase)
 
     out_dir = OUTPUT_ROOT / str(session_id)
     out_dir.mkdir(parents=True, exist_ok=True)
+    snap["phase"] = driving_phase
     snap.to_csv(out_dir / "snapshot_1s.csv", index=False)
     ad.make_plots(snap, out_dir)
-    ad.write_report(out_dir, data, snap, coverage, idle_fraction, warmup_s, distance, overall_mpg, cruise, phases, flags)
+    ad.write_report(
+        out_dir, data, snap, coverage, idle_fraction, warmup_s, distance, overall_mpg, cruise, phases, flags,
+        braking_events=braking_events,
+    )
 
     return _sanitize({
         "idle_fraction_pct": round(idle_fraction * 100, 1) if idle_fraction is not None else None,
@@ -131,5 +137,8 @@ def _analyze(session_id: int, conn: duckdb.DuckDBPyConnection, db_lock: threadin
         "cruise_window_count": int(len(cruise)),
         "phases": phases.reset_index().to_dict(orient="records") if not phases.empty else [],
         "flags": flags,
+        "braking_event_count": int(len(braking_events)),
+        "braking_fuel_equiv_ml": round(float(braking_events["fuel_equiv_ml"].sum()), 1) if not braking_events.empty else 0.0,
+        "braking_events_without_coast": int((~braking_events["coasted_first"]).sum()) if not braking_events.empty else 0,
         "report_dir": str(out_dir),
     })

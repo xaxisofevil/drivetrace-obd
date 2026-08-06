@@ -123,6 +123,27 @@ fun LoggingScreen(status: LoggingUiState, onStop: () -> Unit, onNewSession: () -
                         analysis.distanceGpsKm?.let { StatusRow("Distance", "%.2f km".format(it)) }
                         analysis.idleFractionPct?.let { StatusRow("Idle fraction", "%.1f%%".format(it)) }
                         analysis.warmupMinutes?.let { StatusRow("Warm-up", "%.1f min".format(it)) }
+                        if ((analysis.brakingEventCount ?: 0) > 0) {
+                            StatusRow("Braking events", analysis.brakingEventCount.toString())
+                            analysis.brakingFuelEquivMl?.let {
+                                StatusRow("Est. fuel to brake heat", "%.0f mL".format(it))
+                            }
+                            analysis.brakingEventsWithoutCoast?.let {
+                                if (it > 0) {
+                                    Text(
+                                        "$it of ${analysis.brakingEventCount} had no coast phase first, " +
+                                            "speed was carried right up to the brakes.",
+                                        style = MaterialTheme.typography.bodySmall,
+                                    )
+                                }
+                            }
+                            Text(
+                                "Estimate only: braking is inferred from deceleration rate, not " +
+                                    "measured, and the mL figure assumes a fixed vehicle mass/engine " +
+                                    "efficiency. See analysis_report.md for details.",
+                                style = MaterialTheme.typography.bodySmall,
+                            )
+                        }
                         for (flag in analysis.flags) {
                             Text("- $flag", style = MaterialTheme.typography.bodySmall)
                         }

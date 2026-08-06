@@ -40,6 +40,12 @@ object PidCatalog {
             { FuelTrimCommand(FuelTrimCommand.FuelTrimBank.LONG_TERM_BANK_1) },
             { CommandedEquivalenceRatioCommand() },
             { SafeModuleVoltageCommand() }, // library's ModuleVoltageCommand still has the unbounded-byte bug
+            // Promoted from Tier B: confirmed directly (KNOWN_ISSUES.md) that Tier B's ~3-5s
+            // nominal cadence stretched to 7-10s stale in real driving, exactly during the
+            // lift-off moments a coast/brake phase classifier needs to catch. That's fast enough
+            // to fool a driver-behavior feature into concluding "never coasts" when the real
+            // issue was stale sensor data, not the driving itself.
+            { ThrottlePositionCommand() },
         )
 
     /** Sample roughly every 2-5 seconds. */
@@ -47,7 +53,6 @@ object PidCatalog {
         listOf(
             { EngineCoolantTemperatureCommand() },
             { AirIntakeTemperatureCommand() },
-            { ThrottlePositionCommand() },
             { IntakeManifoldPressureCommand() },
             { SafeFuelRailPressureCommand() }, // library's FuelRailPressureCommand still has the unbounded-byte bug
             { SafeFuelConsumptionRateCommand() }, // ditto FuelConsumptionRateCommand

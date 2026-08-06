@@ -40,7 +40,7 @@ anywhere (see `scripts/analyze_drive.py`'s `PID_KEYWORDS`), use these:
 | 42 | `Control Module Power Supply` | V | A | Not "Control Module Voltage"; uses `SafeModuleVoltageCommand` |
 | 05 | `Engine Coolant Temperature` | °C | B | |
 | 0F | `Air Intake Temperature` | °C | B | |
-| 11 | `Throttle Position` | % | B | |
+| 11 | `Throttle Position` | % | A | Promoted from Tier B: confirmed its ~3-5s nominal cadence was actually stretching to 7-10s stale in real driving, exactly during the lift-off moments the driving-phase classifier needs fresh (see KNOWN_ISSUES.md) |
 | 0B | `Intake Manifold Pressure` | kPa | B | |
 | 22 | `Fuel Rail Pressure` | kPa | B | Uses `SafeFuelRailPressureCommand`; often `NoDataException` on this vehicle |
 | 5E | `Fuel Consumption Rate` | L/h | B | Uses `SafeFuelConsumptionRateCommand`; often `NoDataException` on this vehicle |

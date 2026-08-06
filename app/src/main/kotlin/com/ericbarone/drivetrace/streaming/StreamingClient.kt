@@ -36,6 +36,14 @@ data class AnalysisSummary(
     val distanceGpsKm: Double?,
     val overallMpg: Double?,
     val flags: List<String>,
+    /** Braking is inferred from deceleration rate only (no generic OBD-II PID exposes brake
+     * pedal position), and the mL figure assumes a fixed vehicle mass/engine efficiency, not
+     * measured for this vehicle. See analyze_drive.py's efficiency-coaching section for the
+     * caveats; trust the relative signal (how many events had no coast phase first) more than
+     * the absolute mL number. */
+    val brakingEventCount: Int?,
+    val brakingFuelEquivMl: Double?,
+    val brakingEventsWithoutCoast: Int?,
 )
 
 sealed class AnalysisPollResult {
@@ -46,6 +54,9 @@ sealed class AnalysisPollResult {
 
 private fun JSONObject.optDoubleOrNull(key: String): Double? =
     if (has(key) && !isNull(key)) getDouble(key) else null
+
+private fun JSONObject.optIntOrNull(key: String): Int? =
+    if (has(key) && !isNull(key)) getInt(key) else null
 
 /**
  * Best-effort live stream to the home ingest server (see server/). This is
@@ -341,6 +352,9 @@ class StreamingClient(private val baseUrl: String, private val token: String) {
                                     distanceGpsKm = result.optDoubleOrNull("distance_gps_km"),
                                     overallMpg = result.optDoubleOrNull("overall_mpg"),
                                     flags = flags,
+                                    brakingEventCount = result.optIntOrNull("braking_event_count"),
+                                    brakingFuelEquivMl = result.optDoubleOrNull("braking_fuel_equiv_ml"),
+                                    brakingEventsWithoutCoast = result.optIntOrNull("braking_events_without_coast"),
                                 ),
                             )
                         }

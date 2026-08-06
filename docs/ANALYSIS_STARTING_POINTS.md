@@ -59,6 +59,17 @@ Everything in `analyze_drive.py`, run either manually or automatically via
 - `pid_coverage_report` — sample counts and latency per PID, useful for
   spotting a PID that's mostly `IMPLAUSIBLE` or barely sampled at all
   before trusting derived numbers built from it
+- `classify_phases` / `find_braking_waste_events` — per-second driving
+  phase (idle/accelerating/cruising/coasting/decelerating/braking) and,
+  for each braking event, an estimated fuel-equivalent cost of the
+  kinetic energy dissipated as brake heat, plus whether a coast phase
+  preceded it. Braking is inferred from deceleration rate only, no
+  generic OBD-II PID exposes brake pedal position, and the fuel figure
+  assumes a representative vehicle mass/engine efficiency, not measured
+  for this car; see KNOWN_ISSUES.md for a real staleness bug this
+  surfaced and fixed (Throttle Position needed promoting to Tier A).
+  Cross-session GPS clustering (recognizing the same real-world spot
+  across repeated drives) is the natural next step, not built yet.
 
 ## What hasn't been done yet, and probably should be next
 

@@ -317,6 +317,121 @@ def compute_overall_mpg(snap: pd.DataFrame, distance_km: float | None) -> float 
     return miles / total_gallons
 
 
+# ---------------------------------------------------------------------------
+# Driving-behavior phase classification and braking-waste coaching
+# ---------------------------------------------------------------------------
+
+# km/h per second. Coasting (foot off gas, drag/engine braking only) is much gentler than
+# actually pressing the brake pedal, a moderate brake application easily runs 3-5x steeper.
+# These are representative vehicle-dynamics values, not measured from this specific car; if a
+# real drive's events look misclassified (e.g. normal engine braking flagged as "braking"),
+# tune these rather than trusting them as ground truth.
+ACCEL_THRESHOLD_KMH_S = 1.5
+COAST_DECEL_THRESHOLD_KMH_S = -2.0
+BRAKE_DECEL_THRESHOLD_KMH_S = -6.0
+COAST_THROTTLE_MAX_PCT = 5.0  # "foot off the gas"
+COAST_LOOKBACK_S = 10  # how far back to check for a coast phase before a braking event
+# Confirmed directly on a real drive: Throttle Position at Tier B's nominal ~3-5s cadence was
+# actually 7-10s stale during real lift-off moments, exactly what this classification needs
+# fresh. Promoted to Tier A in the app (see PidCatalog.kt) going forward; this guard is
+# defense-in-depth for older sessions or any future degraded rotation. Age above this: don't
+# claim "coasting" without fresh evidence, fall back to the throttle-agnostic "decelerating".
+MAX_THROTTLE_AGE_S = 3.0
+
+PHASE_IDLE = "idle"
+PHASE_ACCELERATING = "accelerating"
+PHASE_CRUISING = "cruising"
+PHASE_COASTING = "coasting"
+PHASE_DECELERATING = "decelerating"  # off-throttle but not steep enough to call "braking"
+PHASE_BRAKING = "braking"
+
+# Converts kinetic energy dissipated as brake heat into an equivalent fuel cost. There's no
+# generic OBD-II PID for brake pedal position, so "braking" below is inferred purely from
+# deceleration rate, not measured, and these two constants are representative assumptions, not
+# measured for this vehicle. Treat resulting numbers as illustrative and most trustworthy when
+# compared *within* the same drive (relative), not as certified absolute fuel costs.
+ASSUMED_VEHICLE_MASS_KG = 1650.0  # ~2020 Mazda 6 2.5T curb weight + a typical occupant/cargo load
+ASSUMED_ENGINE_EFFICIENCY = 0.28  # representative part-throttle gasoline engine thermal efficiency
+GASOLINE_ENERGY_J_PER_GALLON = 1.2132e8  # 33.7 kWh/gal
+
+
+def classify_phases(snap: pd.DataFrame) -> pd.Series:
+    """One phase label per 1-second row. Braking is inferred purely from deceleration rate
+    (no generic OBD-II PID exposes brake pedal position), so this can't distinguish "pressed
+    the brake" from e.g. a hard manual downshift; treat it as a proxy, not a direct reading."""
+    if "speed_kmh" not in snap or snap.empty:
+        return pd.Series(dtype=object)
+
+    speed = snap["speed_kmh"]
+    accel = speed.diff() / GRID_INTERVAL_S
+    throttle = snap["throttle_pct"] if "throttle_pct" in snap else pd.Series(np.nan, index=snap.index)
+    throttle_age = snap["age_s_throttle_pct"] if "age_s_throttle_pct" in snap else pd.Series(np.nan, index=snap.index)
+    throttle_fresh = throttle_age.notna() & (throttle_age <= MAX_THROTTLE_AGE_S)
+
+    phase = pd.Series(PHASE_CRUISING, index=snap.index, dtype=object)
+    moving = speed >= IDLE_SPEED_THRESHOLD_KMH
+    phase[~moving] = PHASE_IDLE
+    phase[moving & (accel <= BRAKE_DECEL_THRESHOLD_KMH_S)] = PHASE_BRAKING
+    decel_band = moving & (accel <= COAST_DECEL_THRESHOLD_KMH_S) & (accel > BRAKE_DECEL_THRESHOLD_KMH_S)
+    phase[decel_band & throttle_fresh & (throttle <= COAST_THROTTLE_MAX_PCT)] = PHASE_COASTING
+    phase[decel_band & ~(throttle_fresh & (throttle <= COAST_THROTTLE_MAX_PCT))] = PHASE_DECELERATING
+    phase[moving & (accel >= ACCEL_THRESHOLD_KMH_S)] = PHASE_ACCELERATING
+    return phase
+
+
+def _contiguous_true_runs(mask: pd.Series) -> list[tuple[int, int]]:
+    """(start, end) positional-index pairs, inclusive, for each contiguous run of True."""
+    runs = []
+    in_run = False
+    start = 0
+    for i, v in enumerate(mask.to_numpy()):
+        if v and not in_run:
+            start, in_run = i, True
+        elif not v and in_run:
+            runs.append((start, i - 1))
+            in_run = False
+    if in_run:
+        runs.append((start, len(mask) - 1))
+    return runs
+
+
+def find_braking_waste_events(snap: pd.DataFrame, phase: pd.Series) -> pd.DataFrame:
+    """For each contiguous braking segment: the kinetic energy dissipated as brake heat, its
+    fuel-equivalent cost (see ASSUMED_VEHICLE_MASS_KG / ASSUMED_ENGINE_EFFICIENCY above for the
+    caveats on that number), and whether a coast phase preceded it, the actionable signal, did
+    the driver lift off the gas before braking, or carry power/speed right up to the brakes."""
+    if "speed_kmh" not in snap or phase.empty:
+        return pd.DataFrame()
+
+    rows = []
+    for start, end in _contiguous_true_runs(phase == PHASE_BRAKING):
+        v_start_kmh = snap["speed_kmh"].iloc[start]
+        v_end_kmh = snap["speed_kmh"].iloc[end]
+        if pd.isna(v_start_kmh) or pd.isna(v_end_kmh) or v_start_kmh <= v_end_kmh:
+            continue
+        v_start_ms, v_end_ms = v_start_kmh / 3.6, v_end_kmh / 3.6
+        ke_joules = 0.5 * ASSUMED_VEHICLE_MASS_KG * (v_start_ms**2 - v_end_ms**2)
+        fuel_equiv_gal = ke_joules / (ASSUMED_ENGINE_EFFICIENCY * GASOLINE_ENERGY_J_PER_GALLON)
+
+        lookback_start = max(0, start - COAST_LOOKBACK_S)
+        coasted_first = bool((phase.iloc[lookback_start:start] == PHASE_COASTING).any())
+
+        rows.append(
+            {
+                "start_s": snap["elapsed_s"].iloc[start],
+                "end_s": snap["elapsed_s"].iloc[end],
+                "speed_start_kmh": round(float(v_start_kmh), 1),
+                "speed_end_kmh": round(float(v_end_kmh), 1),
+                "fuel_equiv_ml": round(fuel_equiv_gal * LITERS_PER_GALLON * 1000, 1),
+                "coasted_first": coasted_first,
+                "latitude": snap["latitude"].iloc[start] if "latitude" in snap else None,
+                "longitude": snap["longitude"].iloc[start] if "longitude" in snap else None,
+            }
+        )
+
+    return pd.DataFrame(rows)
+
+
 def find_cruise_windows(snap: pd.DataFrame, warmup_end_s: float | None) -> pd.DataFrame:
     """Stable-speed, low-acceleration, already-warmed segments: the best
     apples-to-apples comparison points across the drive."""
@@ -606,6 +721,7 @@ def write_report(
     cruise: pd.DataFrame,
     phases: pd.DataFrame,
     flags: list[str],
+    braking_events: pd.DataFrame | None = None,
 ) -> None:
     meta = data.metadata
     lines = [
@@ -639,6 +755,29 @@ def write_report(
     lines += ["", "## PID coverage / latency", ""]
     lines.append(coverage.to_markdown() if not coverage.empty else "_no samples_")
 
+    lines += ["", "## Efficiency coaching (estimate, see caveats)", ""]
+    if braking_events is not None and not braking_events.empty:
+        total_ml = braking_events["fuel_equiv_ml"].sum()
+        no_coast = (~braking_events["coasted_first"]).sum()
+        lines.append(
+            f"{len(braking_events)} braking event(s) detected, an estimated {total_ml:.0f} mL "
+            f"of fuel-equivalent kinetic energy went to brake heat across this drive. "
+            f"{no_coast} of {len(braking_events)} had no coast phase beforehand, speed was "
+            "carried right up to the brakes rather than let off earlier."
+        )
+        lines.append(
+            "\n_Braking is inferred from deceleration rate only (no generic OBD-II PID exposes "
+            "brake pedal position), and the fuel-equivalent figure assumes a fixed vehicle mass "
+            f"({ASSUMED_VEHICLE_MASS_KG:.0f} kg) and engine efficiency "
+            f"({ASSUMED_ENGINE_EFFICIENCY:.0%}), both representative approximations, not "
+            "measured for this vehicle. Trust the relative comparison between events in this "
+            "drive more than the absolute mL figures._\n"
+        )
+        top = braking_events.sort_values("fuel_equiv_ml", ascending=False).head(10)
+        lines.append(top.to_markdown(index=False))
+    else:
+        lines.append("_no braking events detected this drive_")
+
     (out_dir / "analysis_report.md").write_text("\n".join(lines), encoding="utf-8")
 
 
@@ -671,13 +810,19 @@ def main() -> None:
     phases = phase_breakdown(snap)
     coverage = pid_coverage_report(data.samples)
     flags = vehicle_awake_flags(data.samples, data.events) + anomaly_flags(snap, cruise, data.events)
+    driving_phase = classify_phases(snap)
+    braking_events = find_braking_waste_events(snap, driving_phase)
 
     out_dir = args.out or Path(__file__).resolve().parent.parent / "output" / str(data.metadata.get("sessionId", "session"))
     out_dir.mkdir(parents=True, exist_ok=True)
 
+    snap["phase"] = driving_phase
     snap.to_csv(out_dir / "snapshot_1s.csv", index=False)
     make_plots(snap, out_dir)
-    write_report(out_dir, data, snap, coverage, idle_fraction, warmup_s, distance, overall_mpg, cruise, phases, flags)
+    write_report(
+        out_dir, data, snap, coverage, idle_fraction, warmup_s, distance, overall_mpg, cruise, phases, flags,
+        braking_events=braking_events,
+    )
 
     print(f"Wrote analysis to {out_dir}")
     for f in flags:

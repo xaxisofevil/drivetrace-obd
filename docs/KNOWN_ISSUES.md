@@ -353,6 +353,49 @@ load yet, if timing is more retarded than expected for the RPM/load at
 hand, that's direct ECU-side evidence of knock mitigation in progress,
 independent of what octane anyone remembers buying.
 
+## Driving-phase classification found a real Tier B staleness bug
+
+Built a phase classifier (idle/accelerating/cruising/coasting/decelerating/
+braking) plus a per-braking-event kinetic-energy-waste estimate, to answer
+"could coasting earlier here have saved fuel" with real numbers instead of
+guesses (see `classify_phases`/`find_braking_waste_events` in
+`analyze_drive.py`). First pass against three real drives flagged **zero**
+coast phases across 22 braking events, every single one. That's not a
+real finding about the user's driving, tracked it down: `Throttle
+Position` (used to distinguish "foot off the gas, coasting" from "still
+decelerating on throttle") is Tier B, nominally ~3-5s, but confirmed
+directly against real snapshot data it was actually 7-10s stale exactly
+during lift-off moments, `age_s_throttle_pct` hit 10.4s while the car
+decelerated from 36 to 15 km/h in that same window. The classifier was
+reading a mid-throttle value held over from several seconds earlier, not
+what the driver's foot was actually doing.
+
+Fixed two ways: promoted `ThrottlePositionCommand` to Tier A (see
+DATA_SCHEMA.md), and added a staleness guard in `classify_phases` itself
+(`MAX_THROTTLE_AGE_S = 3.0`, defense-in-depth for older sessions or any
+future degraded rotation) that refuses to classify a phase as "coasting"
+without fresh throttle evidence, falling back to the throttle-agnostic
+"decelerating" instead. Verified the guard does the conservative thing on
+the three historical sessions (still zero coasts detected, correctly, all
+three predate the Tier A promotion) rather than silently producing the
+same wrong answer with more confidence. Whether real coast phases show up
+now needs a drive logged after this fix, not yet confirmed.
+
+The braking-waste-to-fuel conversion itself (`ASSUMED_VEHICLE_MASS_KG`,
+`ASSUMED_ENGINE_EFFICIENCY`) is a physics estimate, not a measurement,
+representative values for this vehicle class, not measured for this
+specific car. Trust the relative comparison between events within one
+drive more than the absolute mL figures.
+
+**Not yet built**: cross-session GPS clustering to recognize the same
+real-world spot (e.g. a specific intersection on a repeated commute)
+across multiple drives, so a coaching flag can say "this has happened N
+times here" rather than being scoped to one drive. Deliberately deferred:
+decided to use GPS-coordinate clustering with no external dependency
+(no reverse-geocoding/street-name API) rather than pull in a mapping
+service, real street names could be layered on later as a separate
+decision if useful.
+
 ## Miscellaneous
 
 - Fuel Rail Pressure and Fuel Consumption Rate frequently return
