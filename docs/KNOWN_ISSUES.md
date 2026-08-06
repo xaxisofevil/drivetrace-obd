@@ -396,6 +396,54 @@ decided to use GPS-coordinate clustering with no external dependency
 service, real street names could be layered on later as a separate
 decision if useful.
 
+## est_instant_mpg is a misleading point-in-time ratio (found while building a phase-timeline chart)
+
+Building a chart of MPG over time (prompted by wanting to visualize a
+drive by phase) surfaced a real problem: `est_instant_mpg` rarely dipped
+below 50 on a drive whose actual overall MPG was 26.3. Not a display
+quirk, a real flaw in the metric itself. `est_instant_mpg = speed /
+fuel_rate` at each single instant; during coasting or deceleration
+fuel-cut, fuel rate drops toward zero while speed is still real, so the
+ratio spikes toward infinity (248 MPG observed) even though that instant
+contributes almost nothing to the trip's actual fuel total either way.
+Confirmed directly: the drive's true moving-only MPG (sum distance / sum
+fuel, ignoring idle entirely) was 31.2; `est_instant_mpg`'s median while
+moving was 42.6, 75th percentile 99.7. You can't average a ratio and
+expect it to match the ratio of the sums, classic mistake, and this
+metric had been feeding the existing `estimated_mpg.png` plot the whole
+project.
+
+Added `compute_rolling_mpg`: sums distance and fuel separately over a
+15-second rolling window and divides once, the same correct method
+`compute_overall_mpg` already used for the whole trip, just windowed.
+Confirmed much more representative on the same drive: median 33.7 (vs.
+31.2 true), max 143 (vs. 248). `estimated_mpg.png` now plots both, the
+old raw ratio faint in the background so the difference stays visible
+rather than silently disappearing, and the new rolling line prominent.
+Used the rolling metric (not the raw one) for the new phase-timeline
+chart below.
+
+## Phase-timeline chart, built with `xy` (new library, alpha)
+
+User wanted to visualize a full drive as a timeline colored by driving
+phase, with a continuous MPG line, and asked specifically to try `xy`
+(a brand-new Rust-backed Python charting library, alpha as of this
+writing, not something used elsewhere in this project) rather than
+matplotlib. Real API, found the right primitives (`x_band` for
+full-height phase-colored background bands, `line` with a named
+secondary `y_axis` for the dual speed/MPG scales, `callout` for
+pointer-line text), composition works as documented.
+
+Hit one real alpha-library bug: `x_band(x0, x1)` rejects a zero-width
+band, and a single-row (1-second) phase run has `x0 == x1` on a 1Hz grid.
+Fixed by extending `x1` by one grid interval for every band, which is
+also just the more correct thing to draw (that row represents a full
+second of that phase, not an instant).
+
+Not yet wired into the automatic per-drive pipeline (`analysis_worker.py`
+still only produces the matplotlib plots), this is a prototype under
+review before deciding whether/how to make it a standard output.
+
 ## Miscellaneous
 
 - Fuel Rail Pressure and Fuel Consumption Rate frequently return

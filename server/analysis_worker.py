@@ -106,6 +106,7 @@ def _analyze(session_id: int, conn: duckdb.DuckDBPyConnection, db_lock: threadin
     data = ad.finalize_timing(data)
     snap, _ = ad.build_snapshot(data)
     snap = ad.add_derived_columns(snap)
+    snap["rolling_mpg"] = ad.compute_rolling_mpg(snap)
 
     idle_fraction = ad.compute_idle_fraction(snap)
     warmup_s = ad.compute_warmup_duration_s(snap)

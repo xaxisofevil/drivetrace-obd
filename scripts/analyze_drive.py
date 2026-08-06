@@ -86,6 +86,9 @@ LITERS_PER_GALLON = 3.78541
 IDLE_SPEED_THRESHOLD_KMH = 2.0
 IDLE_RPM_THRESHOLD = 300
 LOW_SPEED_MPG_SUPPRESS_KMH = 8.0  # below this, instantaneous MPG is too noisy to trust
+ROLLING_MPG_WINDOW_S = 15  # see compute_rolling_mpg: sums distance/fuel over this window, not a
+# point ratio, avoids the near-zero-fuel-flow spike problem instantaneous MPG has
+ROLLING_MPG_MIN_FUEL_GAL = 0.0005  # suppress the ratio where too little fuel accumulated to trust it
 CRUISE_WINDOW_S = 10
 CRUISE_SPEED_STD_KMH = 3.0
 CRUISE_MIN_SPEED_KMH = 15.0
@@ -273,6 +276,34 @@ def add_derived_columns(snap: pd.DataFrame) -> pd.DataFrame:
             )
 
     return snap
+
+
+def compute_rolling_mpg(snap: pd.DataFrame) -> pd.Series:
+    """A well-behaved alternative to est_instant_mpg. Confirmed directly on a real drive that
+    est_instant_mpg (speed / fuel_rate, a point-in-time ratio) is badly misleading to look at:
+    during coasting or deceleration fuel-cut, fuel rate drops toward zero while speed is still
+    real, so the ratio spikes toward infinity (max 248 MPG observed) even though that moment
+    contributes almost nothing to the trip's actual fuel total either way. The true moving-only
+    MPG for that drive (sum distance / sum fuel, the same method compute_overall_mpg uses) was
+    31.2; est_instant_mpg's median while moving was 42.6 with a 75th percentile of 99.7, wildly
+    unrepresentative because you can't average a ratio and expect it to match the ratio of sums.
+
+    This sums distance and fuel separately over a rolling window and divides once, the same
+    correct method, just windowed instead of whole-trip. Confirmed this produces a much more
+    representative signal on the same drive: median 33.7, max 143 (vs. est_instant_mpg's 42.6
+    median / 248 max) for the same actual driving."""
+    if "speed_kmh" not in snap or "est_fuel_gal_hr" not in snap:
+        return pd.Series(dtype=float)
+
+    dist_mi_per_s = (snap["speed_kmh"].fillna(0) / 3600) * 0.621371
+    fuel_gal_per_s = snap["est_fuel_gal_hr"].fillna(0) / 3600
+    window = int(ROLLING_MPG_WINDOW_S / GRID_INTERVAL_S)
+
+    roll_dist = dist_mi_per_s.rolling(window, min_periods=window // 2, center=True).sum()
+    roll_fuel = fuel_gal_per_s.rolling(window, min_periods=window // 2, center=True).sum()
+    with np.errstate(divide="ignore", invalid="ignore"):
+        rolling_mpg = roll_dist / roll_fuel
+    return rolling_mpg.where(roll_fuel > ROLLING_MPG_MIN_FUEL_GAL)
 
 
 def compute_idle_fraction(snap: pd.DataFrame) -> float | None:
@@ -661,12 +692,20 @@ def make_plots(snap: pd.DataFrame, out_dir: Path) -> None:
         fig.savefig(out_dir / "engine_state.png", dpi=150)
         plt.close(fig)
 
-    if "est_instant_mpg" in snap:
+    if "est_instant_mpg" in snap or "rolling_mpg" in snap:
         fig, ax1 = plt.subplots(figsize=(10, 4))
-        ax1.plot(t, snap["est_instant_mpg"], color="tab:green")
-        ax1.set_ylabel("Estimated instantaneous MPG")
+        if "est_instant_mpg" in snap:
+            # Faint reference only: this is a point-in-time ratio that spikes toward infinity
+            # whenever fuel rate drops near zero (coasting, decel fuel-cut), see
+            # compute_rolling_mpg's docstring. Not representative on its own, kept visible so the
+            # difference from the corrected line below is honest, not hidden.
+            ax1.plot(t, snap["est_instant_mpg"], color="tab:green", alpha=0.25, linewidth=0.8, label="Raw instantaneous (misleading, see docs)")
+        if "rolling_mpg" in snap:
+            ax1.plot(t, snap["rolling_mpg"], color="tab:blue", linewidth=1.8, label=f"{ROLLING_MPG_WINDOW_S}s rolling (sum distance / sum fuel)")
+        ax1.set_ylabel("Estimated MPG")
         ax1.set_xlabel("Minutes")
         ax1.set_title("Estimated MPG (MAF-derived; suppressed at low speed and outside stoichiometric ops)")
+        ax1.legend()
         fig.tight_layout()
         fig.savefig(out_dir / "estimated_mpg.png", dpi=150)
         plt.close(fig)
@@ -801,6 +840,7 @@ def main() -> None:
     data = finalize_timing(data, external_locations)
     snap, _per_pid = build_snapshot(data)
     snap = add_derived_columns(snap)
+    snap["rolling_mpg"] = compute_rolling_mpg(snap)
 
     idle_fraction = compute_idle_fraction(snap)
     warmup_s = compute_warmup_duration_s(snap)
