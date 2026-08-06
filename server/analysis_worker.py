@@ -123,7 +123,7 @@ def _analyze(session_id: int, conn: duckdb.DuckDBPyConnection, db_lock: threadin
     out_dir.mkdir(parents=True, exist_ok=True)
     snap["phase"] = driving_phase
     snap.to_csv(out_dir / "snapshot_1s.csv", index=False)
-    ad.make_plots(snap, out_dir)
+    ad.make_plots(snap, out_dir, overall_mpg=overall_mpg)
     ad.write_report(
         out_dir, data, snap, coverage, idle_fraction, warmup_s, distance, overall_mpg, cruise, phases, flags,
         braking_events=braking_events,

@@ -357,11 +357,34 @@ def compute_overall_mpg(snap: pd.DataFrame, distance_km: float | None) -> float 
 # These are representative vehicle-dynamics values, not measured from this specific car; if a
 # real drive's events look misclassified (e.g. normal engine braking flagged as "braking"),
 # tune these rather than trusting them as ground truth.
-ACCEL_THRESHOLD_KMH_S = 1.5
-COAST_DECEL_THRESHOLD_KMH_S = -2.0
+#
+# Confirmed directly against real data: raw Vehicle Speed (PID 0D) is integer-quantized to 1
+# km/h (standard resolution for this PID), so a naive 1-second frame-to-frame diff has a noise
+# floor of roughly +-2 km/h/s from quantization alone (measured std ~2.25 on a real drive). The
+# original thresholds here (+-1.5 to +-2.0) sat almost on top of that noise floor and produced
+# 246 phase changes on one 16-minute drive, nearly all of them noise flicker between cruising/
+# accelerating/coasting, not real driving. Fixed two ways: thresholds widened well clear of the
+# confirmed noise floor, and cruising/accelerating/coasting/decelerating are classified from a
+# smoothed acceleration signal. Braking still uses the raw (unsmoothed) signal deliberately,
+# real hard-braking events are brief and get diluted below threshold by smoothing, which was
+# actually observed while tuning this (braking briefly vanished from the classification
+# entirely at 5s smoothing before this two-signal split was added).
+PHASE_SMOOTH_WINDOW_S = 5
+ACCEL_THRESHOLD_KMH_S = 3.0
+COAST_DECEL_THRESHOLD_KMH_S = -3.0
 BRAKE_DECEL_THRESHOLD_KMH_S = -6.0
 COAST_THROTTLE_MAX_PCT = 5.0  # "foot off the gas"
 COAST_LOOKBACK_S = 10  # how far back to check for a coast phase before a braking event
+# Only merges short runs of these two "background" phases into their surroundings, residual
+# noise-driven flicker at the cruise/accelerate boundary even after smoothing. Deliberately
+# does NOT touch idle/braking/coasting/decelerating: those represent real, meaningful driver
+# actions/events even when brief (a 2-second coast right before braking is exactly the case
+# find_braking_waste_events's coasted_first check needs to see, merging it away would silently
+# defeat that check). Confirmed directly: an earlier version merged indiscriminately and made
+# short coast/decel runs disappear entirely, plus a separate bug where merging let 'braking'
+# spread into its neighbors instead of the reverse, both fixed by this narrower scope.
+PHASE_MERGE_BACKGROUND = frozenset({"cruising", "accelerating"})
+MIN_PHASE_DWELL_S = 2
 # Confirmed directly on a real drive: Throttle Position at Tier B's nominal ~3-5s cadence was
 # actually 7-10s stale during real lift-off moments, exactly what this classification needs
 # fresh. Promoted to Tier A in the app (see PidCatalog.kt) going forward; this guard is
@@ -386,6 +409,39 @@ ASSUMED_ENGINE_EFFICIENCY = 0.28  # representative part-throttle gasoline engine
 GASOLINE_ENERGY_J_PER_GALLON = 1.2132e8  # 33.7 kWh/gal
 
 
+def _phase_runs(phase: pd.Series) -> list[tuple[int, int, str]]:
+    """(start, end, label) positional-index triples, inclusive, for each contiguous run."""
+    values = phase.tolist() + [None]
+    runs: list[tuple[int, int, str]] = []
+    current, start = None, 0
+    for i, v in enumerate(values):
+        if v != current:
+            if current is not None:
+                runs.append((start, i - 1, current))
+            current, start = v, i
+    return runs
+
+
+def _merge_short_background_runs(phase: pd.Series) -> pd.Series:
+    """Absorbs short runs of PHASE_MERGE_BACKGROUND labels into whichever neighbor precedes
+    them (or follows, for a run at the very start). See PHASE_MERGE_BACKGROUND's comment for
+    why only these two labels are eligible, everything else is a meaningful event even when
+    brief and must never be merged away or used as a merge target."""
+    merged = phase.copy()
+    changed = True
+    while changed:
+        changed = False
+        runs = _phase_runs(merged)
+        for idx, (start, end, label) in enumerate(runs):
+            if label in PHASE_MERGE_BACKGROUND and (end - start + 1) < MIN_PHASE_DWELL_S:
+                target = runs[idx - 1][2] if idx > 0 else (runs[idx + 1][2] if idx + 1 < len(runs) else label)
+                if target != label:
+                    merged.iloc[start : end + 1] = target
+                    changed = True
+                    break
+    return merged
+
+
 def classify_phases(snap: pd.DataFrame) -> pd.Series:
     """One phase label per 1-second row. Braking is inferred purely from deceleration rate
     (no generic OBD-II PID exposes brake pedal position), so this can't distinguish "pressed
@@ -394,7 +450,11 @@ def classify_phases(snap: pd.DataFrame) -> pd.Series:
         return pd.Series(dtype=object)
 
     speed = snap["speed_kmh"]
-    accel = speed.diff() / GRID_INTERVAL_S
+    # Two different signals deliberately: braking needs to see a brief, sharp spike (smoothing
+    # would dilute it below threshold), the gentler bands need the noise averaged out first.
+    # See the constants block above for why this split exists.
+    accel_raw = speed.diff() / GRID_INTERVAL_S
+    accel_smooth = speed.rolling(PHASE_SMOOTH_WINDOW_S, center=True, min_periods=1).mean().diff() / GRID_INTERVAL_S
     throttle = snap["throttle_pct"] if "throttle_pct" in snap else pd.Series(np.nan, index=snap.index)
     throttle_age = snap["age_s_throttle_pct"] if "age_s_throttle_pct" in snap else pd.Series(np.nan, index=snap.index)
     throttle_fresh = throttle_age.notna() & (throttle_age <= MAX_THROTTLE_AGE_S)
@@ -402,12 +462,13 @@ def classify_phases(snap: pd.DataFrame) -> pd.Series:
     phase = pd.Series(PHASE_CRUISING, index=snap.index, dtype=object)
     moving = speed >= IDLE_SPEED_THRESHOLD_KMH
     phase[~moving] = PHASE_IDLE
-    phase[moving & (accel <= BRAKE_DECEL_THRESHOLD_KMH_S)] = PHASE_BRAKING
-    decel_band = moving & (accel <= COAST_DECEL_THRESHOLD_KMH_S) & (accel > BRAKE_DECEL_THRESHOLD_KMH_S)
+    phase[moving & (accel_raw <= BRAKE_DECEL_THRESHOLD_KMH_S)] = PHASE_BRAKING
+    not_braking = phase != PHASE_BRAKING
+    decel_band = moving & not_braking & (accel_smooth <= COAST_DECEL_THRESHOLD_KMH_S)
     phase[decel_band & throttle_fresh & (throttle <= COAST_THROTTLE_MAX_PCT)] = PHASE_COASTING
     phase[decel_band & ~(throttle_fresh & (throttle <= COAST_THROTTLE_MAX_PCT))] = PHASE_DECELERATING
-    phase[moving & (accel >= ACCEL_THRESHOLD_KMH_S)] = PHASE_ACCELERATING
-    return phase
+    phase[moving & not_braking & (accel_smooth >= ACCEL_THRESHOLD_KMH_S)] = PHASE_ACCELERATING
+    return _merge_short_background_runs(phase)
 
 
 def _contiguous_true_runs(mask: pd.Series) -> list[tuple[int, int]]:
@@ -661,7 +722,7 @@ def anomaly_flags(snap: pd.DataFrame, cruise: pd.DataFrame, events: pd.DataFrame
 # ---------------------------------------------------------------------------
 
 
-def make_plots(snap: pd.DataFrame, out_dir: Path) -> None:
+def make_plots(snap: pd.DataFrame, out_dir: Path, overall_mpg: float | None = None) -> None:
     t = snap["elapsed_s"] / 60  # minutes, easier to read on axes
 
     if {"stft1_pct", "ltft1_pct"}.issubset(snap.columns):
@@ -702,6 +763,13 @@ def make_plots(snap: pd.DataFrame, out_dir: Path) -> None:
             ax1.plot(t, snap["est_instant_mpg"], color="tab:green", alpha=0.25, linewidth=0.8, label="Raw instantaneous (misleading, see docs)")
         if "rolling_mpg" in snap:
             ax1.plot(t, snap["rolling_mpg"], color="tab:blue", linewidth=1.8, label=f"{ROLLING_MPG_WINDOW_S}s rolling (sum distance / sum fuel)")
+        if overall_mpg is not None:
+            # Explicit reference rather than something to eyeball: this line includes idle time
+            # (0 MPG, real distance-weighted drag on the average), so the rolling line sitting
+            # above it most of the time while the car is moving is expected, not a bug, idle
+            # time pulls the trip average down more than its time-share alone would suggest.
+            ax1.axhline(overall_mpg, color="black", linewidth=1.2, linestyle="--",
+                        label=f"Trip overall: {overall_mpg:.1f} MPG (includes idle)")
         ax1.set_ylabel("Estimated MPG")
         ax1.set_xlabel("Minutes")
         ax1.set_title("Estimated MPG (MAF-derived; suppressed at low speed and outside stoichiometric ops)")
@@ -858,7 +926,7 @@ def main() -> None:
 
     snap["phase"] = driving_phase
     snap.to_csv(out_dir / "snapshot_1s.csv", index=False)
-    make_plots(snap, out_dir)
+    make_plots(snap, out_dir, overall_mpg=overall_mpg)
     write_report(
         out_dir, data, snap, coverage, idle_fraction, warmup_s, distance, overall_mpg, cruise, phases, flags,
         braking_events=braking_events,
