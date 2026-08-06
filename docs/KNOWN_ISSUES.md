@@ -87,6 +87,21 @@ issue after all). Session 7 predates this fix, so its own raw text was
 never captured, this can only be resolved on the next drive where LTFT
 fails again.
 
+**Resolved (for real, this time)**: the ECU's own declared supported-PID
+list (`SafeAvailablePIDsCommand`, see below for a real parsing bug this
+required fixing first) confirms PID 08 (LONG_TERM_BANK_1) is **absent**
+from the Mode 01 01-20 range on both sessions checked, decoded three
+different ways (each of two conflicting raw frames individually, and
+their OR) and PID 08 is missing under every reading. This ECU genuinely
+does not expose LTFT via generic Mode 01, full stop, this is a vehicle
+characteristic, not a library, adapter, or timing/condition issue after
+all. The user has seen LTFT populated in other apps on this same car
+before, that's still real and unexplained by this finding, but the
+explanation is now narrowed: those apps must be reading it through a
+different (likely manufacturer-specific) PID or diagnostic mode, not
+generic Mode 01 PID 08, since this vehicle's own ECU says that PID isn't
+there.
+
 **Confirmed, two drives later**: both post-fix drives show the adapter
 returning literal `response [NO DATA]` for every single LONG_TERM_BANK_1
 attempt, no exceptions. One was a ~13-minute drive with a large real-data
@@ -352,6 +367,41 @@ the plain Engine Load PID. Neither checked against a real drive under
 load yet, if timing is more retarded than expected for the RPM/load at
 hand, that's direct ECU-side evidence of knock mitigation in progress,
 independent of what octane anyone remembers buying.
+
+## AvailablePIDsCommand silently failed on the exact range that mattered (found and fixed)
+
+The ECU-supported-PID check added earlier (see the LTFT section above)
+had never actually worked: `PIDS_01_TO_20`, `PIDS_21_TO_40`, and
+`PIDS_41_TO_60` all threw `NumberFormatException` on both real sessions
+tried. `PIDS_01_TO_20` is the one that mattered most, it's the range
+containing PID 08. Root cause: this adapter returns **two** frames for a
+single Mode 01 supported-PIDs request, concatenated with no separator
+surviving the library's cleanup pipeline (e.g.
+`"4100981A80134100FE7FA813"`, 24 hex chars). The library's
+`AvailablePIDsCommand` calls `rawValue.toLong(radix=16)` on the entire
+string; 24 hex chars is 96 bits, which overflows a 64-bit `Long` and
+throws.
+
+Checked the two frames' actual content before assuming they were
+harmless duplicates, worth doing since assuming wrong here would have
+shipped a quietly-unreliable fix: they aren't duplicates. Session 1 saw
+`981A8013` then `FE7FA813`; session 2 saw the exact same two values in
+the **opposite** order. Reproducing the identical pair of values across
+independent sessions rules out random corruption (which wouldn't
+reproduce); the order flipping rules out "always take the first frame"
+as a safe fix. Leading explanation: this project's ELM327 init sends
+`ATH0` (headers off), so a broadcast Mode 01 request gets answered by
+every ECU on the bus that supports it, and with headers off there's no
+way to attribute which frame came from which module, they just
+concatenate in whatever order bus arbitration produces that time.
+
+Fixed `SafeAvailablePIDsCommand` (see `SafeCommands.kt`) to split the raw
+response into complete 12-hex-char frames and **OR them together**
+rather than picking one: a PID counts as supported if any responding
+module reports it, and OR is order-independent by construction, verified
+directly (both sessions' frame-orderings OR to the identical result).
+Also verified the fix doesn't disturb the two ranges that were already
+parsing correctly (single-frame responses, no change in behavior).
 
 ## Driving-phase classification found a real Tier B staleness bug
 

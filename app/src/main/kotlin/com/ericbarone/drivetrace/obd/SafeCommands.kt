@@ -4,6 +4,8 @@ import com.github.eltonvs.obd.command.ObdCommand
 import com.github.eltonvs.obd.command.ObdRawResponse
 import com.github.eltonvs.obd.command.bytesToInt
 import com.github.eltonvs.obd.command.calculatePercentage
+import com.github.eltonvs.obd.command.control.AvailablePIDsCommand
+import com.github.eltonvs.obd.command.getBitAt
 
 /**
  * Replacements for kotlin-obd-api command classes confirmed buggy: their handlers call
@@ -126,5 +128,72 @@ class TimingAdvanceCommand : ObdCommand() {
     override val defaultUnit = "°"
     override val handler = { response: ObdRawResponse ->
         "%.1f".format(bytesToInt(response.bufferedValue, bytesToProcess = 1) / 2f - 64f)
+    }
+}
+
+/**
+ * Not a byte-math bug like the ones above: confirmed directly against two real sessions that
+ * this adapter returns TWO frames for a single Mode 01 supported-PIDs request, concatenated
+ * with no separator surviving the library's cleanup pipeline (e.g. "4100981A80134100FE7FA813").
+ * The library's handler calls rawValue.toLong(radix=16) on the whole thing; a 24-hex-char string
+ * is 96 bits, overflowing a 64-bit Long and throwing NumberFormatException. This failed
+ * PIDS_01_TO_20/21_TO_40/41_TO_60 on both real sessions tried, PIDS_01_TO_20 is the one that
+ * matters most, it's the range containing PID 08 (LONG_TERM_BANK_1), so this bug had been
+ * silently blocking the exact check it was added to answer (see KNOWN_ISSUES.md's LTFT
+ * sections).
+ *
+ * Checked the two frames' actual content before assuming they were harmless duplicates, and
+ * they aren't: session 1 saw 981A8013 then FE7FA813; session 2 saw the same two values in the
+ * OPPOSITE order. Same two distinct bitmasks, reproducibly, just unstable ordering, ruling out
+ * both "duplicate response" and "random corruption" (corruption wouldn't reproduce the exact
+ * same two values across separate sessions). The likely explanation: this project's ELM327 init
+ * sends ATH0 (headers off), so a broadcast Mode 01 request gets answered by every ECU on the bus
+ * that supports it, and with headers off there's no way to tell which frame came from which
+ * module, they just concatenate in bus-arbitration order (which varies). Given that, the
+ * correct read isn't "pick one frame" (arbitrary, and confirmed unstable which one comes first)
+ * but "a PID is supported if ANY responding module reports it", i.e. OR the frames together.
+ * Verified directly: OR-ing session 1's two frames reproduces the same result as OR-ing
+ * session 2's (order-independent, as it must be for OR), and PID 08 is absent under every
+ * reading (frame A alone, frame B alone, or OR'd), so the "is LTFT supported" answer is robust
+ * regardless of which theory of the two-frame behavior is correct.
+ */
+class SafeAvailablePIDsCommand(
+    private val range: AvailablePIDsCommand.AvailablePIDsRanges,
+) : ObdCommand() {
+    // range.pid is internal to the library's module and not accessible here; derived locally
+    // from the range instead. Values confirmed against AvailablePIDsRanges' real source.
+    private val rangePid: String = when (range) {
+        AvailablePIDsCommand.AvailablePIDsRanges.PIDS_01_TO_20 -> "00"
+        AvailablePIDsCommand.AvailablePIDsRanges.PIDS_21_TO_40 -> "20"
+        AvailablePIDsCommand.AvailablePIDsRanges.PIDS_41_TO_60 -> "40"
+        AvailablePIDsCommand.AvailablePIDsRanges.PIDS_61_TO_80 -> "60"
+        AvailablePIDsCommand.AvailablePIDsRanges.PIDS_81_TO_A0 -> "80"
+    }
+
+    override val tag = "AVAILABLE_COMMANDS_${range.name}"
+    override val name = "Available Commands - ${range.displayName}"
+    override val mode = "01"
+    override val pid = rangePid
+    override val defaultUnit = ""
+    override val handler = { response: ObdRawResponse ->
+        parsePIDs(response.processedValue).joinToString(",") { "%02X".format(it) }
+    }
+
+    private fun parsePIDs(rawValue: String): IntArray {
+        // Drop a ragged trailing partial frame (a truncated response) rather than let it throw;
+        // OR every complete frame together, see the multi-ECU-broadcast explanation above.
+        val combined = rawValue
+            .chunked(FRAME_HEX_CHARS)
+            .filter { it.length == FRAME_HEX_CHARS }
+            .fold(0L) { acc, frame -> acc or frame.toLong(radix = 16) }
+        val initialPID = rangePid.toInt(radix = 16)
+        return (1..PID_RANGE_SIZE).fold(intArrayOf()) { acc, i ->
+            if (combined.getBitAt(i) == 1) acc.plus(i + initialPID) else acc
+        }
+    }
+
+    private companion object {
+        const val PID_RANGE_SIZE = 33
+        const val FRAME_HEX_CHARS = 12
     }
 }

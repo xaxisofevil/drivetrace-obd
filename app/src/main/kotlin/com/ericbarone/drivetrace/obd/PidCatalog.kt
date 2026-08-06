@@ -87,11 +87,15 @@ object PidCatalog {
             // what comes back). Added specifically to settle whether LONG_TERM_BANK_1 (PID 08,
             // in the 01-20 range) is genuinely absent from this ECU vs. present-but-not-
             // answering, see KNOWN_ISSUES.md. Covers every PID this app polls, not just that one.
-            { AvailablePIDsCommand(AvailablePIDsCommand.AvailablePIDsRanges.PIDS_01_TO_20) },
-            { AvailablePIDsCommand(AvailablePIDsCommand.AvailablePIDsRanges.PIDS_21_TO_40) },
-            { AvailablePIDsCommand(AvailablePIDsCommand.AvailablePIDsRanges.PIDS_41_TO_60) },
-            { AvailablePIDsCommand(AvailablePIDsCommand.AvailablePIDsRanges.PIDS_61_TO_80) },
-            { AvailablePIDsCommand(AvailablePIDsCommand.AvailablePIDsRanges.PIDS_81_TO_A0) },
+            // Uses SafeAvailablePIDsCommand, not the library's version: confirmed on two real
+            // sessions that this adapter sometimes doubles a response, which overflowed the
+            // library's naive parsing and silently failed PIDS_01_TO_20 (the range with PID 08)
+            // every time it was tried, see SafeCommands.kt.
+            { SafeAvailablePIDsCommand(AvailablePIDsCommand.AvailablePIDsRanges.PIDS_01_TO_20) },
+            { SafeAvailablePIDsCommand(AvailablePIDsCommand.AvailablePIDsRanges.PIDS_21_TO_40) },
+            { SafeAvailablePIDsCommand(AvailablePIDsCommand.AvailablePIDsRanges.PIDS_41_TO_60) },
+            { SafeAvailablePIDsCommand(AvailablePIDsCommand.AvailablePIDsRanges.PIDS_61_TO_80) },
+            { SafeAvailablePIDsCommand(AvailablePIDsCommand.AvailablePIDsRanges.PIDS_81_TO_A0) },
         )
 }
 

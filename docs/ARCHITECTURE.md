@@ -103,6 +103,23 @@ The clamp that catches "physically impossible value" is kept as
 defense-in-depth regardless, cheap insurance against whatever the next
 undiscovered bug turns out to be.
 
+**PIDs polled are a fixed catalog, not dynamically discovered from the
+ECU.** Worth stating explicitly since it's a real architectural
+difference from tools like AndrOBD, checked against AndrOBD's actual
+source rather than assumed: AndrOBD queries the ECU's own supported-PID
+bitmask (Mode 01 PID 00/20/40/60/80) at connect time and only polls PIDs
+the ECU declares support for (`getNextSupportedPid()` in `ObdProt.java`).
+This project instead polls a fixed, hand-chosen catalog
+(`PidCatalog.kt`'s Tier A/B/C lists) every session regardless of what the
+ECU claims to support. The one place this project does query that same
+supported-PID bitmask (`SafeAvailablePIDsCommand`, see KNOWN_ISSUES.md) is
+a one-time diagnostic read logged as an event, it doesn't feed back to
+gate what the live scheduler polls. Fine for one known vehicle where the
+catalog was chosen by hand and confirmed working; would need to become
+AndrOBD's approach (discover, then poll only what's declared supported)
+before this could reasonably claim to work well across arbitrary
+vehicles, see COMMERCIAL_READINESS.md's testing-coverage caveat.
+
 **"A response arrived" is not "the vehicle is awake."** Some cheap ELM327
 clones fabricate plausible-looking placeholder frames (all zeros, 0xFFFF
 sentinels) instead of a clean error when the ECU is asleep. Catches this
