@@ -444,6 +444,21 @@ Not yet wired into the automatic per-drive pipeline (`analysis_worker.py`
 still only produces the matplotlib plots), this is a prototype under
 review before deciding whether/how to make it a standard output.
 
+**Update**: user feedback on the first version caught two more real
+issues, both fixed. (1) The phase classifier produced 246 bands on one
+drive, traced to Vehicle Speed's 1 km/h integer quantization creating a
+~+-2 km/h/s noise floor sitting on top of the original thresholds, fixed
+with a two-signal approach (raw for braking, smoothed for the gentler
+bands) plus a narrowly-scoped merge pass, see `classify_phases`'s
+docstring/comments for the full story; bands dropped to 68 with braking
+counts unchanged. (2) `hline()` doesn't support targeting a secondary
+y-axis in this alpha library, worked around by drawing a flat dashed
+`line()` on that axis instead. (3) Not a bug: the rolling MPG line
+sitting above the trip's overall average most of the time is expected
+when idle time is a large fraction of the trip (0 MPG, drags the blended
+average down more than its time-share suggests), added an explicit
+reference line rather than treating it as something to fix further.
+
 ## Miscellaneous
 
 - Fuel Rail Pressure and Fuel Consumption Rate frequently return
