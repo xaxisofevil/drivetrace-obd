@@ -509,6 +509,83 @@ when idle time is a large fraction of the trip (0 MPG, drags the blended
 average down more than its time-share suggests), added an explicit
 reference line rather than treating it as something to fix further.
 
+## Wrong PID for Long Term Fuel Trim Bank 1, the actual answer to the whole evening's LTFT mystery
+
+The real root cause, finally found via a live cross-check against Car
+Scanner: kotlin-obd-api's `FuelTrimCommand.FuelTrimBank` enum has
+`SHORT_TERM_BANK_2` (PID `07`) and `LONG_TERM_BANK_1` (PID `08`) swapped
+relative to the real, unambiguous SAE J1979 standard (`06`=STFT-B1,
+`07`=LTFT-B1, `08`=STFT-B2, `09`=LTFT-B2, unchanged for decades). This
+project had been requesting PID `08` under the label "Long Term Fuel Trim
+Bank 1" all night, PID `08` is really Short Term Fuel Trim **Bank 2**,
+which doesn't exist on this single-bank inline-4 engine, exactly why it
+returned literal `NO DATA` on every single attempt, confirmed across
+multiple real drives. The real PID `07` was never once requested by this
+project. `pc_logger/pids.py` had the identical bug, hand-written
+independently but inheriting the same wrong assumption.
+
+Confirmed three independent ways before touching code: (1) the real SAE
+standard, (2) Car Scanner reading a live 7.03% value from its own PID
+ID=7, explicitly labeled "Long term fuel % trim - Bank 1", on this same
+vehicle with this same adapter, and (3) this project's own
+`SafeAvailablePIDsCommand` fix from earlier tonight had already decoded
+PID `07` as present in the ECU's declared supported list and PID `08` as
+absent, exactly consistent with a real Bank-1-only engine, the data was
+sitting there the whole time, it just hadn't been cross-referenced
+against the right standard yet.
+
+Every theory chased earlier tonight (adapter flakiness, ELM327 headers
+mode, timing/condition-gating, "Mazda hides this behind an enhanced PID")
+was chasing a request that was simply asking the ECU a question it
+correctly had no answer to. Fixed via `SafeLongTermFuelTrimBank1Command`
+(app) and a corrected PID string (pc_logger), same parsing math as
+before (only the PID was ever wrong), same tag/canonical_name so
+`analyze_drive.py`'s existing keyword matching and all prior event-log
+queries keep working unchanged, they'll just finally have real data
+behind them going forward. Not yet confirmed end-to-end through
+DriveTrace itself on a real drive as of this writing, built and installed,
+next drive should show it.
+
+## Trip history and forced backfill retry (new feature)
+
+Two real gaps this closes: no way to see past sessions once you've left
+the Session Complete screen (it's ephemeral in-memory `LoggingUiState`,
+lost on app restart even though the underlying Room data is fine), and
+no way to retry a failed upload without either reopening a screen that no
+longer exists or asking someone to pull the Room DB by hand over adb.
+Confirmed real need for the second one specifically: a driveway test's
+876 measurements got stranded when the home server was unreachable at
+Stop time, with no durable record anywhere that it still needed
+uploading.
+
+- `SessionEntity` gained `backfillStatus`/`backfillMessage`/
+  `analysisStatus`/`analysisSummaryJson` (persisted, not just in the
+  ephemeral state), Room bumped to v4. **This required care**: the
+  destructive-migration policy already in place would have permanently
+  destroyed the driveway test's still-stranded session the moment this
+  version installed, so that session must be pulled and manually
+  backfilled with the *old* app version still on the phone before this
+  update ever ships to it. See AppDatabase.kt's version-history comment.
+- `BackfillCoordinator.kt`: the actual backfill-then-analyze sequence,
+  extracted into one shared function so the live Stop-button flow
+  (`DriveLoggingService`) and the new background retry worker can't
+  silently drift into two different implementations of the same thing.
+- `BackfillRetryWorker.kt`: a WorkManager `CoroutineWorker`, not a plain
+  coroutine, specifically because WorkManager persists the retry request
+  in its own system-level store independent of this app's process.
+  Android will start the app just to run it once its network constraint
+  is satisfied, which is what actually makes "retry even after the app
+  is closed" true rather than aspirational. Triggered three ways: an
+  opportunistic sweep on every app launch (`MainActivity.onCreate`), a
+  fallback sweep whenever a live backfill fails, and an expedited,
+  session-specific request from the new History screen's "Retry upload"
+  button.
+- `HistoryScreen.kt`: lists every session from local Room (authoritative,
+  works even if the server's never been reachable for a given session),
+  color-coded upload/analysis status, trip MPG once analyzed, and a
+  "Retry upload" button on anything not yet confirmed uploaded. Reachable
+  from a new "Trip History" button on the Setup screen.
+
 ## Miscellaneous
 
 - Fuel Rail Pressure and Fuel Consumption Rate frequently return

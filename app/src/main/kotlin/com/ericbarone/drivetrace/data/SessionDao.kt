@@ -16,6 +16,14 @@ interface SessionDao {
     @Query("SELECT * FROM sessions WHERE sessionId = :sessionId")
     suspend fun getSession(sessionId: Long): SessionEntity?
 
+    @Query("SELECT * FROM sessions ORDER BY startWallTimeUtc DESC")
+    suspend fun getAllSessions(): List<SessionEntity>
+
+    /** Anything not yet confirmed uploaded, oldest first, so a long-stranded session doesn't
+     * get starved behind newer ones during an automatic retry sweep. */
+    @Query("SELECT * FROM sessions WHERE backfillStatus != 'SUCCESS' ORDER BY startWallTimeUtc ASC")
+    suspend fun getSessionsNeedingBackfill(): List<SessionEntity>
+
     @Insert
     suspend fun insertMeasurement(measurement: MeasurementEntity)
 

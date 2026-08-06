@@ -34,7 +34,15 @@ TIER_A: list[PidDef] = [
     PidDef("04", "Calculated Engine Load", "A", 1, lambda b: b[0] * 100 / 255, "%"),
     PidDef("10", "Mass Air Flow", "A", 2, lambda b: _b16(b) / 100, "g/s"),
     PidDef("06", "Short Term Fuel Trim Bank 1", "A", 1, lambda b: (b[0] - 128) * 100 / 128, "%"),
-    PidDef("08", "Long Term Fuel Trim Bank 1", "A", 1, lambda b: (b[0] - 128) * 100 / 128, "%"),
+    # PID 07, not 08: confirmed against the real SAE J1979 standard and cross-checked live
+    # against a second scan tool (Car Scanner) on this vehicle. 08 is Short Term Fuel Trim
+    # Bank 2, a PID that doesn't apply to this single-bank inline-4 (always NO DATA, which is
+    # exactly what was observed every session this was polled). This had been wrong the whole
+    # project, inherited from the same mistaken PID this Python table was hand-written to match
+    # kotlin-obd-api's FuelTrimCommand.FuelTrimBank enum, which has the identical bug (its
+    # SHORT_TERM_BANK_2 and LONG_TERM_BANK_1 entries are swapped relative to the real standard).
+    # See KNOWN_ISSUES.md.
+    PidDef("07", "Long Term Fuel Trim Bank 1", "A", 1, lambda b: (b[0] - 128) * 100 / 128, "%"),
     PidDef("44", "Commanded Equivalence Ratio", "A", 2, lambda b: _b16(b) / 32768, "ratio"),
     PidDef("42", "Control Module Voltage", "A", 2, lambda b: _b16(b) / 1000, "V"),
 ]

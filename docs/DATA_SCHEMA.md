@@ -35,7 +35,7 @@ anywhere (see `scripts/analyze_drive.py`'s `PID_KEYWORDS`), use these:
 | 43 | `Engine Absolute Load` | % | B | Uses `SafeAbsoluteLoadCommand`; library's `AbsoluteLoadCommand` has the unbounded-byte bug too. Can read over 100% under boost, a better turbo-load signal than PID 04 |
 | 10 | `Mass Air Flow` | g/s | A | Uses `SafeMassAirFlowCommand`, see KNOWN_ISSUES |
 | 06 | `Short Term Fuel Trim Bank 1` | % | A | |
-| 08 | `Long Term Fuel Trim Bank 1` | % | A | Prone to early-cooldown, see KNOWN_ISSUES |
+| 07 | `Long Term Fuel Trim Bank 1` | % | A | Uses `SafeLongTermFuelTrimBank1Command`; the library's own `FuelTrimBank.LONG_TERM_BANK_1` points at PID 08, which is really Short Term Fuel Trim Bank 2 per the real SAE standard, always `NO DATA` on this single-bank engine, see KNOWN_ISSUES |
 | 44 | `Fuel-Air Commanded Equivalence Ratio` | ratio | A | Not "Commanded Equivalence Ratio" |
 | 42 | `Control Module Power Supply` | V | A | Not "Control Module Voltage"; uses `SafeModuleVoltageCommand` |
 | 05 | `Engine Coolant Temperature` | °C | B | |
@@ -121,6 +121,16 @@ KNOWN_ISSUES.md for the real incident this fixed.
 `appVersion`, `phoneModel`, `notes`, `completionStatus`
 (`IN_PROGRESS`/`COMPLETED`/`INTERRUPTED`), `measurementCount`,
 `locationCount`.
+
+Room-only (not part of the server's `sessions` table, these describe the
+*local device's* view of upload progress, not the drive itself):
+`backfillStatus` (`PENDING`/`SUCCESS`/`FAILED`), `backfillMessage`,
+`analysisStatus` (`PENDING`/`DONE`/`FAILED`), `analysisSummaryJson` (the
+`AnalysisSummary` result serialized via `StreamingClient.kt`'s
+`toJson()`/`analysisSummaryFromJson()`, so the History screen can show
+real numbers without a live round-trip to the server). Persisted
+specifically so a failed upload survives the app being closed, see
+KNOWN_ISSUES.md's "Trip history and forced backfill retry" entry.
 
 ## Where each shape lives
 

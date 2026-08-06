@@ -37,7 +37,10 @@ object PidCatalog {
             { LoadCommand() },
             { SafeMassAirFlowCommand() }, // library's MassAirFlowCommand still has the unbounded-byte bug
             { FuelTrimCommand(FuelTrimCommand.FuelTrimBank.SHORT_TERM_BANK_1) },
-            { FuelTrimCommand(FuelTrimCommand.FuelTrimBank.LONG_TERM_BANK_1) },
+            // NOT FuelTrimCommand(...LONG_TERM_BANK_1): the library's enum has that entry
+            // pointing at PID 08, which is really Short Term Fuel Trim Bank 2 per the real SAE
+            // standard, a PID that doesn't exist on this single-bank engine. See SafeCommands.kt.
+            { SafeLongTermFuelTrimBank1Command() },
             { CommandedEquivalenceRatioCommand() },
             { SafeModuleVoltageCommand() }, // library's ModuleVoltageCommand still has the unbounded-byte bug
             // Promoted from Tier B: confirmed directly (KNOWN_ISSUES.md) that Tier B's ~3-5s

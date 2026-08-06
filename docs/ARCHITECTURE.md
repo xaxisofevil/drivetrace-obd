@@ -12,7 +12,7 @@ app/                    Android app (Kotlin, Jetpack Compose)
                           request/poll client
   export/                 CSV bundle export, on-device rough trip-MPG estimate
   ui/                     Setup screen (pick adapter), Logging screen (status +
-                          results)
+                          results), History screen (past sessions, retry upload)
   data/                   Room database (local, authoritative)
 
 pc_logger/              Python equivalent for a Windows laptop instead of a phone.
@@ -63,6 +63,15 @@ blueprint/              The original spec this project was built from.
      on the Session Complete screen, alongside a rougher on-device estimate
      computed independently from local Room (works even if the server is
      unreachable)
+   - backfill/analysis outcome is also **persisted onto `SessionEntity`**
+     (not just the ephemeral in-memory UI state), so it survives the app
+     being closed; if backfill fails, a `BackfillRetryWorker` (WorkManager)
+     is queued to retry once network is available, even if the app never
+     reopens on its own
+5. **History screen** (from Setup): every session ever logged, read from
+   local Room, with upload/analysis status and a manual "Retry upload" for
+   anything not yet confirmed. Works fully offline; the server is never
+   queried directly for this list.
 
 ## Key design decisions and why
 

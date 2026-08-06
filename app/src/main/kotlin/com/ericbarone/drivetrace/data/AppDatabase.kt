@@ -9,12 +9,22 @@ import androidx.room.RoomDatabase
     entities = [SessionEntity::class, MeasurementEntity::class, LocationEntity::class, EventEntity::class],
     // v2: MeasurementEntity gained rawResponse (see KNOWN_ISSUES.md, raw-capture).
     // v3: SessionEntity.sessionId dropped autoGenerate (see KNOWN_ISSUES.md, ID collision fix).
-    // Both changes altered Room's computed schema identity hash even with exportSchema=false,
+    // v4: SessionEntity gained backfillStatus/backfillMessage/analysisStatus/analysisSummaryJson
+    // (trip history + retry-after-exit, see BackfillRetryWorker/HistoryScreen).
+    // Schema changes alter Room's computed identity hash even with exportSchema=false,
     // exportSchema only controls whether the schema JSON gets written to disk for migration
     // tooling, it does NOT skip the runtime identity check against room_master_table. Forgetting
     // to bump the version here crashed the app with "Room cannot verify the data integrity" the
     // moment any DB write happened (pressing Start Logging), confirmed via a real crash log.
-    version = 3,
+    //
+    // IMPORTANT before ever bumping this again: fallbackToDestructiveMigration wipes local Room
+    // on any version change. Confirmed this bit for real once already (a Room wipe collided a
+    // restarted session-ID counter with old server history, destroying it, see KNOWN_ISSUES.md's
+    // "Session ID collision" entry) and there is, as of this v3->v4 bump, a real driveway-test
+    // session sitting locally that never finished backfilling to the server (network was down at
+    // Stop time). That session MUST be pulled and manually backfilled before this version ships
+    // to the phone, or its data is gone for good the moment the app updates.
+    version = 4,
     exportSchema = false,
 )
 abstract class AppDatabase : RoomDatabase() {

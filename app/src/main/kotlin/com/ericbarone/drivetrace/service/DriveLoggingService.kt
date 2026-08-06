@@ -14,7 +14,6 @@ import androidx.core.app.NotificationCompat
 import com.ericbarone.drivetrace.BuildConfig
 import com.ericbarone.drivetrace.MainActivity
 import com.ericbarone.drivetrace.R
-import com.ericbarone.drivetrace.streaming.AnalysisPollResult
 import com.ericbarone.drivetrace.streaming.StreamingClient
 import com.ericbarone.drivetrace.data.AppDatabase
 import com.ericbarone.drivetrace.data.EventEntity
@@ -39,8 +38,6 @@ private const val NOTIFICATION_ID = 1
 private const val VEHICLE_PROFILE = "2020 Mazda 6 2.5T"
 private const val INITIAL_BACKOFF_MS = 1_000L
 private const val MAX_BACKOFF_MS = 15_000L
-private const val ANALYSIS_POLL_INTERVAL_MS = 3_000L
-private const val ANALYSIS_MAX_POLLS = 20 // ~60s total before giving up
 
 // Some cheap ELM327 clones fabricate plausible-looking zero data instead of a clean error when
 // the ECU is asleep, so "a response arrived" isn't proof of a live vehicle. RPM > this is a cheap
@@ -297,62 +294,33 @@ class DriveLoggingService : Service() {
                 LoggingStatus.state.value = LoggingStatus.state.value.copy(
                     statusMessage = "Verifying complete upload...",
                 )
-                // Local Room is authoritative; this backfill makes the server's copy match it
-                // exactly regardless of what the live per-item stream missed during the drive.
-                val result = streamingClient.backfillSession(
-                    sessionId = sessionId,
-                    measurements = dao.getMeasurements(sessionId),
-                    locations = dao.getLocations(sessionId),
-                    events = dao.getEvents(sessionId),
-                )
+                // Shared with BackfillRetryWorker (see BackfillCoordinator.kt) so there's exactly
+                // one place that knows how to take a session from "logged locally" to "confirmed
+                // uploaded and analyzed", and so the persisted SessionEntity fields it writes stay
+                // in sync with what the live UI below shows.
+                val outcome = runBackfillAndAnalysis(dao, streamingClient, sessionId)
                 LoggingStatus.state.value = LoggingStatus.state.value.copy(
-                    backfillStatus = if (result.success) TriState.YES else TriState.NO,
-                    backfillMessage = if (result.success) {
-                        "${result.measurementCount} measurements, ${result.locationCount} GPS, ${result.eventCount} events"
-                    } else {
-                        result.error ?: "Backfill failed"
-                    },
+                    backfillStatus = if (outcome.backfillSucceeded) TriState.YES else TriState.NO,
+                    backfillMessage = outcome.backfillMessage,
                 )
 
-                // Only ask for analysis once the server's copy is confirmed complete; analyzing
-                // a partial backfill would produce misleading numbers, not just missing ones.
-                if (result.success) {
+                if (!outcome.backfillSucceeded) {
+                    // Room already has this session marked FAILED (persisted inside
+                    // runBackfillAndAnalysis); queue a background retry so it isn't stranded if
+                    // the user closes the app right now instead of waiting on this screen.
+                    // Confirmed real need: exactly this happened on a real driveway test.
+                    BackfillRetryWorker.enqueueSweep(applicationContext)
+                } else {
                     LoggingStatus.state.value = LoggingStatus.state.value.copy(statusMessage = "Analyzing drive...")
-                    if (streamingClient.requestAnalysis(sessionId)) {
-                        var pollsLeft = ANALYSIS_MAX_POLLS
-                        while (pollsLeft > 0) {
-                            delay(ANALYSIS_POLL_INTERVAL_MS)
-                            when (val poll = streamingClient.pollAnalysis(sessionId)) {
-                                is AnalysisPollResult.Done -> {
-                                    LoggingStatus.state.value = LoggingStatus.state.value.copy(
-                                        analysisStatus = TriState.YES,
-                                        analysisSummary = poll.summary,
-                                    )
-                                    break
-                                }
-                                is AnalysisPollResult.Failed -> {
-                                    LoggingStatus.state.value = LoggingStatus.state.value.copy(
-                                        analysisStatus = TriState.NO,
-                                        analysisMessage = poll.error,
-                                    )
-                                    break
-                                }
-                                is AnalysisPollResult.Running -> Unit // keep polling
-                            }
-                            pollsLeft--
-                            if (pollsLeft == 0) {
-                                LoggingStatus.state.value = LoggingStatus.state.value.copy(
-                                    analysisStatus = TriState.NO,
-                                    analysisMessage = "Timed out waiting for analysis; check the PC directly.",
-                                )
-                            }
-                        }
-                    } else {
-                        LoggingStatus.state.value = LoggingStatus.state.value.copy(
-                            analysisStatus = TriState.NO,
-                            analysisMessage = "Could not reach the server to request analysis.",
-                        )
-                    }
+                    LoggingStatus.state.value = LoggingStatus.state.value.copy(
+                        analysisStatus = when (outcome.analysisStatus) {
+                            "DONE" -> TriState.YES
+                            "FAILED" -> TriState.NO
+                            else -> TriState.PENDING
+                        },
+                        analysisSummary = outcome.analysisSummary,
+                        analysisMessage = outcome.analysisMessage ?: "",
+                    )
                 }
             }
             releaseWakeLock()

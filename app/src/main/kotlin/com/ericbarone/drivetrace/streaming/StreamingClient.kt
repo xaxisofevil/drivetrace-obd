@@ -58,6 +58,39 @@ private fun JSONObject.optDoubleOrNull(key: String): Double? =
 private fun JSONObject.optIntOrNull(key: String): Int? =
     if (has(key) && !isNull(key)) getInt(key) else null
 
+/** Persisted onto SessionEntity.analysisSummaryJson so trip history can show real numbers
+ * without a live round-trip to the server every time the list is opened. */
+fun AnalysisSummary.toJson(): String =
+    JSONObject().apply {
+        put("idle_fraction_pct", idleFractionPct ?: JSONObject.NULL)
+        put("warmup_minutes", warmupMinutes ?: JSONObject.NULL)
+        put("distance_gps_km", distanceGpsKm ?: JSONObject.NULL)
+        put("overall_mpg", overallMpg ?: JSONObject.NULL)
+        put("flags", JSONArray(flags))
+        put("braking_event_count", brakingEventCount ?: JSONObject.NULL)
+        put("braking_fuel_equiv_ml", brakingFuelEquivMl ?: JSONObject.NULL)
+        put("braking_events_without_coast", brakingEventsWithoutCoast ?: JSONObject.NULL)
+    }.toString()
+
+fun analysisSummaryFromJson(json: String): AnalysisSummary? =
+    try {
+        val obj = JSONObject(json)
+        val flags = mutableListOf<String>()
+        obj.optJSONArray("flags")?.let { arr -> for (i in 0 until arr.length()) flags.add(arr.getString(i)) }
+        AnalysisSummary(
+            idleFractionPct = obj.optDoubleOrNull("idle_fraction_pct"),
+            warmupMinutes = obj.optDoubleOrNull("warmup_minutes"),
+            distanceGpsKm = obj.optDoubleOrNull("distance_gps_km"),
+            overallMpg = obj.optDoubleOrNull("overall_mpg"),
+            flags = flags,
+            brakingEventCount = obj.optIntOrNull("braking_event_count"),
+            brakingFuelEquivMl = obj.optDoubleOrNull("braking_fuel_equiv_ml"),
+            brakingEventsWithoutCoast = obj.optIntOrNull("braking_events_without_coast"),
+        )
+    } catch (e: Exception) {
+        null
+    }
+
 /**
  * Best-effort live stream to the home ingest server (see server/). This is
  * NEVER the authoritative data path, local Room + CSV stays authoritative

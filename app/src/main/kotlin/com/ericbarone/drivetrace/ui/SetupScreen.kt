@@ -18,6 +18,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.selection.selectable
 import androidx.compose.material3.Button
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.foundation.layout.Row
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Text
@@ -57,7 +58,7 @@ private fun defaultObdDeviceAddress(devices: List<BluetoothDevice>): String? =
     devices.firstOrNull { it.name?.contains("OBD", ignoreCase = true) == true }?.address
 
 @Composable
-fun SetupScreen(onStartLogging: (String) -> Unit) {
+fun SetupScreen(onStartLogging: (String) -> Unit, onShowHistory: () -> Unit) {
     val context = LocalContext.current
     val prefs = remember { context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE) }
     var permissionsGranted by remember { mutableStateOf(hasAllPermissions(context)) }
@@ -87,6 +88,7 @@ fun SetupScreen(onStartLogging: (String) -> Unit) {
     ) {
         Text("DriveTrace", style = MaterialTheme.typography.headlineMedium)
         Text("2020 Mazda 6 2.5T", style = MaterialTheme.typography.bodyMedium)
+        OutlinedButton(onClick = onShowHistory) { Text("Trip History") }
 
         if (!permissionsGranted) {
             Text("Bluetooth, location, and notification permissions are needed to log a drive.")

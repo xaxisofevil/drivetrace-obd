@@ -29,6 +29,17 @@ data class SessionEntity(
     val phoneModel: String,
     var notes: String? = null,
     var completionStatus: String = "IN_PROGRESS",
+    /** Persisted (not just held in the ephemeral in-memory LoggingUiState) so a failed upload
+     * survives the app being closed: "PENDING" | "SUCCESS" | "FAILED". Confirmed real need: a
+     * driveway test's data got stranded with no durable record that it still needed uploading,
+     * the only way to notice was checking manually. See BackfillRetryWorker. */
+    var backfillStatus: String = "PENDING",
+    var backfillMessage: String? = null,
+    /** "PENDING" | "DONE" | "FAILED"; DONE only once the server's analysis actually completed. */
+    var analysisStatus: String = "PENDING",
+    /** The AnalysisSummary result, serialized as JSON so trip history can show real numbers
+     * without needing a live round-trip to the server every time the list is viewed. */
+    var analysisSummaryJson: String? = null,
 )
 
 @Entity(

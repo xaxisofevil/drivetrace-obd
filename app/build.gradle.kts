@@ -69,6 +69,14 @@ dependencies {
     implementation("androidx.room:room-ktx:2.8.4")
     ksp("androidx.room:room-compiler:2.8.4")
 
+    // Retries backfill for sessions that failed to upload, even after the app that logged them
+    // has been closed (confirmed real need: a driveway test's 876 measurements got stranded
+    // locally when the home server was unreachable at Stop time, with no way to retry short of
+    // pulling the Room DB by hand). WorkManager persists the retry request across process death
+    // and only runs it once network is actually available, rather than a coroutine tied to the
+    // Activity/Service lifecycle.
+    implementation("androidx.work:work-runtime-ktx:2.10.5")
+
     // Location
     implementation("com.google.android.gms:play-services-location:21.4.0")
 

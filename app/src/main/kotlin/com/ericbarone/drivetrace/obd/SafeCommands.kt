@@ -113,6 +113,37 @@ class SafeAbsoluteLoadCommand : ObdCommand() {
 }
 
 /**
+ * The actual root cause of the entire evening's LTFT investigation, finally found: the library's
+ * FuelTrimCommand.FuelTrimBank enum has SHORT_TERM_BANK_2 ("07") and LONG_TERM_BANK_1 ("08")
+ * swapped relative to the real SAE J1979 standard. Confirmed against the standard (06=STFT-B1,
+ * 07=LTFT-B1, 08=STFT-B2, 09=LTFT-B2, unambiguous and unchanged for decades) and independently
+ * cross-checked live on this vehicle with a second scan tool (Car Scanner): its own PID list
+ * labels ID=7 "Long term fuel % trim - Bank 1" and reads a real value from it (7.03%), while
+ * this project had been requesting PID 08 under that same label the entire time, PID 08 is
+ * really Short Term Fuel Trim Bank 2, which does not exist on this single-bank inline-4 engine,
+ * hence the literal, consistent "NO DATA" on every single attempt all night. PID 07 is confirmed
+ * present in this ECU's own declared supported-PID list (see SafeAvailablePIDsCommand below);
+ * PID 08 is confirmed absent, exactly as expected for a real Bank 2 PID on an engine with no
+ * Bank 2. Every theory chased earlier tonight (adapter flakiness, ELM327 headers, timing/
+ * condition-gating, "Mazda hides this behind an enhanced PID") was chasing a request that was
+ * simply asking the ECU a question it correctly had no answer to. Same math as the library's
+ * FuelTrimCommand (parsing is not what was wrong, only the PID string), same tag as before
+ * ("LONG_TERM_BANK_1") so existing event-log queries and analyze_drive.py's canonical_name
+ * keyword matching (`r"long term.*bank 1"`) keep working unchanged, going forward they'll just
+ * finally have real data behind them instead of NoDataException every time.
+ */
+class SafeLongTermFuelTrimBank1Command : ObdCommand() {
+    override val tag = "LONG_TERM_BANK_1"
+    override val name = "Long Term Fuel Trim Bank 1"
+    override val mode = "01"
+    override val pid = "07"
+    override val defaultUnit = "%"
+    override val handler = { response: ObdRawResponse ->
+        "%.1f".format(bytesToInt(response.bufferedValue, bytesToProcess = 1) * (100f / 128f) - 100f)
+    }
+}
+
+/**
  * Not a library bug, just a PID this project didn't log before: Timing Advance (PID 0E), added
  * specifically to check for ignition-timing retard, the ECU's actual knock-mitigation response
  * on lower-octane fuel on this engine (SKYACTIV-G Turbo, factory-rated 250hp on 93 octane vs.
