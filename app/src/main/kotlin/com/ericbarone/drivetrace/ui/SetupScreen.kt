@@ -53,11 +53,26 @@ private fun hasAllPermissions(context: Context): Boolean =
 
 /**
  * There's only ever one real OBD adapter among the bonded devices (the rest are earbuds,
- * other cars' kits, etc.), so default to it by name rather than making every session start
- * with hunting through the full bonded-devices list.
+ * other cars' kits, etc.). Broader than a plain "OBD" substring: confirmed for real that this
+ * user's actual adapter doesn't contain "OBD" in its bonded name at all, cheap ELM327 clones
+ * ship under all sorts of generic or vendor names. Still just a heuristic, not a guarantee, if a
+ * real adapter shows up matching none of these, the fix is broadening this list, not assuming
+ * name-matching alone can ever be fully reliable.
  */
+private val LIKELY_OBD_NAME_PATTERNS = listOf("obd", "elm327", "elm ", "vgate", "veepeak", "vlink", "v-link", "icar")
+
+private fun looksLikeObdAdapter(device: BluetoothDevice): Boolean {
+    val name = device.name?.lowercase() ?: return false
+    return LIKELY_OBD_NAME_PATTERNS.any { name.contains(it) }
+}
+
 private fun defaultObdDeviceAddress(devices: List<BluetoothDevice>): String? =
-    devices.firstOrNull { it.name?.contains("OBD", ignoreCase = true) == true }?.address
+    devices.firstOrNull { looksLikeObdAdapter(it) }?.address
+
+/** Likely OBD adapters first (stable within each group, so ties keep the OS's bonded order)
+ * rather than leaving them wherever they happen to fall in the raw bonded-devices list. */
+private fun sortWithLikelyObdFirst(devices: List<BluetoothDevice>): List<BluetoothDevice> =
+    devices.sortedByDescending { looksLikeObdAdapter(it) }
 
 @Composable
 fun SetupScreen(onStartLogging: (String, VehicleProfile) -> Unit, onShowHistory: () -> Unit) {
@@ -77,13 +92,13 @@ fun SetupScreen(onStartLogging: (String, VehicleProfile) -> Unit, onShowHistory:
     ) { results ->
         permissionsGranted = results.values.all { it }
         if (permissionsGranted) {
-            devices = BluetoothTransport(context).bondedDevices()
+            devices = sortWithLikelyObdFirst(BluetoothTransport(context).bondedDevices())
             if (selectedAddress == null) selectedAddress = defaultObdDeviceAddress(devices)
         }
     }
 
     if (permissionsGranted && devices.isEmpty()) {
-        devices = BluetoothTransport(context).bondedDevices()
+        devices = sortWithLikelyObdFirst(BluetoothTransport(context).bondedDevices())
         if (selectedAddress == null) selectedAddress = defaultObdDeviceAddress(devices)
     }
 
