@@ -101,7 +101,13 @@ fun SetupScreen(onStartLogging: (String) -> Unit) {
         if (devices.isEmpty()) {
             Text("No bonded Bluetooth devices found. Pair your ELM327 adapter in Android's Bluetooth settings first.")
         } else {
-            LazyColumn(modifier = Modifier.fillMaxWidth()) {
+            // weight(1f), not just fillMaxWidth: without a bounded height, this LazyColumn
+            // expands to fit every bonded device and pushes Start Logging off the bottom of the
+            // screen, unreachable, since it's outside the list's own internal scroll area (a
+            // long bonded-device list, confirmed for real: earbuds, other cars' kits, etc. add
+            // up). weight(1f) caps it to the remaining space in the outer Column, so the list
+            // scrolls internally and Start Logging stays pinned below it, always visible.
+            LazyColumn(modifier = Modifier.fillMaxWidth().weight(1f)) {
                 items(devices) { device ->
                     val address = device.address
                     Row(
