@@ -49,8 +49,14 @@ Full details: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
 ## Status
 
 Validated against one real vehicle (2020 Mazda 6 2.5T) and one ELM327 clone
-adapter, three real drives logged so far (all short, none yet matching the
-original sustained highway+backroad+city profile the diagnostic question
-actually needs). The pipeline itself, connection, logging, export,
-streaming, backfill, auto-analysis, is proven working end to end. What's
-still needed is the real diagnostic drive.
+adapter across multiple real drives; none yet matching the original
+sustained highway+backroad+city profile the diagnostic question actually
+needs. The pipeline itself, connection, logging, export, streaming,
+backfill, auto-analysis, trip history, forced retry, is proven working
+end to end.
+
+A second vehicle (2014 Subaru Outback 2.5i) was added at the architecture
+level, picking a vehicle is now a Setup-screen choice instead of a
+hardcoded constant, see `VehicleProfile.kt`/`PidCatalog.kt`, but its PID
+catalog is untested as of writing, don't assume it's validated the way
+the Mazda's is.

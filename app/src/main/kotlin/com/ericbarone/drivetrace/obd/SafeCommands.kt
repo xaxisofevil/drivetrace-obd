@@ -144,6 +144,25 @@ class SafeLongTermFuelTrimBank1Command : ObdCommand() {
 }
 
 /**
+ * The flip side of SafeLongTermFuelTrimBank1Command's fix: the library's
+ * FuelTrimBank.SHORT_TERM_BANK_2 entry points at PID "07" (which is really Long Term Fuel Trim
+ * Bank 1, see above), when the real Short Term Fuel Trim Bank 2 is PID "08". Not needed on the
+ * Mazda 6 (single-bank engine, no Bank 2 at all), added for multi-bank engines (e.g. the Subaru
+ * Outback's boxer, see SubaruPidCatalog.kt) where Bank 2 trim is a real, legitimate signal, not
+ * noise. Same math as the library's FuelTrimCommand, only the PID was ever wrong.
+ */
+class SafeShortTermFuelTrimBank2Command : ObdCommand() {
+    override val tag = "SHORT_TERM_BANK_2"
+    override val name = "Short Term Fuel Trim Bank 2"
+    override val mode = "01"
+    override val pid = "08"
+    override val defaultUnit = "%"
+    override val handler = { response: ObdRawResponse ->
+        "%.1f".format(bytesToInt(response.bufferedValue, bytesToProcess = 1) * (100f / 128f) - 100f)
+    }
+}
+
+/**
  * Not a library bug, just a PID this project didn't log before: Timing Advance (PID 0E), added
  * specifically to check for ignition-timing retard, the ECU's actual knock-mitigation response
  * on lower-octane fuel on this engine (SKYACTIV-G Turbo, factory-rated 250hp on 93 octane vs.

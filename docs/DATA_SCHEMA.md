@@ -25,7 +25,15 @@ snake_case).
 
 These came from actually parsing kotlin-obd-api's source and from live
 vehicle responses, not assumptions. If you're matching on `canonical_name`
-anywhere (see `scripts/analyze_drive.py`'s `PID_KEYWORDS`), use these:
+anywhere (see `scripts/analyze_drive.py`'s `PID_KEYWORDS`), use these.
+
+**This table reflects `MazdaPidCatalog`** (see `PidCatalog.kt`/
+`VehicleProfile.kt`, multiple vehicles are supported now, each with its
+own catalog). `SubaruPidCatalog` polls a mostly-overlapping set plus
+Bank 2 fuel trim (`Short Term Fuel Trim Bank 2` / `Long Term Fuel Trim
+Bank 2`, meaningful on that two-bank boxer engine, unlike the Mazda's
+single bank), untested as of writing, don't assume its PID behavior
+matches this table without checking directly against that vehicle's ECU.
 
 | PID (hex) | `canonical_name` | Unit | Tier | Notes |
 |---|---|---|---|---|

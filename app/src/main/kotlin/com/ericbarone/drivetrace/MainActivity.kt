@@ -9,6 +9,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.core.content.ContextCompat
+import com.ericbarone.drivetrace.obd.VehicleProfile
 import com.ericbarone.drivetrace.service.BackfillRetryWorker
 import com.ericbarone.drivetrace.service.DriveLoggingService
 import com.ericbarone.drivetrace.service.LoggingStatus
@@ -39,8 +40,10 @@ class MainActivity : ComponentActivity() {
                     )
                     showHistory -> HistoryScreen(onBack = { showHistory = false })
                     else -> SetupScreen(
-                        onStartLogging = { address ->
-                            ContextCompat.startForegroundService(this, DriveLoggingService.startIntent(this, address))
+                        onStartLogging = { address, vehicleProfile ->
+                            ContextCompat.startForegroundService(
+                                this, DriveLoggingService.startIntent(this, address, vehicleProfile),
+                            )
                         },
                         onShowHistory = { showHistory = true },
                     )

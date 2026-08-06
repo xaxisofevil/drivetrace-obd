@@ -586,6 +586,45 @@ uploading.
   "Retry upload" button on anything not yet confirmed uploaded. Reachable
   from a new "Trip History" button on the Setup screen.
 
+## Multi-vehicle support (new feature): PidCatalog is now per-vehicle
+
+Prompted by adding a 2014 Subaru Outback 2.5i alongside the Mazda 6.
+`PidCatalog` changed from a single hardcoded `object` to an interface,
+with `MazdaPidCatalog` and `SubaruPidCatalog` as separate implementations,
+selected via a new `VehicleProfile` enum picked at Setup (persisted like
+the OBD device address already was). The server/Room data model needed no
+changes for this, `SessionEntity.vehicleProfile` was already a per-session
+field, not a global constant, this was a gap in the app's UI/scheduler,
+not the data model.
+
+**The one substantive, non-cosmetic difference for the Subaru**: it's a
+genuine two-bank boxer engine (FB25), unlike the Mazda 6's single-bank
+inline-4. Boxer engines are known for legitimate bank-to-bank fuel trim
+asymmetry from unequal exhaust runner lengths, so Bank 2 trim (PIDs 08/09)
+is a real diagnostic signal here, not the nonexistent-PID noise it would
+be on the Mazda. Added `SafeShortTermFuelTrimBank2Command` (PID 08, the
+library's own `SHORT_TERM_BANK_2` entry is wrong, same swap bug as
+`LONG_TERM_BANK_1`, see the LTFT section above) and used the library's
+`FuelTrimBank.LONG_TERM_BANK_2` as-is (PID 09 is correct there). Also
+dropped the Mazda-specific "no VIN" decision for this new catalog: that
+was a finding about this specific vehicle/adapter, not a project-wide
+default, so `SubaruPidCatalog` includes `VINCommand` until there's
+evidence it needs the same treatment.
+
+**Completely untested as of writing.** This is a best-effort starting
+catalog built from the Mazda's, not a validated one. Before trusting
+anything it reports: run the ECU-supported-PID check (already included in
+`oneTimeReadOnly()`) on a real connection and see what this ECU actually
+declares, same caution as everywhere else in this project tonight, don't
+assume PID behavior transfers between vehicles just because it's the same
+manufacturer or even the same generic OBD-II PID.
+
+**Scope decision**: `pc_logger` (the Python/laptop logger) was NOT
+extended to multi-vehicle in this pass, it still polls a single hardcoded
+Mazda-specific PID list (`pc_logger/pids.py`). Flagging explicitly so this
+doesn't silently drift out of sync with the app: if pc_logger is ever
+used for the Subaru, it needs the equivalent per-vehicle treatment first.
+
 ## Miscellaneous
 
 - Fuel Rail Pressure and Fuel Consumption Rate frequently return

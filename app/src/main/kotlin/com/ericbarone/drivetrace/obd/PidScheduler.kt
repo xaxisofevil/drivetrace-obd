@@ -93,15 +93,18 @@ private class RotatingCommand(val factory: () -> ObdCommand) {
 class PidScheduler(
     private val elmSession: ElmSession,
     private val startElapsedNs: Long,
+    /** Which vehicle's PID list to poll; see PidCatalog.kt for why this is per-vehicle rather
+     * than a single hardcoded catalog. */
+    private val catalog: PidCatalog,
     private val onMeasurement: suspend (MeasurementSample) -> Unit,
     private val onEvent: suspend (SchedulerEvent) -> Unit,
     /** Shared across reconnects within a session so sequence numbers stay monotonic. */
     private val sequence: AtomicLong = AtomicLong(0),
 ) {
 
-    private val tierA = PidCatalog.tierA().map { RotatingCommand(it) }.toMutableList()
-    private val tierB = PidCatalog.tierB().map { RotatingCommand(it) }.toMutableList()
-    private val tierC = PidCatalog.tierC().map { RotatingCommand(it) }.toMutableList()
+    private val tierA = catalog.tierA().map { RotatingCommand(it) }.toMutableList()
+    private val tierB = catalog.tierB().map { RotatingCommand(it) }.toMutableList()
+    private val tierC = catalog.tierC().map { RotatingCommand(it) }.toMutableList()
 
     private var tierAIndex = 0
     private var tierBIndex = 0
@@ -119,7 +122,7 @@ class PidScheduler(
     /** Runs one-time metadata reads (VIN, DTCs, etc). Failures are logged, never fatal. */
     suspend fun runOneTimeReads(): Map<String, OneTimeReadResult> {
         val results = mutableMapOf<String, OneTimeReadResult>()
-        for (factory in PidCatalog.oneTimeReadOnly()) {
+        for (factory in catalog.oneTimeReadOnly()) {
             val command = factory()
             try {
                 val response = elmSession.connection.run(command, maxRetries = 3)

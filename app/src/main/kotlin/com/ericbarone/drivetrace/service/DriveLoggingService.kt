@@ -24,6 +24,7 @@ import com.ericbarone.drivetrace.location.LocationCollector
 import com.ericbarone.drivetrace.obd.BluetoothTransport
 import com.ericbarone.drivetrace.obd.ElmSession
 import com.ericbarone.drivetrace.obd.PidScheduler
+import com.ericbarone.drivetrace.obd.VehicleProfile
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -35,7 +36,6 @@ import java.util.concurrent.atomic.AtomicLong
 
 private const val CHANNEL_ID = "drive_logging"
 private const val NOTIFICATION_ID = 1
-private const val VEHICLE_PROFILE = "2020 Mazda 6 2.5T"
 private const val INITIAL_BACKOFF_MS = 1_000L
 private const val MAX_BACKOFF_MS = 15_000L
 
@@ -52,11 +52,13 @@ class DriveLoggingService : Service() {
         const val ACTION_START = "com.ericbarone.drivetrace.action.START"
         const val ACTION_STOP = "com.ericbarone.drivetrace.action.STOP"
         const val EXTRA_DEVICE_ADDRESS = "device_address"
+        const val EXTRA_VEHICLE_PROFILE = "vehicle_profile"
 
-        fun startIntent(context: Context, deviceAddress: String): Intent =
+        fun startIntent(context: Context, deviceAddress: String, vehicleProfile: VehicleProfile): Intent =
             Intent(context, DriveLoggingService::class.java).apply {
                 action = ACTION_START
                 putExtra(EXTRA_DEVICE_ADDRESS, deviceAddress)
+                putExtra(EXTRA_VEHICLE_PROFILE, vehicleProfile.name)
             }
 
         fun stopIntent(context: Context): Intent =
@@ -82,9 +84,14 @@ class DriveLoggingService : Service() {
         when (intent?.action) {
             ACTION_START -> {
                 val deviceAddress = intent.getStringExtra(EXTRA_DEVICE_ADDRESS)
+                // Falls back to the first enum entry rather than crashing if the extra is ever
+                // missing/stale (e.g. a queued intent from before an app update changed the enum).
+                val vehicleProfile = intent.getStringExtra(EXTRA_VEHICLE_PROFILE)
+                    ?.let { name -> VehicleProfile.entries.find { it.name == name } }
+                    ?: VehicleProfile.entries.first()
                 if (deviceAddress != null && sessionJob == null) {
                     startForeground(NOTIFICATION_ID, buildNotification("Starting..."))
-                    sessionJob = serviceScope.launch { runSession(deviceAddress) }
+                    sessionJob = serviceScope.launch { runSession(deviceAddress, vehicleProfile) }
                 }
             }
             ACTION_STOP -> stopSession()
@@ -92,7 +99,7 @@ class DriveLoggingService : Service() {
         return START_NOT_STICKY
     }
 
-    private suspend fun runSession(deviceAddress: String) {
+    private suspend fun runSession(deviceAddress: String, vehicleProfile: VehicleProfile) {
         val dao = AppDatabase.getInstance(applicationContext).sessionDao()
         acquireWakeLock()
 
@@ -103,7 +110,7 @@ class DriveLoggingService : Service() {
             sessionId = startWallTimeUtc,
             startWallTimeUtc = startWallTimeUtc,
             startElapsedNs = System.nanoTime(),
-            vehicleProfile = VEHICLE_PROFILE,
+            vehicleProfile = vehicleProfile.displayName,
             adapterAddress = deviceAddress,
             appVersion = packageManager.getPackageInfo(packageName, 0).versionName ?: "unknown",
             phoneModel = "${Build.MANUFACTURER} ${Build.MODEL}",
@@ -196,6 +203,7 @@ class DriveLoggingService : Service() {
                     val scheduler = PidScheduler(
                         elmSession = elmSession,
                         startElapsedNs = startElapsedNs,
+                        catalog = vehicleProfile.catalog,
                         onMeasurement = { sample ->
                             dao.insertMeasurement(
                                 MeasurementEntity(

@@ -33,9 +33,11 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import com.ericbarone.drivetrace.obd.BluetoothTransport
+import com.ericbarone.drivetrace.obd.VehicleProfile
 
 private const val PREFS_NAME = "drivetrace_prefs"
 private const val PREF_LAST_DEVICE = "last_device_address"
+private const val PREF_VEHICLE_PROFILE = "vehicle_profile"
 
 private fun requiredPermissions(): Array<String> =
     buildList {
@@ -58,12 +60,17 @@ private fun defaultObdDeviceAddress(devices: List<BluetoothDevice>): String? =
     devices.firstOrNull { it.name?.contains("OBD", ignoreCase = true) == true }?.address
 
 @Composable
-fun SetupScreen(onStartLogging: (String) -> Unit, onShowHistory: () -> Unit) {
+fun SetupScreen(onStartLogging: (String, VehicleProfile) -> Unit, onShowHistory: () -> Unit) {
     val context = LocalContext.current
     val prefs = remember { context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE) }
     var permissionsGranted by remember { mutableStateOf(hasAllPermissions(context)) }
     var devices by remember { mutableStateOf<List<BluetoothDevice>>(emptyList()) }
     var selectedAddress by rememberSaveable { mutableStateOf(prefs.getString(PREF_LAST_DEVICE, null)) }
+    var selectedVehicleProfile by rememberSaveable {
+        val savedName = prefs.getString(PREF_VEHICLE_PROFILE, null)
+        val saved = savedName?.let { name -> VehicleProfile.entries.find { it.name == name } }
+        mutableStateOf(saved ?: VehicleProfile.entries.first())
+    }
 
     val permissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions(),
@@ -87,7 +94,6 @@ fun SetupScreen(onStartLogging: (String) -> Unit, onShowHistory: () -> Unit) {
         verticalArrangement = Arrangement.spacedBy(16.dp),
     ) {
         Text("DriveTrace", style = MaterialTheme.typography.headlineMedium)
-        Text("2020 Mazda 6 2.5T", style = MaterialTheme.typography.bodyMedium)
         OutlinedButton(onClick = onShowHistory) { Text("Trip History") }
 
         if (!permissionsGranted) {
@@ -96,6 +102,32 @@ fun SetupScreen(onStartLogging: (String) -> Unit, onShowHistory: () -> Unit) {
                 Text("Grant permissions")
             }
             return@Column
+        }
+
+        Text("Vehicle:", style = MaterialTheme.typography.titleMedium)
+        // A plain Row list, not a LazyColumn: only a couple of vehicle profiles exist, no need
+        // for the bonded-devices list's scroll handling below.
+        for (profile in VehicleProfile.entries) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .selectable(
+                        selected = profile == selectedVehicleProfile,
+                        onClick = {
+                            selectedVehicleProfile = profile
+                            prefs.edit().putString(PREF_VEHICLE_PROFILE, profile.name).apply()
+                        },
+                    ),
+            ) {
+                RadioButton(
+                    selected = profile == selectedVehicleProfile,
+                    onClick = {
+                        selectedVehicleProfile = profile
+                        prefs.edit().putString(PREF_VEHICLE_PROFILE, profile.name).apply()
+                    },
+                )
+                Text(profile.displayName, modifier = Modifier.padding(top = 12.dp))
+            }
         }
 
         Text("Select the paired ELM327 adapter:", style = MaterialTheme.typography.titleMedium)
@@ -136,7 +168,7 @@ fun SetupScreen(onStartLogging: (String) -> Unit, onShowHistory: () -> Unit) {
             onClick = {
                 selectedAddress?.let { address ->
                     prefs.edit().putString(PREF_LAST_DEVICE, address).apply()
-                    onStartLogging(address)
+                    onStartLogging(address, selectedVehicleProfile)
                 }
             },
         ) {

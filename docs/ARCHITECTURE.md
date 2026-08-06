@@ -5,7 +5,9 @@
 ```
 app/                    Android app (Kotlin, Jetpack Compose)
   obd/                    Bluetooth transport, ELM327 init, tiered PID scheduler,
-                          PID catalog, bug-workaround "safe" commands
+                          per-vehicle PID catalogs (PidCatalog interface +
+                          MazdaPidCatalog/SubaruPidCatalog + VehicleProfile),
+                          bug-workaround "safe" commands
   service/                Foreground service (survives screen-off), process-wide
                           UI status bus (LoggingStatus)
   streaming/              Best-effort live stream + guaranteed backfill + analysis
@@ -36,13 +38,14 @@ blueprint/              The original spec this project was built from.
 
 ## Data flow for one drive (Android app path)
 
-1. **Setup screen**: pick the bonded ELM327 adapter (bonded-devices-only,
-   never scans, see blueprint's Bluetooth permission rules). Defaults to
-   whichever bonded device's name contains "OBD".
+1. **Setup screen**: pick the vehicle (`VehicleProfile`, persisted as a
+   preference) and the bonded ELM327 adapter (bonded-devices-only, never
+   scans, see blueprint's Bluetooth permission rules; defaults to
+   whichever bonded device's name contains "OBD").
 2. **Start Logging** → `DriveLoggingService` starts as a foreground service
    (`connectedDevice|location` type), connects, runs the ELM327 AT init
    sequence, reads DTCs/fuel type/supported-PIDs once, then polls the
-   tiered PID list continuously.
+   selected vehicle's tiered `PidCatalog` continuously.
 3. Every measurement/location/event:
    - writes to **local Room** first, synchronously — this is the
      authoritative copy, always complete regardless of network
