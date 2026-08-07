@@ -581,20 +581,34 @@ fun PrimaryAction(
     }
 }
 
-/** The alternative action. Outlined, never coloured, so it can never be mistaken for primary. */
+/**
+ * The alternative action. Outlined, never coloured, so it can never be mistaken for primary.
+ *
+ * [busy] is the "this is happening right now" state, for an action whose work outlives the tap:
+ * the button disables itself and grows a pulsing [StatusDot] ahead of its label. The dot is
+ * deliberately the same pulse as the live heartbeat rather than a Material spinner, because rule 9
+ * says only StatusDot animates and because "in progress" already has a shape in this app. Tone is
+ * CAUTION, matching the status table's "pending upload" row: the work is under way and not yet
+ * confirmed, which is exactly what a caution reads as here.
+ *
+ * The caller owns the flag. The one on the logbook comes from WorkManager's own record of the
+ * queued work rather than from a boolean set at tap time, so it survives the app's process dying
+ * mid-retry; see HistoryScreen.
+ */
 @Composable
 fun SecondaryAction(
     text: String,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
     enabled: Boolean = true,
+    busy: Boolean = false,
     contentColor: Color = Mist,
     borderColor: Color = HairlineBright,
     minHeight: androidx.compose.ui.unit.Dp = Space.touchTarget,
 ) {
     OutlinedButton(
         onClick = onClick,
-        enabled = enabled,
+        enabled = enabled && !busy,
         shape = DriveTraceShapes.control,
         border = androidx.compose.foundation.BorderStroke(Space.hairline, borderColor),
         colors = ButtonDefaults.outlinedButtonColors(
@@ -603,6 +617,10 @@ fun SecondaryAction(
         ),
         modifier = modifier.defaultMinSize(minHeight = minHeight),
     ) {
+        if (busy) {
+            StatusDot(tone = Tone.CAUTION, pulsing = true, sizeDp = 7)
+            Spacer(Modifier.width(Space.sm))
+        }
         Text(text.uppercase(), style = LocalReadoutType.current.label)
     }
 }

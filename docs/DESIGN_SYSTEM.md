@@ -229,7 +229,7 @@ is a design-system change and belongs in this document.
 | `ConsoleLine` | Monospaced, dim, `>`-prefixed machine output |
 | `NoteField` | The one text input: a short drive note. M3 `OutlinedTextField` restyled to the panel language, hard length cap. Used raw in the Stop dialog and wrapped by `DriveNoteEditor` (`ui/DriveNote.kt`) everywhere a note is edited after the fact. |
 | `Caption` | Methodology caveats and small print |
-| `PrimaryAction` / `SecondaryAction` / `ActionBar` | 56dp full-width primary in a pinned bar |
+| `PrimaryAction` / `SecondaryAction` / `ActionBar` | 56dp full-width primary in a pinned bar. `SecondaryAction` also carries a `busy` state for work that outlives the tap |
 | `EmptyState` | Says what to do next, not only what is missing |
 | `GlyphMark` | The five drawn glyphs (tick, bang, cross, dash, dots, chevron) |
 
@@ -251,6 +251,14 @@ on the screens above it.
 **Exactly one animation exists in the app:** `StatusDot`'s slow alpha pulse, roughly one cycle a
 second, when data is arriving. Motion is the strongest pre-attentive cue there is, so it only
 stays meaningful if it is the only thing moving.
+
+**`SecondaryAction(busy = true)` is that same dot, not a second animation.** An action whose work
+outlives the tap (the logbook's retry controls) disables itself and grows a pulsing `StatusDot`
+ahead of its label, toned `CAUTION` to match the status table's "pending upload" row: the work is
+under way and not yet confirmed. A Material `CircularProgressIndicator` would have been a second
+kind of motion saying the same thing the app already has a shape for, and rule 9 rules it out.
+The flag is the caller's, and where the work is a WorkManager job the caller reads it back from
+WorkManager rather than setting a boolean at tap time; see the logbook below.
 
 ## 7. Screen layouts
 
@@ -431,6 +439,18 @@ reading a word. Upload and analysis states become chips; a failed backfill messa
 summarises "N drives, M not uploaded". A non-blank session note appears as a two-line `Mist`
 caption between the figures and the chips: the driver's own annotation ranks below what the app
 measured but above what the app's upload pipeline did.
+
+**The retry control reports its own progress.** It used to enqueue the work and immediately re-read
+the database, which happens before WorkManager has started the job, so nothing on the card changed
+and the button was indistinguishable from a dead one until you went and checked the server. It now
+shows a `SecondaryAction(busy = true)` while its work is outstanding and reverts on its own when
+the work finishes, at which point the card reloads: the running-to-finished edge is the moment the
+row on disk actually changed and therefore the only moment a reload is worth anything. **The flag
+comes from WorkManager, not from the card.** `WorkManager.getWorkInfosForUniqueWorkFlow` on the
+same unique name the enqueue used (`BackfillRetryWorker.retryWorkName`) is already the durable
+record of whether that job is outstanding; a boolean set at tap time would disagree with it the
+first time the app's process died mid-retry, coming back looking idle while the work was still
+queued.
 
 The note row is also where a drive gets annotated after the fact. Every card carries an **Add
 note** / **Edit note** control on that row, which swaps it for a `DriveNoteEditor`. Collapsed

@@ -73,6 +73,16 @@ class BackfillRetryWorker(
                 .enqueueUniqueWork(SWEEP_WORK_NAME, ExistingWorkPolicy.KEEP, request)
         }
 
+        /**
+         * The unique work name a user-triggered retry for [sessionId] is queued under. Public
+         * because the logbook observes this exact name through
+         * `WorkManager.getWorkInfosForUniqueWorkFlow` to know whether a retry is still in flight,
+         * rather than keeping a boolean of its own: WorkManager already tracks that, durably and
+         * across process death, and a hand-rolled flag would drift from it the first time the app
+         * got killed mid-retry (it would come back looking idle while the work was still queued).
+         */
+        fun retryWorkName(sessionId: Long): String = "backfill_retry_$sessionId"
+
         /** User-triggered "retry now" for one specific session (Trip History screen). REPLACE +
          * expedited so it runs promptly rather than waiting behind an opportunistic sweep. */
         fun enqueueRetryNow(context: Context, sessionId: Long) {
@@ -83,7 +93,7 @@ class BackfillRetryWorker(
                 .setExpedited(OutOfQuotaPolicy.RUN_AS_NON_EXPEDITED_WORK_REQUEST)
                 .build()
             WorkManager.getInstance(context)
-                .enqueueUniqueWork("backfill_retry_$sessionId", ExistingWorkPolicy.REPLACE, request)
+                .enqueueUniqueWork(retryWorkName(sessionId), ExistingWorkPolicy.REPLACE, request)
         }
     }
 }

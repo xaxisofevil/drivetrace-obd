@@ -17,16 +17,19 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.work.WorkManager
 import com.ericbarone.drivetrace.data.AppDatabase
 import com.ericbarone.drivetrace.data.SessionEntity
 import com.ericbarone.drivetrace.service.BackfillRetryWorker
@@ -122,10 +125,13 @@ fun HistoryScreen(onBack: () -> Unit) {
                 items(sessions, key = { it.sessionId }) { session ->
                     SessionCard(
                         session = session,
-                        onRetry = {
-                            BackfillRetryWorker.enqueueRetryNow(context, session.sessionId)
-                            scope.launch { reload() }
-                        },
+                        // No reload() here. The old version reloaded the instant the button was
+                        // tapped, which read the row back before WorkManager had even started the
+                        // job, so nothing on screen changed and the button was indistinguishable
+                        // from a dead one. The card now watches the work itself and reloads when
+                        // it finishes, which is the moment the row on disk actually changed.
+                        onRetry = { BackfillRetryWorker.enqueueRetryNow(context, session.sessionId) },
+                        onRetryFinished = { scope.launch { reload() } },
                         onNoteSaved = { scope.launch { reload() } },
                     )
                 }
@@ -134,8 +140,46 @@ fun HistoryScreen(onBack: () -> Unit) {
     }
 }
 
+/**
+ * True while the unique work queued under [uniqueWorkName] is enqueued or running, straight from
+ * WorkManager's own store rather than from a boolean this screen sets on tap. WorkManager is
+ * already the authority on whether that job is outstanding, it stays the authority after the app's
+ * process is killed and restarted, and a hand-rolled flag would quietly disagree with it the first
+ * time that happened.
+ *
+ * [onFinished] fires on the running-to-finished edge, which is the moment the session row on disk
+ * actually changed and therefore the only moment a reload is worth anything. Work that finished
+ * before this screen was ever opened stays finished and fires nothing: WorkManager keeps completed
+ * WorkInfos around, and the initial state is only ever compared against a transition.
+ */
 @Composable
-private fun SessionCard(session: SessionEntity, onRetry: () -> Unit, onNoteSaved: () -> Unit) {
+private fun workInFlight(uniqueWorkName: String, onFinished: () -> Unit): Boolean {
+    val context = LocalContext.current
+    val flow = remember(uniqueWorkName) {
+        WorkManager.getInstance(context).getWorkInfosForUniqueWorkFlow(uniqueWorkName)
+    }
+    val infos by flow.collectAsState(initial = emptyList())
+    val inFlight = infos.any { !it.state.isFinished }
+    val finishedCallback by rememberUpdatedState(onFinished)
+    var wasInFlight by remember(uniqueWorkName) { mutableStateOf(false) }
+    LaunchedEffect(inFlight) {
+        if (inFlight) {
+            wasInFlight = true
+        } else if (wasInFlight) {
+            wasInFlight = false
+            finishedCallback()
+        }
+    }
+    return inFlight
+}
+
+@Composable
+private fun SessionCard(
+    session: SessionEntity,
+    onRetry: () -> Unit,
+    onRetryFinished: () -> Unit,
+    onNoteSaved: () -> Unit,
+) {
     val type = LocalReadoutType.current
     var editingNote by remember(session.sessionId) { mutableStateOf(false) }
     val dateFmt = remember { SimpleDateFormat("MMM d, yyyy h:mm a", Locale.US) }
@@ -265,10 +309,15 @@ private fun SessionCard(session: SessionEntity, onRetry: () -> Unit, onNoteSaved
         }
 
         if (session.backfillStatus != "SUCCESS") {
+            val retrying = workInFlight(
+                BackfillRetryWorker.retryWorkName(session.sessionId),
+                onFinished = onRetryFinished,
+            )
             Spacer(Modifier.height(Space.md))
             SecondaryAction(
-                text = "Retry upload",
+                text = if (retrying) "Uploading..." else "Retry upload",
                 onClick = onRetry,
+                busy = retrying,
                 contentColor = Mist,
                 minHeight = Space.compactTarget,
             )
