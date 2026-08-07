@@ -385,3 +385,36 @@ things to charge for since nothing functional sits behind the paywall.
 - **DTC display.** DTCs are already read once at session start and stored as events, but the UI
   never surfaces them. A check-engine light with a code and its plain-English meaning on the
   setup screen is high perceived value for effort that is nearly zero.
+
+## 10. Android Auto dashboard, instead of the phone screen
+
+The actual premise of Android Auto is that the driver stops looking at the phone. A live MPG/
+trim/boost dashboard projected to the car's own screen is strictly safer than the same thing on
+`LoggingScreen`, and Google's own driving-distraction rules end up reinforcing this design system
+rather than fighting it: the Car App Library's templates (there is no custom Compose surface on
+Android Auto, only a fixed set of Google-rendered templates) cap how much text and how many rows
+can appear while driving, which forces the exact "one hero value, a few subordinate ones"
+hierarchy this document already committed to. `PaneTemplate` (a handful of large label/value
+`Row`s) is the natural fit: trip MPG as the hero row, connection state and current trim as the
+other two, is plausibly the whole screen.
+
+Play Store restricts Car App Library listings to five categories (navigation, point-of-interest,
+IoT, VoIP, weather), none of which fit a diagnostics dashboard. That restriction doesn't apply
+here: it's enforced at Play review, not at runtime, and Android Auto ships a developer "Unknown
+sources" toggle (Settings → Apps → Android Auto → tap the version info ten times) specifically
+for running apps outside the approved categories, the same sideload posture this whole app
+already lives in.
+
+**Real dependency, not a new one:** this needs the same missing plumbing as idea #1 (live PID
+values flowing into a shared state object). `LoggingStatus` is already a process-wide
+`MutableStateFlow`, not Activity-scoped, so a Car App `Screen` can collect from the exact same
+source the phone UI would once idea #1 lands. Build that plumbing once; both surfaces benefit.
+Screens redraw via `invalidate()`, subject to a minimum update interval Android Auto enforces
+(roughly once a second, not live telemetry rate).
+
+**Worth weighing against the stated goal:** a car screen still costs a glance; idea #7's
+chime/threshold alert costs none. They're complementary, not competing, but if only one gets
+built first, the alert is arguably the safer one.
+
+*Testing:* Google's Desktop Head Unit (DHU) tool covers at-desk iteration; the 2020 Mazda 6's
+factory infotainment supports Android Auto for real-vehicle testing when wanted.
