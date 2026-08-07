@@ -436,7 +436,19 @@ left accent bar carries upload state, so a scroll shows which drives still owe a
 reading a word. Upload and analysis states become chips; a failed backfill message becomes a
 `ConsoleLine` in fault red, carrying the fixed message from `ui/PipelineMessages.kt`, never
 `session.backfillMessage`, for the reason given under LoggingScreen above. The header subtitle
-summarises "N drives, M not uploaded". A non-blank session note appears as a two-line `Mist`
+summarises "N drives, M not uploaded".
+
+**The card names the vehicle,** on the line under the date, as `VehicleProfile.displayName` and
+never the stored enum name. `SessionEntity.vehicleProfile` has tagged every session since the
+multi-vehicle work, and the logbook was the one screen where that mattered and the one screen
+that never showed it: with two cars in rotation, a column of dates and MPG figures cannot be
+compared at all, because the reader cannot tell which drives belong to the same car. It costs no
+new line, because it took the slot **`completed` used to hold.** That word was on every card, and
+rule 14 applies at line level as well as at section level: a field that reads the same after every
+drive is wallpaper. `interrupted` is a real result and still prints. The line is
+`vehicle / duration`, with the status appended only when it is not the ordinary one, and it
+ellipsises rather than wrapping so the card's height is fixed regardless of how long a vehicle's
+name is. A non-blank session note appears as a two-line `Mist`
 caption between the figures and the chips: the driver's own annotation ranks below what the app
 measured but above what the app's upload pipeline did.
 

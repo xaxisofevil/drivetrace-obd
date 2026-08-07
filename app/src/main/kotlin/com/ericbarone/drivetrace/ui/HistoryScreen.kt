@@ -32,6 +32,7 @@ import androidx.compose.ui.unit.dp
 import androidx.work.WorkManager
 import com.ericbarone.drivetrace.data.AppDatabase
 import com.ericbarone.drivetrace.data.SessionEntity
+import com.ericbarone.drivetrace.obd.VehicleProfile
 import com.ericbarone.drivetrace.service.BackfillRetryWorker
 import com.ericbarone.drivetrace.streaming.analysisSummaryFromJson
 import com.ericbarone.drivetrace.ui.components.Caption
@@ -144,6 +145,15 @@ fun HistoryScreen(onBack: () -> Unit) {
 }
 
 /**
+ * The stored `vehicleProfile` as the name of an actual car. Falls back to the raw stored string
+ * rather than to nothing if the enum no longer has that entry, since the row's own value is then
+ * the only record left of which vehicle the drive belongs to and losing it silently is worse than
+ * printing an enum name.
+ */
+private fun vehicleLabel(storedName: String): String =
+    VehicleProfile.entries.find { it.name == storedName }?.displayName ?: storedName
+
+/**
  * True while the unique work queued under [uniqueWorkName] is enqueued or running, straight from
  * WorkManager's own store rather than from a boolean this screen sets on tap. WorkManager is
  * already the authority on whether that job is outstanding, it stays the authority after the app's
@@ -216,12 +226,22 @@ private fun SessionCard(
                 Spacer(Modifier.height(2.dp))
                 Text(
                     buildString {
-                        durationMin?.let { append("%.0f min".format(it)); append("  /  ") }
-                        append(session.completionStatus.lowercase())
+                        append(vehicleLabel(session.vehicleProfile))
+                        durationMin?.let { append("  /  "); append("%.0f min".format(it)) }
+                        // Only when it is not the ordinary case. "completed" was on every card,
+                        // which is rule 14 applied at line level: a field that reads the same
+                        // after every drive is wallpaper, and dropping it is what makes room for
+                        // the vehicle without growing the card. An interrupted drive is a real
+                        // result and still says so.
+                        if (!session.completionStatus.equals("COMPLETED", ignoreCase = true)) {
+                            append("  /  ")
+                            append(session.completionStatus.lowercase())
+                        }
                     },
                     style = type.unit,
                     color = Ash,
                     maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
                 )
             }
             // MPG in a fixed right-hand column: this is the value the list exists to compare.
