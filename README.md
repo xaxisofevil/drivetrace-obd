@@ -42,6 +42,7 @@ Full details: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
 | Set up the home server (live streaming, auto-analysis) | [server/README.md](server/README.md) |
 | Run analysis on an exported drive | [scripts/README.md](scripts/README.md) |
 | Understand the exact data schema / PID list | [docs/DATA_SCHEMA.md](docs/DATA_SCHEMA.md) |
+| Add or change a screen without breaking the visual language | [docs/DESIGN_SYSTEM.md](docs/DESIGN_SYSTEM.md) |
 | **Dig into a drive's data to find where fuel is being lost** | [docs/ANALYSIS_STARTING_POINTS.md](docs/ANALYSIS_STARTING_POINTS.md) |
 | Understand a weird behavior or known bug before assuming it's new | [docs/KNOWN_ISSUES.md](docs/KNOWN_ISSUES.md) |
 | Evaluate what's needed before selling/distributing this | [docs/COMMERCIAL_READINESS.md](docs/COMMERCIAL_READINESS.md) |

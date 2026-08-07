@@ -1,0 +1,5 @@
+<resources>
+    <!-- Mirrors Ink in ui/theme/Color.kt. Only exists so the pre-Compose window background can
+         match the Compose surface; keep the two values in sync. -->
+    <color name="ink">#FF06090E</color>
+</resources>

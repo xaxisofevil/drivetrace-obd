@@ -1,3 +1,15 @@
 <resources>
-    <style name="Theme.DriveTrace" parent="android:Theme.Material.Light.NoActionBar" />
+    <!--
+        The Compose theme is dark-only (see ui/theme/Theme.kt and docs/DESIGN_SYSTEM.md), so the
+        Android-level theme has to be dark too. With the previous Material.Light parent, every
+        cold start flashed a full white window for the frame or two before Compose drew, which is
+        genuinely unpleasant at night in a car and reads as a broken app. windowBackground is
+        pinned to the same Ink value the Compose surface uses so the handoff is invisible.
+    -->
+    <style name="Theme.DriveTrace" parent="android:Theme.Material.NoActionBar">
+        <item name="android:windowBackground">@color/ink</item>
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:navigationBarColor">@android:color/transparent</item>
+        <item name="android:windowLightStatusBar">false</item>
+    </style>
 </resources>
