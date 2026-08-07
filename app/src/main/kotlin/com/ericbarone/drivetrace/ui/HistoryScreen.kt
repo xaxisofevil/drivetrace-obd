@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.systemBarsPadding
 import androidx.compose.foundation.lazy.LazyColumn
@@ -85,7 +86,10 @@ fun HistoryScreen(onBack: () -> Unit) {
         modifier = Modifier
             .fillMaxSize()
             .background(Ink)
-            .systemBarsPadding(),
+            .systemBarsPadding()
+            // A card can now expand into a note field; without this the IME covers the card
+            // being edited.
+            .imePadding(),
     ) {
         HeaderBar(
             title = "Logbook",
@@ -122,6 +126,7 @@ fun HistoryScreen(onBack: () -> Unit) {
                             BackfillRetryWorker.enqueueRetryNow(context, session.sessionId)
                             scope.launch { reload() }
                         },
+                        onNoteSaved = { scope.launch { reload() } },
                     )
                 }
             }
@@ -130,8 +135,9 @@ fun HistoryScreen(onBack: () -> Unit) {
 }
 
 @Composable
-private fun SessionCard(session: SessionEntity, onRetry: () -> Unit) {
+private fun SessionCard(session: SessionEntity, onRetry: () -> Unit, onNoteSaved: () -> Unit) {
     val type = LocalReadoutType.current
+    var editingNote by remember(session.sessionId) { mutableStateOf(false) }
     val dateFmt = remember { SimpleDateFormat("MMM d, yyyy h:mm a", Locale.US) }
     val summary = remember(session.analysisSummaryJson) {
         session.analysisSummaryJson?.let { analysisSummaryFromJson(it) }
@@ -186,15 +192,44 @@ private fun SessionCard(session: SessionEntity, onRetry: () -> Unit) {
         // is only answerable if something recorded what was different. Kept to two lines and set
         // in Mist so it reads as the driver's own annotation, below the machine-written figures
         // above it but above the pipeline chips, which are about the app rather than the drive.
-        session.notes?.takeIf { it.isNotBlank() }?.let { note ->
-            Spacer(Modifier.height(Space.sm))
-            Text(
-                note,
-                style = type.unit,
-                color = Mist,
-                maxLines = 2,
-                overflow = TextOverflow.Ellipsis,
+        //
+        // Editable from here as well as at Stop, because the logbook is where a drive from days
+        // ago gets looked at again and it is where "oh, that was the one with the new tyres"
+        // actually occurs to someone. Collapsed behind a tap by default: the list's whole job is
+        // to be scanned down a column of MPG figures, and a text field on every card would
+        // triple every row's height for an interaction that happens once in twenty views.
+        val note = session.notes?.takeIf { it.isNotBlank() }
+        Spacer(Modifier.height(Space.sm))
+        if (editingNote) {
+            DriveNoteEditor(
+                sessionId = session.sessionId,
+                initialNote = session.notes.orEmpty(),
+                onSaved = { editingNote = false; onNoteSaved() },
             )
+        } else {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(Space.sm),
+            ) {
+                if (note != null) {
+                    Text(
+                        note,
+                        style = type.unit,
+                        color = Mist,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f),
+                    )
+                } else {
+                    Spacer(Modifier.weight(1f))
+                }
+                SecondaryAction(
+                    text = if (note != null) "Edit note" else "Add note",
+                    onClick = { editingNote = true },
+                    contentColor = Ash,
+                    minHeight = Space.compactTarget,
+                )
+            }
         }
 
         Spacer(Modifier.height(Space.md))
