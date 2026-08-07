@@ -517,13 +517,30 @@ A single generated image — route, distance, MPG, notable flags — sized for a
 group chat. Cheap to build on the analysis data that already exists, and it is the organic growth
 loop for an app whose users already congregate in model-specific forums.
 
-## 5. Multi-vehicle fleet view
+## 5. "My Vehicles" tab: per-vehicle stats, not just a fleet-view idea anymore
 
-`VehicleProfile` and `SessionEntity.vehicleProfile` already make every session vehicle-tagged;
-nothing in the UI uses that. A per-vehicle logbook with per-vehicle baselines is nearly free
-given the existing data model. *Monetisation:* the standard fleet-tier split (free for one or two
-vehicles, paid beyond) that most vehicle apps use, and it fits genuinely rather than being an
-artificial gate.
+**Explicitly requested, not speculative like the rest of this list.** `VehicleProfile` and
+`SessionEntity.vehicleProfile` already make every session vehicle-tagged; nothing in the UI uses
+that yet beyond the Logbook filter (see the note on that filter shipping alongside this doc
+update). A new top-level tab, alongside Setup and Logbook, showing per-vehicle rollups:
+
+- Total drives, total distance, overall MPG per vehicle, the numbers the Logbook's own
+  MPG-scan-column exists to support but currently only per-drive, never aggregated.
+- Combined trim trend over time per vehicle, the actual mechanism behind idea #6's baseline/drift
+  alerting below, this tab is the natural home for that once it exists rather than a separate
+  screen.
+- Per-vehicle DTC history: has this specific car ever thrown a code, when, how often, using the
+  `DtcCatalog` lookup already shipped this session.
+- Adapter health rolled up per vehicle too, useful signal if the same cheap clone is used across
+  both cars, or if one vehicle's OBD port behaves worse than the other's (a real, open question
+  for this user given the Subaru profile is still marked untested in `DATA_SCHEMA.md`).
+
+Not yet built. The Logbook vehicle filter shipping now is the prerequisite groundwork (same
+underlying vehicle-tag data, one screen scoped to a single drive at a time vs. this one scoped to
+a vehicle's whole history), not the same feature. *Monetisation, if ever needed:* the standard
+fleet-tier split (free for one or two vehicles, paid beyond) most vehicle apps use, and it would
+fit genuinely rather than as an artificial gate, though this is now planned as a real feature
+regardless of that.
 
 ## 6. Baseline and drift alerting
 
