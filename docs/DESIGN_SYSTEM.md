@@ -440,6 +440,15 @@ summarises "N drives, M not uploaded". A non-blank session note appears as a two
 caption between the figures and the chips: the driver's own annotation ranks below what the app
 measured but above what the app's upload pipeline did.
 
+**There are two retry controls, and never more than one at a time.** "Retry upload" while the
+upload has not succeeded; **"Retry analysis"** once it has but the analysis has not, which is a
+real observed state rather than a hypothetical one (the ingest server was up, the analysis server
+was not). They occupy the same slot rather than sitting side by side, because at most one thing
+can be outstanding: until the drive is on the server there is nothing to analyze, and once the
+analysis is done neither control has anything to offer. The card's height therefore does not
+change between the two states. The analysis retry skips the upload entirely rather than re-sending
+a drive the server already holds in full; see `BackfillRetryWorker`'s `KEY_ANALYSIS_ONLY`.
+
 **The retry control reports its own progress.** It used to enqueue the work and immediately re-read
 the database, which happens before WorkManager has started the job, so nothing on the card changed
 and the button was indistinguishable from a dead one until you went and checked the server. It now

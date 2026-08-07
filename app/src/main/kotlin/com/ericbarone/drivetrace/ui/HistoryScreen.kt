@@ -131,6 +131,9 @@ fun HistoryScreen(onBack: () -> Unit) {
                         // from a dead one. The card now watches the work itself and reloads when
                         // it finishes, which is the moment the row on disk actually changed.
                         onRetry = { BackfillRetryWorker.enqueueRetryNow(context, session.sessionId) },
+                        onRetryAnalysis = {
+                            BackfillRetryWorker.enqueueAnalysisRetryNow(context, session.sessionId)
+                        },
                         onRetryFinished = { scope.launch { reload() } },
                         onNoteSaved = { scope.launch { reload() } },
                     )
@@ -177,6 +180,7 @@ private fun workInFlight(uniqueWorkName: String, onFinished: () -> Unit): Boolea
 private fun SessionCard(
     session: SessionEntity,
     onRetry: () -> Unit,
+    onRetryAnalysis: () -> Unit,
     onRetryFinished: () -> Unit,
     onNoteSaved: () -> Unit,
 ) {
@@ -308,6 +312,12 @@ private fun SessionCard(
             )
         }
 
+        // At most one retry control, because at most one thing can be owed. The two states are
+        // mutually exclusive by their own conditions: an upload that has not succeeded is the
+        // only thing worth asking for until it does, and only once it has does an analysis that
+        // never landed become the outstanding item. So the analysis control replaces the upload
+        // one in that slot rather than sitting beside it, and the card's height does not change
+        // between the two.
         if (session.backfillStatus != "SUCCESS") {
             val retrying = workInFlight(
                 BackfillRetryWorker.retryWorkName(session.sessionId),
@@ -318,6 +328,19 @@ private fun SessionCard(
                 text = if (retrying) "Uploading..." else "Retry upload",
                 onClick = onRetry,
                 busy = retrying,
+                contentColor = Mist,
+                minHeight = Space.compactTarget,
+            )
+        } else if (session.analysisStatus != "DONE") {
+            val analyzing = workInFlight(
+                BackfillRetryWorker.analysisRetryWorkName(session.sessionId),
+                onFinished = onRetryFinished,
+            )
+            Spacer(Modifier.height(Space.md))
+            SecondaryAction(
+                text = if (analyzing) "Analyzing..." else "Retry analysis",
+                onClick = onRetryAnalysis,
+                busy = analyzing,
                 contentColor = Mist,
                 minHeight = Space.compactTarget,
             )

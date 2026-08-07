@@ -49,7 +49,16 @@ data class AnalysisSummary(
 sealed class AnalysisPollResult {
     data object Running : AnalysisPollResult()
     data class Done(val summary: AnalysisSummary) : AnalysisPollResult()
-    data class Failed(val error: String) : AnalysisPollResult()
+
+    /**
+     * [fromServer] separates "the server ran the analysis and it failed" from "this phone never
+     * got an answer". Both read the same to the user, but only the second is worth queueing
+     * again: re-requesting an analysis the server has already rejected just fails identically,
+     * whereas a dropped connection is exactly what a retry is for. Carried as a field rather than
+     * inferred by matching on [error] text, which would silently stop holding the day either
+     * sentence gets reworded.
+     */
+    data class Failed(val error: String, val fromServer: Boolean = true) : AnalysisPollResult()
 }
 
 private fun JSONObject.optDoubleOrNull(key: String): Double? =
@@ -369,7 +378,9 @@ class StreamingClient(private val baseUrl: String, private val token: String) {
                     .get()
                     .build()
                 backfillClient.newCall(request).execute().use { response ->
-                    if (!response.isSuccessful) return@withContext AnalysisPollResult.Failed("HTTP ${response.code}")
+                    if (!response.isSuccessful) {
+                        return@withContext AnalysisPollResult.Failed("HTTP ${response.code}", fromServer = false)
+                    }
                     val json = JSONObject(response.body?.string() ?: "{}")
                     when (json.optString("status")) {
                         "done" -> {
@@ -404,7 +415,10 @@ class StreamingClient(private val baseUrl: String, private val token: String) {
                 // server-authored "failed" errors above are untouched: those are the useful ones
                 // and they come from the server, not from this phone's view of the network.
                 Log.w(TAG, "pollAnalysis failed: ${e.message}")
-                AnalysisPollResult.Failed("The connection to the server dropped while waiting for the analysis.")
+                AnalysisPollResult.Failed(
+                    "The connection to the server dropped while waiting for the analysis.",
+                    fromServer = false,
+                )
             }
         }
 }
