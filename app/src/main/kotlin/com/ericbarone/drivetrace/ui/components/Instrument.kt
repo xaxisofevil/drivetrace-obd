@@ -26,6 +26,7 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -43,6 +44,7 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.ericbarone.drivetrace.ui.theme.AccentMixture
@@ -480,6 +482,52 @@ fun StatusChip(text: String, tone: Tone, modifier: Modifier = Modifier) {
     ) {
         GlyphMark(tone.glyph, tone.color, sizeDp = 9)
         Text(text.uppercase(), style = LocalReadoutType.current.label, color = tone.color)
+    }
+}
+
+/**
+ * One option in a small set of them, laid out in a row. The logbook's vehicle filter is what this
+ * exists for.
+ *
+ * Deliberately not a Material `FilterChip` and not a dropdown. An M3 filter chip animates in a
+ * leading tick and rides on the M3 colour roles this theme overrides everywhere else, and a
+ * dropdown hides the options behind a tap and a surface that has no equivalent anywhere in this
+ * app. It is the same argument [SelectableRow]-style controls already make on SetupScreen,
+ * compressed to a chip: the whole chip is the target, selection is carried by fill, border and
+ * text colour at once rather than by hue alone, and `Role.RadioButton` keeps the single-choice
+ * semantics TalkBack needs.
+ *
+ * Sized to `compactTarget` like any other secondary control rather than to the text, so a row of
+ * these is a segmented control rather than a row of labels that happen to be tappable.
+ */
+@Composable
+fun ChoiceChip(
+    text: String,
+    selected: Boolean,
+    onSelect: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Box(
+        modifier = modifier
+            .heightIn(min = Space.compactTarget)
+            .clip(DriveTraceShapes.chip)
+            .background(if (selected) PanelActive else PanelRaised)
+            .border(
+                Space.hairline,
+                if (selected) AccentMixture.copy(alpha = 0.45f) else Hairline,
+                DriveTraceShapes.chip,
+            )
+            .selectable(selected = selected, role = Role.RadioButton, onClick = onSelect)
+            .padding(horizontal = Space.md),
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(
+            text.uppercase(),
+            style = LocalReadoutType.current.label,
+            color = if (selected) Chalk else Ash,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
     }
 }
 

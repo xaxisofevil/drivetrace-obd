@@ -1,6 +1,8 @@
 package com.ericbarone.drivetrace.ui
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -23,6 +25,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -36,6 +39,7 @@ import com.ericbarone.drivetrace.obd.VehicleProfile
 import com.ericbarone.drivetrace.service.BackfillRetryWorker
 import com.ericbarone.drivetrace.streaming.analysisSummaryFromJson
 import com.ericbarone.drivetrace.ui.components.Caption
+import com.ericbarone.drivetrace.ui.components.ChoiceChip
 import com.ericbarone.drivetrace.ui.components.ConsoleLine
 import com.ericbarone.drivetrace.ui.components.EmptyState
 import com.ericbarone.drivetrace.ui.components.HeaderBar
@@ -76,6 +80,9 @@ fun HistoryScreen(onBack: () -> Unit) {
     val scope = rememberCoroutineScope()
     var sessions by remember { mutableStateOf<List<SessionEntity>>(emptyList()) }
     var loading by remember { mutableStateOf(true) }
+    // The stored VehicleProfile name, or null for "All". Saveable so a rotation or a trip through
+    // the note editor's IME doesn't quietly widen the list back out under the user.
+    var vehicleFilter by rememberSaveable { mutableStateOf<String?>(null) }
 
     suspend fun reload() {
         sessions = AppDatabase.getInstance(context).sessionDao().getAllSessions()
@@ -84,7 +91,23 @@ fun HistoryScreen(onBack: () -> Unit) {
 
     LaunchedEffect(Unit) { reload() }
 
-    val pendingUploads = sessions.count { it.backfillStatus != "SUCCESS" }
+    // Only vehicles that actually logged something, in the enum's own order so the row doesn't
+    // reshuffle itself as drives come and go. A profile nobody has driven is not a filter, it is
+    // a dead control.
+    val loggedVehicles = remember(sessions) {
+        val present = sessions.mapTo(mutableSetOf()) { it.vehicleProfile }
+        VehicleProfile.entries.map { it.name }.filter { it in present } +
+            present.filter { name -> VehicleProfile.entries.none { it.name == name } }.sorted()
+    }
+    // Nothing to filter when every drive is the same car, and a control that can only ever be in
+    // one state is clutter on a screen whose job is scanning a column of figures.
+    val showFilter = loggedVehicles.size > 1
+    val visibleSessions = remember(sessions, vehicleFilter, showFilter) {
+        if (!showFilter || vehicleFilter == null) sessions
+        else sessions.filter { it.vehicleProfile == vehicleFilter }
+    }
+
+    val pendingUploads = visibleSessions.count { it.backfillStatus != "SUCCESS" }
 
     Column(
         modifier = Modifier
@@ -97,15 +120,43 @@ fun HistoryScreen(onBack: () -> Unit) {
     ) {
         HeaderBar(
             title = "Logbook",
+            // Counts what is on screen, not what is in the database. With a filter applied the
+            // subtitle describing the whole database would be answering a question nobody asked.
             subtitle = when {
                 loading -> null
-                sessions.isEmpty() -> null
-                pendingUploads > 0 -> "${sessions.size} drives, $pendingUploads not uploaded"
-                else -> "${sessions.size} drives, all uploaded"
+                visibleSessions.isEmpty() -> null
+                pendingUploads > 0 -> "${visibleSessions.size} drives, $pendingUploads not uploaded"
+                else -> "${visibleSessions.size} drives, all uploaded"
             },
             onBack = onBack,
             modifier = Modifier.padding(horizontal = Space.gutter),
         )
+
+        // Pinned above the scroll rather than riding in it: a filter you have to scroll back up
+        // to reach is a filter you stop using. Horizontally scrollable so a third vehicle widens
+        // the row instead of squeezing the names.
+        if (!loading && showFilter) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .horizontalScroll(rememberScrollState())
+                    .padding(horizontal = Space.gutter, vertical = Space.md),
+                horizontalArrangement = Arrangement.spacedBy(Space.sm),
+            ) {
+                ChoiceChip(
+                    text = "All",
+                    selected = vehicleFilter == null,
+                    onSelect = { vehicleFilter = null },
+                )
+                for (name in loggedVehicles) {
+                    ChoiceChip(
+                        text = vehicleLabel(name),
+                        selected = vehicleFilter == name,
+                        onSelect = { vehicleFilter = name },
+                    )
+                }
+            }
+        }
 
         when {
             loading -> EmptyState(title = "Loading", body = "Reading the local database...")
@@ -123,7 +174,7 @@ fun HistoryScreen(onBack: () -> Unit) {
                 ),
                 verticalArrangement = Arrangement.spacedBy(Space.md),
             ) {
-                items(sessions, key = { it.sessionId }) { session ->
+                items(visibleSessions, key = { it.sessionId }) { session ->
                     SessionCard(
                         session = session,
                         // No reload() here. The old version reloaded the instant the button was
