@@ -625,6 +625,51 @@ Mazda-specific PID list (`pc_logger/pids.py`). Flagging explicitly so this
 doesn't silently drift out of sync with the app: if pc_logger is ever
 used for the Subaru, it needs the equivalent per-vehicle treatment first.
 
+## Two more sensor gaps found: catalyst temp, oil temp; plus turbo-health signals
+
+Prompted by "are we set up with all the sensors we need." Checked the
+library source before answering rather than guessing: kotlin-obd-api has
+no Catalyst Temperature or Engine Oil Temperature command at all, in
+either its temperature or pressure package. Both are standard,
+unambiguous SAE J1979 PIDs directly relevant to failure modes nothing
+else in either catalog covers: a restricted/failing catalytic converter
+(exhaust backpressure, pumping losses) and thermostat/warm-up behavior
+that coolant temp alone can mask. Added `CatalystTemperatureBank1Sensor1Command`
+(PID 3C) and `OilTemperatureCommand` (PID 5C) to `SafeCommands.kt` and
+both catalogs' Tier C. Formulas verified against realistic values before
+shipping (e.g. A=32,B=208 -> 800°C, a plausible converter operating
+temp; A=130 -> 90°C, a plausible oil temp).
+
+Also added boost pressure as a derived value (`boost_kpa` = MAP -
+Barometric, both already collected, never combined before) and intake
+air temp above ambient (`iat_above_ambient_c`), specifically to give the
+turbo a first health check using data already being gathered, no new
+PIDs needed for this part. The diagnostic signatures worth knowing:
+- **Boost leak** (cracked intercooler pipe, loose clamp, failing diverter
+  valve): trim goes lean specifically under boost/load, not idle, the
+  mirror image of a PCV leak's idle-heavy pattern (see
+  MPG_ASSESSMENT_PLAYBOOK.md). MAF (upstream of the turbo) reading normal
+  while boost (downstream, after the intercooler) underperforms for the
+  same RPM/throttle points at air escaping between the turbo and the
+  cylinders, not a compressor problem.
+- **Heat-soaked/failing intercooler, or oil in the intake tract from a
+  failing turbo seal**: a bigger-than-expected `iat_above_ambient_c` gap
+  during/after boosted driving, beyond normal compression heating.
+- **Turbo-related timing retard vs. octane-related**: if retard tracks
+  boost/load specifically rather than being roughly constant regardless
+  of load, that points at the turbo side, not fuel octane. Distinguishing
+  these needs a real drive with actual boosted segments, not yet
+  collected.
+- **Not checkable without manufacturer-specific (Mode 22) data**:
+  commanded/target boost to compare against actual, wastegate duty cycle,
+  turbo shaft speed. None of these exist as standard PIDs, same category
+  of gap as LTFT's enhanced-PID confusion earlier tonight, except in this
+  case there's no known bug to find, this data genuinely isn't exposed
+  generically.
+
+None of this has been checked against a real boosted drive yet, only
+verified as computing correctly on synthetic values.
+
 ## Miscellaneous
 
 - Fuel Rail Pressure and Fuel Consumption Rate frequently return

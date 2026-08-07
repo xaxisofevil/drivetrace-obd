@@ -55,9 +55,18 @@ private val PLAUSIBLE_RANGES: Map<String, ClosedFloatingPointRange<Double>> = ma
     "Fuel-Air Commanded Equivalence Ratio" to 0.0..3.0,
     "Short Term Fuel Trim Bank 1" to -100.0..100.0,
     "Long Term Fuel Trim Bank 1" to -100.0..100.0,
+    // Bank 2: unused by MazdaPidCatalog (no Bank 2 on that single-bank engine), polled by
+    // SubaruPidCatalog (a real two-bank boxer engine).
+    "Short Term Fuel Trim Bank 2" to -100.0..100.0,
+    "Long Term Fuel Trim Bank 2" to -100.0..100.0,
     "Engine Coolant Temperature" to -40.0..215.0,
     "Intake Air Temperature" to -40.0..215.0,
     "Ambient Air Temperature" to -40.0..215.0,
+    "Engine Oil Temperature" to -40.0..215.0,
+    // Generous, not the formula's full theoretical range (up to 6513.5): real catalyst
+    // overheating is itself a genuine failure worth seeing, not something to clamp away, but
+    // anything above this is parser garbage, not a real reading.
+    "Catalyst Temperature Bank 1 Sensor 1" to -40.0..2000.0,
     "Throttle Position" to 0.0..100.0,
     "Timing Advance" to -64.0..63.5, // full range the PID 0E formula can express (A/2 - 64)
     "Intake Manifold Pressure" to 0.0..400.0,

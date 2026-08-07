@@ -63,6 +63,10 @@ PID_KEYWORDS: dict[str, list[str]] = {
     "maf_gs": [r"mass air flow", r"\bmaf\b"],
     "stft1_pct": [r"short term.*bank 1"],
     "ltft1_pct": [r"long term.*bank 1"],
+    # Bank 2: unused by the Mazda catalog (no Bank 2 on that engine), populated on vehicles with
+    # a real second bank (e.g. SubaruPidCatalog's boxer engine).
+    "stft2_pct": [r"short term.*bank 2"],
+    "ltft2_pct": [r"long term.*bank 2"],
     "ce_ratio": [r"equivalence ratio"],
     "voltage": [r"module voltage", r"power supply"],  # kotlin-obd-api actually names PID 42 "Control Module Power Supply"
     "coolant_c": [r"coolant"],
@@ -78,6 +82,8 @@ PID_KEYWORDS: dict[str, list[str]] = {
     "egr_cmd_pct": [r"commanded egr"],
     "egr_error_pct": [r"egr error"],
     "fuel_level_pct": [r"fuel level"],
+    "catalyst_temp_c": [r"catalyst temp"],
+    "oil_temp_c": [r"oil temp"],
 }
 
 STOICH_AFR_GASOLINE = 14.7  # air:fuel mass ratio at lambda = 1
@@ -246,6 +252,29 @@ def add_derived_columns(snap: pd.DataFrame) -> pd.DataFrame:
 
     if "stft1_pct" in snap and "ltft1_pct" in snap:
         snap["combined_trim_pct"] = snap["stft1_pct"] + snap["ltft1_pct"]
+    # Bank 2: only present on a real multi-bank vehicle (e.g. the Subaru's boxer engine, see
+    # SubaruPidCatalog.kt), absent entirely for the single-bank Mazda. The gap between bank 1
+    # and bank 2 combined trim is itself a diagnostic signal on a multi-bank engine, unequal
+    # exhaust runner lengths are a known cause of legitimate (not faulty) bank-to-bank asymmetry.
+    if "stft2_pct" in snap and "ltft2_pct" in snap:
+        snap["combined_trim_bank2_pct"] = snap["stft2_pct"] + snap["ltft2_pct"]
+        if "combined_trim_pct" in snap:
+            snap["bank_trim_asymmetry_pct"] = snap["combined_trim_pct"] - snap["combined_trim_bank2_pct"]
+
+    # Turbo boost: MAP reads absolute intake manifold pressure, Barometric reads ambient
+    # atmospheric pressure, the difference is actual boost above atmospheric (negative = normal
+    # off-boost manifold vacuum, positive = real boost). Both PIDs were already being collected
+    # for other reasons, never combined before. Barometric is a slow Tier C PID (see
+    # age_s_baro_kpa for staleness), acceptable here since barometric pressure itself moves on a
+    # weather timescale, not a driving one, unlike everything else derived in this function.
+    if "map_kpa" in snap and "baro_kpa" in snap:
+        snap["boost_kpa"] = snap["map_kpa"] - snap["baro_kpa"]
+
+    # Intake air temp above ambient: a bigger-than-expected gap during/after boosted driving
+    # points at a heat-soaked or failing intercooler, or oil in the intake tract from a failing
+    # turbo seal, beyond just normal compression heating under boost.
+    if "iat_c" in snap and "ambient_c" in snap:
+        snap["iat_above_ambient_c"] = snap["iat_c"] - snap["ambient_c"]
 
     # MAF-estimated fuel consumption: only trustworthy near stoichiometric operation.
     # Commanded Equivalence Ratio (PID 44) is fuel/air relative to stoich (SAE J1979): actual

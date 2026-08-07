@@ -182,6 +182,44 @@ class TimingAdvanceCommand : ObdCommand() {
 }
 
 /**
+ * Not in the library at all, confirmed by checking (no CatalystTemperature command exists
+ * anywhere in kotlin-obd-api's source). Added to cover a distinct MPG-loss mechanism nothing
+ * else in either vehicle's catalog checks for: a restricted or failing catalytic converter
+ * increases exhaust backpressure, which increases pumping losses and measurably hurts fuel
+ * economy, independent of anything on the fuel-delivery/combustion side. Standard 2-byte SAE
+ * J1979 formula: ((A*256)+B)/10 - 40, in Celsius.
+ */
+class CatalystTemperatureBank1Sensor1Command : ObdCommand() {
+    override val tag = "CATALYST_TEMP_B1S1"
+    override val name = "Catalyst Temperature Bank 1 Sensor 1"
+    override val mode = "01"
+    override val pid = "3C"
+    override val defaultUnit = "°C"
+    override val handler = { response: ObdRawResponse ->
+        "%.1f".format(bytesToInt(response.bufferedValue, bytesToProcess = 2) / 10f - 40f)
+    }
+}
+
+/**
+ * Not in the library at all, same check as above. Complements Engine Coolant Temperature for
+ * the warm-up/thermal hypothesis: oil temperature is a slower, more thermally stable signal, a
+ * stuck-partially-open thermostat could plausibly show a normal-looking coolant plateau while
+ * oil temp lags, useful context alongside coolant temp, not a replacement for it. Standard
+ * single-byte SAE J1979 formula: A - 40, in Celsius, same shape as coolant/intake air temp
+ * already used correctly elsewhere in this project.
+ */
+class OilTemperatureCommand : ObdCommand() {
+    override val tag = "OIL_TEMP"
+    override val name = "Engine Oil Temperature"
+    override val mode = "01"
+    override val pid = "5C"
+    override val defaultUnit = "°C"
+    override val handler = { response: ObdRawResponse ->
+        "%.1f".format(bytesToInt(response.bufferedValue, bytesToProcess = 1) - 40f)
+    }
+}
+
+/**
  * Not a byte-math bug like the ones above: confirmed directly against two real sessions that
  * this adapter returns TWO frames for a single Mode 01 supported-PIDs request, concatenated
  * with no separator surviving the library's cleanup pipeline (e.g. "4100981A80134100FE7FA813").

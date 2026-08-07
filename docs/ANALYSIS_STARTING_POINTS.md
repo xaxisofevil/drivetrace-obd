@@ -45,9 +45,17 @@ Everything in `analyze_drive.py`, run either manually or automatically via
   `age_s_<key>` column showing how stale each value was when carried
   forward (a PID sampled every 20s will show up to ~20s of staleness; don't
   mistake that for the value having "not changed")
-- `add_derived_columns` — combined trim (STFT+LTFT), MAF-estimated fuel
-  rate (gated on equivalence ratio near 1.0), instantaneous MPG (suppressed
-  below ~8 km/h)
+- `add_derived_columns` — combined trim (STFT+LTFT), plus bank-2 combined
+  trim and bank-to-bank asymmetry on a real multi-bank vehicle (e.g. the
+  Subaru's boxer engine; not applicable to the Mazda's single-bank
+  inline-4), boost pressure (MAP - Barometric, turbo health: a boost leak
+  shows as trim going lean specifically under load, not idle, the mirror
+  image of a PCV leak's idle-heavy pattern; MAF reading normal while boost
+  underperforms for the same RPM/throttle points at a leak between the
+  turbo and the cylinders rather than a compressor problem), intake air
+  temp above ambient (a widening gap under boost points at a heat-soaked
+  or failing intercooler), MAF-estimated fuel rate (gated on equivalence
+  ratio near 1.0), instantaneous MPG (suppressed below ~8 km/h)
 - `compute_idle_fraction`, `compute_warmup_duration_s`,
   `compute_trip_distance` (GPS vs OBD, compared), `compute_overall_mpg`
   (total distance / total fuel burned, not an average of the

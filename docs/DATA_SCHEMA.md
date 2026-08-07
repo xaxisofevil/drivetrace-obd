@@ -60,6 +60,8 @@ matches this table without checking directly against that vehicle's ECU.
 | 2C | `Commanded EGR` | % | C | |
 | 2D | `EGR Error` | % | C | |
 | 2F | `Fuel Level` | % | C | |
+| 3C | `Catalyst Temperature Bank 1 Sensor 1` | °C | C | Not in kotlin-obd-api; custom `CatalystTemperatureBank1Sensor1Command`, checks for exhaust restriction from a failing converter |
+| 5C | `Engine Oil Temperature` | °C | C | Not in kotlin-obd-api; custom `OilTemperatureCommand`, complements coolant temp for the warm-up hypothesis |
 
 One-time reads at session start: fuel type, MIL status, current/pending/
 permanent DTCs (read-only, this app and pc_logger never clear codes), and

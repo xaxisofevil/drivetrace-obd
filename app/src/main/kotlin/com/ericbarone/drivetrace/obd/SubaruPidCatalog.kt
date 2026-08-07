@@ -80,6 +80,8 @@ object SubaruPidCatalog : PidCatalog {
             { CommandedEgrCommand() },
             { EgrErrorCommand() },
             { FuelLevelCommand() },
+            { CatalystTemperatureBank1Sensor1Command() }, // not in the library; checks for exhaust restriction
+            { OilTemperatureCommand() }, // not in the library; complements coolant temp for the warm-up hypothesis
         )
 
     override fun oneTimeReadOnly(): List<() -> ObdCommand> =
