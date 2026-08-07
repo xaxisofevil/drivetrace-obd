@@ -15,7 +15,9 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import com.ericbarone.drivetrace.BuildConfig
 import com.ericbarone.drivetrace.data.AppDatabase
+import com.ericbarone.drivetrace.streaming.StreamingClient
 import com.ericbarone.drivetrace.ui.components.GlyphMark
 import com.ericbarone.drivetrace.ui.components.NoteField
 import com.ericbarone.drivetrace.ui.components.SecondaryAction
@@ -44,6 +46,13 @@ import kotlinx.coroutines.launch
  * appears only when the draft actually differs from what is stored, so the resting state of a
  * drive whose note is already right is a plain field with nothing shouting next to it.
  *
+ * Saving is local first and always. Room commits, the field says so, and only then does the note
+ * go to the server as a fire-and-forget PATCH. The push cannot fail the save, cannot roll it back
+ * and says nothing if it does not land, which is the same posture everything else here takes
+ * towards the server: live visibility, never the source of truth. A note that never reached the
+ * server is still on the phone and still in the CSV bundle, and the next successful backfill of
+ * that session pushes it again.
+ *
  * [initialNote] short-circuits the read when the caller already holds the row (HistoryScreen has
  * the whole [com.ericbarone.drivetrace.data.SessionEntity] in hand). Pass null and this reads it
  * itself, which is what the trip report needs: the note written into the Stop dialog was applied
@@ -58,6 +67,11 @@ fun DriveNoteEditor(
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
+    // Remembered rather than rebuilt per save: it owns an OkHttp client, and the logbook can put
+    // one of these editors on every card.
+    val streamingClient = remember {
+        StreamingClient(BuildConfig.INGEST_BASE_URL, BuildConfig.INGEST_TOKEN)
+    }
     var stored by remember(sessionId) { mutableStateOf(initialNote.orEmpty()) }
     var draft by remember(sessionId) { mutableStateOf(initialNote.orEmpty()) }
     var saving by remember(sessionId) { mutableStateOf(false) }
@@ -97,15 +111,22 @@ fun DriveNoteEditor(
                         val text = draft.trim()
                         scope.launch {
                             val dao = AppDatabase.getInstance(context).sessionDao()
+                            // A note cleared to empty stores null rather than "", so the
+                            // "has a note" check every reader already does (isNotBlank) keeps
+                            // working and the CSV's metadata.json keeps emitting null.
+                            val value = text.takeIf { it.isNotBlank() }
                             dao.getSession(sessionId)?.let { session ->
-                                // A note cleared to empty stores null rather than "", so the
-                                // "has a note" check every reader already does (isNotBlank) keeps
-                                // working and the CSV's metadata.json keeps emitting null.
-                                dao.updateSession(session.copy(notes = text.takeIf { it.isNotBlank() }))
+                                dao.updateSession(session.copy(notes = value))
                             }
                             stored = text
                             saving = false
                             onSaved(text)
+                            // Then, and only then, tell the server. Room is authoritative and has
+                            // already committed; this is fire-and-forget, does not suspend, cannot
+                            // fail the save it follows, and says nothing to the user if it does not
+                            // land. The "saved to this drive" confirmation above is a statement
+                            // about Room, which is what the claim is worth.
+                            streamingClient.updateSessionNotes(sessionId, value)
                         }
                     },
                     minHeight = Space.compactTarget,

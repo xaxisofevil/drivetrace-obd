@@ -167,16 +167,43 @@ KNOWN_ISSUES.md for the real incident this fixed.
 `locationCount`.
 
 `notes` is the driver's own free-text note ("cold start, highway, 93
-octane"), typed into the Stop dialog and written onto the session row by
-`DriveLoggingService.stopSession` before backfill runs, capped at 120
-characters. The column has existed since the first schema, so wiring it up
-needed no version bump. **It reaches Room and the CSV bundle's
-`metadata.json` only.** `POST /sessions/{id}/start` accepts a `notes`
-field but a note typed at Stop obviously doesn't exist yet at start, and
-`POST /sessions/{id}/end` has no such field, so the DuckDB `sessions.notes`
-column stays null until the server gains one. Stopping from the
-notification's own Stop action sends no note at all (there's nowhere to
-type one), which leaves any existing value alone rather than blanking it.
+octane"), capped at 120 characters. The column has existed since the first
+schema, so wiring it up needed no version bump. It is written at Stop (the
+dialog's `NoteField`, applied by `DriveLoggingService.stopSession` before
+backfill runs, so it is on the row when `CsvExporter` writes
+`metadata.json`) and edited afterwards from either screen that shows a drive
+(`DriveNoteEditor`, `ui/DriveNote.kt`). Stopping from the notification's own
+Stop action sends no note at all (there's nowhere to type one), which leaves
+any existing value alone rather than blanking it.
+
+**It now reaches the server too,** through `PATCH /sessions/{id}/notes`
+(body `{"notes": "..."}`, `null` to clear). A note is the one thing about a
+session that can change long after the drive ended, and neither existing
+endpoint could carry that: `/start` fires before a note typed at Stop
+exists, and `/end` has no such field. **Re-posting `/start` is specifically
+not the fix** — it is `INSERT OR REPLACE` over a fixed column list with
+neither `end_wall_time_utc_ms` nor `completion_status` in it, so calling it
+again on a finished session silently resets both to null and `IN_PROGRESS`.
+The PATCH touches one column. It 404s when the server has no row for that
+session, which is a real case rather than a defensive one: a drive whose
+`/start` never arrived has no `sessions` row at all, and the bulk backfill
+endpoints write measurements, locations and events but never a session. The
+phone ignores the response either way; the status code is for whoever is
+looking at the server directly.
+
+The push is fire-and-forget and always follows the local write:
+`SessionDao.updateSession` commits first and is what the UI's confirmation
+is about. A failed push does not fail the save, does not roll it back and
+says nothing to the user, per the same "server is live visibility, not the
+source of truth" rule in `server/README.md`. Every successful backfill also
+re-sends the current note, so an edit made offline gets a free second chance
+on the next `BackfillRetryWorker` sweep. **Still open:** a note edited on a
+session that already backfilled successfully never gets swept again, since
+nothing durably records that the server's copy is stale. Closing that
+properly needs a "note not yet pushed" column on `SessionEntity`, and a Room
+schema bump destroys local data on this device (`fallbackToDestructiveMigration`,
+see `AppDatabase.kt`), which is not worth spending on a best-effort mirror of
+a field the phone and the CSV bundle both already hold.
 
 Room-only (not part of the server's `sessions` table, these describe the
 *local device's* view of upload progress, not the drive itself):

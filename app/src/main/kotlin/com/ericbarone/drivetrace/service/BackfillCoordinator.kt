@@ -73,6 +73,16 @@ suspend fun runBackfillAndAnalysis(
         return BackfillOutcome(false, backfillMessage, "PENDING", null, null)
     }
 
+    // Re-push the note while we are here. The note is edited on its own schedule, days after the
+    // drive if that is when the driver remembered something, and its own push is fire-and-forget
+    // with no durable record of whether it landed. Sending the current value alongside every
+    // successful backfill costs one small request and means an offline note edit gets a second
+    // chance for free on the next retry sweep. It is not a general fix for a lost note edit on a
+    // session that already uploaded cleanly; see DATA_SCHEMA.md for why that one is still open.
+    dao.getSession(sessionId)?.notes?.takeIf { it.isNotBlank() }?.let {
+        streamingClient.updateSessionNotes(sessionId, it)
+    }
+
     val analysis = runAnalysisOnly(dao, streamingClient, sessionId)
     return BackfillOutcome(true, backfillMessage, analysis.status, analysis.summary, analysis.message)
 }

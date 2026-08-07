@@ -139,12 +139,15 @@ class StreamingClient(private val baseUrl: String, private val token: String) {
         }
     }
 
-    private fun postFireAndForget(path: String, body: JSONObject) {
+    private fun postFireAndForget(path: String, body: JSONObject) =
+        sendFireAndForget("POST", path, body)
+
+    private fun sendFireAndForget(method: String, path: String, body: JSONObject) {
         if (!shouldAttempt()) return
         val request = Request.Builder()
             .url("$baseUrl$path")
             .addHeader("Authorization", "Bearer $token")
-            .post(body.toString().toRequestBody(JSON))
+            .method(method, body.toString().toRequestBody(JSON))
             .build()
         client.newCall(request).enqueue(
             object : Callback {
@@ -186,6 +189,22 @@ class StreamingClient(private val baseUrl: String, private val token: String) {
             put("completion_status", completionStatus)
         }
         postFireAndForget("/sessions/$sessionId/end", body)
+    }
+
+    /**
+     * The drive's note, which unlike everything else about a session can change long after the
+     * drive ended. Fire-and-forget on purpose, and that is the whole design of it: the note is
+     * already saved in Room by the time this is called, Room is authoritative, and the server's
+     * copy is a live-visibility nicety. A failed push must not fail the save, must not roll it
+     * back, and must not put an error in front of someone who has already typed their sentence
+     * and moved on.
+     *
+     * PATCH to its own endpoint rather than re-posting the session start, which would take
+     * end_wall_time_utc_ms and completion_status down with it; see the server's own note on that.
+     */
+    fun updateSessionNotes(sessionId: Long, notes: String?) {
+        val body = JSONObject().apply { put("notes", notes ?: JSONObject.NULL) }
+        sendFireAndForget("PATCH", "/sessions/$sessionId/notes", body)
     }
 
     fun postMeasurement(sessionId: Long, sample: MeasurementSample) {

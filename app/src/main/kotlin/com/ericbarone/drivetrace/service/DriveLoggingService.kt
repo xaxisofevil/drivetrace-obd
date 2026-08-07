@@ -314,6 +314,13 @@ class DriveLoggingService : Service() {
                     )
                 }
                 streamingClient.endSession(sessionId, endWallTimeUtc, "COMPLETED")
+                // The note typed into the Stop dialog. /start fired before it existed and /end
+                // carries no note field, so without this the server's copy stays null for a note
+                // the driver typed thirty seconds ago. Fire-and-forget, after the local write:
+                // Room already has it, and a note failing to reach the server is not a reason to
+                // interrupt anyone. Skipped entirely when the stop carried no note (the
+                // notification's Stop action), so nothing blanks a note already on the server.
+                notes?.takeIf { it.isNotBlank() }?.let { streamingClient.updateSessionNotes(sessionId, it) }
 
                 LoggingStatus.state.value = LoggingStatus.state.value.copy(
                     statusMessage = "Verifying complete upload...",

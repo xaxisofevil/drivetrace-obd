@@ -641,10 +641,15 @@ what got deliberately left out of it, is the useful part.
   screen to check whether it took. The Save control appears only when the draft differs from
   what is stored, so the resting state of a correct note is a plain field with nothing shouting
   next to it. Clearing a note to empty stores `null` rather than `""`, so every reader's existing
-  `isNotBlank` check keeps working. **Local and CSV only:** `CsvExporter`'s `metadata.json` picks
-  the note up for free, but the server's `/sessions/{id}/end` endpoint takes no `notes` field, so
-  the DuckDB copy's `notes` column stays null until someone changes the server, and a note added
-  days later never had a chance of reaching it, since that endpoint fired at Stop.
+  `isNotBlank` check keeps working. **It reaches the server now too,** which it did not when this
+  entry was first written: neither `/sessions/{id}/start` nor `/end` could carry a note edited
+  days after the drive, so the DuckDB copy's `notes` column stayed null forever. A narrow
+  `PATCH /sessions/{id}/notes` fixes that; see DATA_SCHEMA.md for the endpoint and for why
+  re-posting `/start` would have been the wrong way to do it. The order is the important part and
+  it is the general rule for this app rather than anything specific to notes: **Room commits
+  first and synchronously, then the server hears about it, fire-and-forget.** The confirmation
+  next to the field is a statement about Room, which is what it is worth; a push that never lands
+  costs nothing, interrupts nobody, and leaves the note exactly where it already was.
 - ~~**A daylight-readable high-contrast mode.**~~ **Built,** and see section 3's daylight table
   for the tokens and section 6 for the mechanism. Still not a light theme: `Ink` stays the ground
   in both modes and only `HeroReadout` reads the boosted palette. Toggle lives on SetupScreen
