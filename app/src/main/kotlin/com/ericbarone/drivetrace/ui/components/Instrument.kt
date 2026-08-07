@@ -36,6 +36,7 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.ReadOnlyComposable
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -84,22 +85,48 @@ import com.ericbarone.drivetrace.ui.theme.StatusLiveFill
  * The status channel, kept strictly separate from the category accents (see Color.kt). Every
  * tone carries a glyph as well as a colour, so the state survives colour blindness, a sun-washed
  * screen, and a greyscale screenshot. Colour alone is never the carrier.
+ *
+ * The glyph is still a constructor property, because it is fixed for all time. The two colours
+ * became composable getters when skins landed, since a tone's ink is now whatever the active skin
+ * says it is. They stayed **members** rather than becoming extension properties on purpose: an
+ * extension would have needed an import line in every screen that reads `tone.color`, and the
+ * whole point of the skin work was that no screen has to change.
  */
-enum class Tone(val color: Color, val fill: Color, val glyph: Glyph) {
+enum class Tone(val glyph: Glyph) {
     /** Nothing to report. Achromatic on purpose: normal state should not compete for attention. */
-    NEUTRAL(Chalk, Color.Transparent, Glyph.DASH),
+    NEUTRAL(Glyph.DASH),
 
     /** Still resolving. */
-    UNKNOWN(Slate, Color.Transparent, Glyph.DOTS),
+    UNKNOWN(Glyph.DOTS),
 
     /** Confirmed good. Used sparingly, never as a general "fine" wash. */
-    LIVE(StatusLive, StatusLiveFill, Glyph.TICK),
+    LIVE(Glyph.TICK),
 
     /** Degraded but working. */
-    CAUTION(StatusCaution, StatusCautionFill, Glyph.BANG),
+    CAUTION(Glyph.BANG),
 
     /** Broken. */
-    FAULT(StatusFault, StatusFaultFill, Glyph.CROSS),
+    FAULT(Glyph.CROSS);
+
+    /** The tone's ink. */
+    val color: Color
+        @Composable @ReadOnlyComposable get() = when (this) {
+            NEUTRAL -> Chalk
+            UNKNOWN -> Slate
+            LIVE -> StatusLive
+            CAUTION -> StatusCaution
+            FAULT -> StatusFault
+        }
+
+    /** The tone's band/chip wash. Transparent for the two achromatic tones, which is what makes
+     *  a band or a chip fall back to the ordinary panel fill rather than tint for a non-event. */
+    val fill: Color
+        @Composable @ReadOnlyComposable get() = when (this) {
+            NEUTRAL, UNKNOWN -> Color.Transparent
+            LIVE -> StatusLiveFill
+            CAUTION -> StatusCautionFill
+            FAULT -> StatusFaultFill
+        }
 }
 
 enum class Glyph { TICK, BANG, CROSS, DASH, DOTS, CHEVRON_LEFT }

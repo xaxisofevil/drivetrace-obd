@@ -859,8 +859,12 @@ private data class HeroFigure(
  * about what it does not know. `Ash` (~5.4:1, the same grey the hero's own label already uses)
  * costs nothing, cannot be confused with a real reading because it is achromatic, and keeps rule
  * 13 honest end to end: the hero avoids `--` where it can, and where it cannot the `--` is
- * readable. Both greys are registered in `DaylightReadoutPalette`, so rule 11 still holds.
+ * readable. Both greys are registered in every skin's daylight palette, so rule 11 still holds.
+ *
+ * `@Composable` only because the colour tokens it names are now skin-dependent (see
+ * `ui/theme/Color.kt`). Nothing about what it decides changed.
  */
+@Composable
 private fun heroFigure(
     mpg: Double?,
     fromServer: Boolean,
