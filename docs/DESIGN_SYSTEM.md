@@ -497,3 +497,41 @@ built first, the alert is arguably the safer one.
 
 *Testing:* Google's Desktop Head Unit (DHU) tool covers at-desk iteration; the 2020 Mazda 6's
 factory infotainment supports Android Auto for real-vehicle testing when wanted.
+
+## 11. Cross-vehicle YMM comparison: "is this normal for your car, or just your car"
+
+Every session already records `vehicleProfile` (Year/Make/Model, effectively — see
+`VehicleProfile.kt`), so once more than one user's data lives on a server, the same "compare
+against a baseline" idea `ANALYSIS_STARTING_POINTS.md` already flags as the single biggest gap
+for one user's own drive history extends naturally to a *community* baseline: how does this
+car's MPG and load compare to other same-or-similar-YMM vehicles under matched conditions (speed
+bin, load bin, trip type)?
+
+That comparison is what turns "sensor data looks clean" from a dead end into a lead. The
+motivating case: engine load is high and MPG is low, but trim, temps, and knock all read normal,
+so nothing in *this car's own data* points anywhere. If other same-YMM vehicles show
+meaningfully better MPG at matched speed/load, that's evidence the problem is mechanical drag
+outside the sensors this project reads at all, rolling resistance, brake drag, alignment, which
+is exactly the "normal trims but high load at matched speed" hypothesis bucket the original
+blueprint lists and this project has had no way to test against anything but one user's own
+history. Surfacing "cars like yours average 31 MPG in these conditions; consider checking tire
+pressure, alignment, and brake drag" turns a shrug into a next step.
+
+*Monetisation:* probably the strongest one on this list. It requires data from other users to be
+worth anything at all (a cold-start problem any single install can't solve alone, unlike every
+other idea here), which makes it a natural subscription: the product isn't the comparison logic,
+it's the aggregate dataset, and that dataset only gets more valuable as more paying users
+contribute to it. It's also the one idea here that couldn't be cloned by a user just reading this
+document and doing it themselves.
+
+**What it actually needs, none of which exists yet:** a multi-user backend (today's server and
+DuckDB are explicitly single-user/personal, see `server/README.md`); anonymization before
+anything resembling raw drive data leaves a user's own session (aggregate statistics per YMM/
+condition bucket, never another user's raw drive); a minimum sample size per bucket before
+showing a comparison at all, so a YMM with three cars in the system doesn't produce a
+confident-sounding claim off a tiny, noisy sample; and a real definition of "matched conditions"
+(the same speed-bin/load-bin bucketing `compare_drives.py` was already going to need for the
+single-user case, per `ANALYSIS_STARTING_POINTS.md` item 2, extended across users instead of
+across one user's own sessions). That last part means this idea and the single-user cross-drive
+comparison gap aren't two features, they're the same bucketing infrastructure built once and
+then pointed at two different populations.
