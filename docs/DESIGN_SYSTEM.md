@@ -227,7 +227,7 @@ is a design-system change and belongs in this document.
 | `StatusChip` | Compact badge for list rows |
 | `StatusDot` | Pulsing when live |
 | `ConsoleLine` | Monospaced, dim, `>`-prefixed machine output |
-| `NoteField` | The one text input: a short drive note, typed at Stop. M3 `OutlinedTextField` restyled to the panel language, hard length cap. |
+| `NoteField` | The one text input: a short drive note. M3 `OutlinedTextField` restyled to the panel language, hard length cap. Used raw in the Stop dialog and wrapped by `DriveNoteEditor` (`ui/DriveNote.kt`) everywhere a note is edited after the fact. |
 | `Caption` | Methodology caveats and small print |
 | `PrimaryAction` / `SecondaryAction` / `ActionBar` | 56dp full-width primary in a pinned bar |
 | `EmptyState` | Says what to do next, not only what is missing |
@@ -292,30 +292,132 @@ rather than one column of rows that changes length.
   carries the drive's optional `NoteField`, because Stop is the last moment the drive is still in
   the driver's head.
 
-**COMPLETE** is read stationary, so density is affordable, but the ranking still holds:
+**COMPLETE** is read stationary, so density is affordable, but the ranking still holds. The
+actions live in a pinned `ActionBar` outside the scroll, so Export and New Session can never
+become unreachable no matter how many flags the report carries.
 
-- **Hero:** trip MPG in mixture teal, with a caption naming its provenance. The server figure is
-  preferred (it gates on stoichiometric operation); the on-device figure is the fallback.
-- **Drive profile:** distance (motion), idle fraction (mixture), warm-up (thermal) as tiles, each
-  in its category's colour, each shown only when non-null exactly as before.
-- **Pipeline** panel groups upload and analysis into one question with two stages, instead of two
-  unrelated status lines. The nesting rule is unchanged: analysis only appears once backfill
-  succeeded.
-- **Diagnostic codes** sit above Pipeline: that section is the vehicle talking, everything below
-  it is the app talking. One accent-barred panel per code, the code leading and its plain-English
-  meaning under it, the set it came from as a `StatusChip`.
-- **Adapter health** sits below Pipeline, because it describes the capture rig rather than the car
-  or the drive. Accent-barred panel, tone from distinct dropped PIDs, per-PID counts as `DataRow`s
-  and the "unsupported PID vs. bad adapter" caveat as a `Caption`.
-- **Braking** and **Anomaly flags** get their own sections; flags become caution-barred panels
-  with a glyph rather than `"- $flag"` text.
-- **On-device cross-check** stays visible even when the server figure is the hero, because the
-  two disagreeing is itself information and it is the only figure that exists when the server was
-  never reachable.
-- Every methodology caveat from the original is preserved verbatim, demoted to `Caption`.
+#### What the report is ordered by
 
-The actions moved out of the scroll area into a pinned `ActionBar`, so Export and New Session can
-never become unreachable no matter how many flags the report carries.
+The first version of this layout was ordered by subject matter: economy, then the drive, then the
+codes, then the pipeline, then the rig. Seven equal-weight labelled sections, four of them the app
+talking about itself. A photograph of it running on the real phone, after a session that captured
+nothing and then failed to upload, showed what that costs. The first two screens were a `--` hero,
+a `0.00 km` tile, a red panel about a socket timeout, and a green panel confirming the adapter was
+fine. At no point did the screen say the one thing that was actually true, which is that the
+drive recorded nothing usable. Every fact needed to conclude that was present. None of them said
+it. The reader had to assemble it.
+
+So the report is now ordered by what a driver wants to know thirty seconds after parking, which is
+a different list:
+
+1. **Is any of this worth reading.** Existential, and it outranks every figure on the screen
+   because it decides whether the figures mean anything at all.
+2. **The headline result.**
+3. **What the car said.** A stored trouble code is the highest-consequence statement this screen
+   can carry.
+4. **How the drive went:** profile, anomalies, braking.
+5. **What I want to remember about it:** the note.
+6. **How much I should trust all of the above, and whether the app still owes me anything.**
+
+#### The sections that implement it
+
+- **Capture verdict band.** The screen's one alert slot, on the same terms as the live screen's:
+  nothing else on the report is allowed to be a band, and there is no band at all on a drive that
+  went fine. It fires only when the report has no economy figure (caution when distance was
+  recorded but Mass Air Flow never answered, fault when neither came back), and its body names the
+  likely cause rather than restating the symptom, pointing at the section that holds the detail
+  ("the adapter dropped 3 PIDs this drive, see Capture and delivery below"). Making that
+  connection is the whole job; the old layout had both facts on screen and joined neither.
+  **A failed upload deliberately does not qualify for the band.** It retries on its own, the
+  logbook has a Retry control, and no data is lost, so it is plumbing.
+- **Hero: the best figure the drive actually produced,** down a fixed chain: economy if there is
+  any, otherwise distance, otherwise session length. The old rule was "MPG, or a dash", which
+  spends 64sp, the largest element on the screen, on the absence of data: a hero reading `--`
+  occupies the slot, defeats the hierarchy it exists to create, and still leaves the reader
+  hunting for a number that does exist. `--` is now unreachable except during the second or two
+  before the on-device pass returns, where it is honest.
+  The cost is that the hero changes identity between drives, and this document leans on the hero
+  slot's *position* to identify its contents (part of why MOTION is achromatic). The trade is
+  worth taking on this screen and would not be on the live one: COMPLETE is read stationary with
+  attention, the readout carries its own label and provenance caption, and the accent still obeys
+  the category contract, teal for economy and MOTION white for distance and duration, so the hue
+  never lies about which system the number came from. "You drove 12.4 km and got no fuel data" is
+  a result. "`-- MPG`" is a layout.
+- **Diagnostic codes,** immediately under the hero when there are any, unchanged in form: one
+  accent-barred panel per code, the code leading and its plain-English meaning under it, the set it
+  came from as a `StatusChip`. **Only when there are codes.** The clean case used to get the same
+  full-weight section with a green accent-barred "no stored trouble codes" panel, on every single
+  drive. That is the "everything is fine" green wash ISA-101 rules out; it becomes wallpaper by the
+  third drive and it costs a whole section of vertical space that pushes real content below the
+  fold. The clean read is still reported, as one `DataRow` in the capture block, because a confirmed
+  clean read is a real result and losing it entirely would be worse than over-showing it.
+- **Drive profile** tiles, minus whichever figure the hero took, so the screen never prints the
+  same number twice at two sizes. Distance (motion), **duration (motion, new)**, idle fraction
+  (mixture), warm-up (thermal). Duration was on the live screen as the hero and then vanished the
+  instant the drive ended, so the report could not answer "how long was that" at all; on the
+  photographed session, "35 min and 0.00 km" explains the entire drive in one line and the report
+  did not have it. Tiles wrap at three per row, with four splitting 2+2 rather than 3+1, because
+  four across a phone leaves each tile narrower than the word `WARM-UP` at the label style's
+  tracking. A short final row is padded with weighted spacers so its tiles keep the width of the
+  rows above rather than stretching out and reading as a second hero.
+- **Anomaly flags** and **Braking** keep their own sections; flags are caution-barred panels with a
+  glyph rather than `"- $flag"` text.
+- **Drive note.** Last thing that is about the drive, first thing the thumb reaches, and directly
+  under the evidence it is a reaction to: a drive gets annotated after reading what happened on it,
+  not before. Above the capture block on purpose, because the driver's own words rank over the app's
+  account of its own plumbing, the same ranking the logbook card already used. See
+  `ui/DriveNote.kt`.
+- **Capture and delivery.** One subordinate block of `DataRow`-weight lines replacing four
+  full sections: **Pipeline**, **Adapter health**, the clean half of **Diagnostic codes**, and
+  **On-device cross-check**. Each had its own `SectionLabel` and its own panel frame, and together
+  they were most of the report's scroll length while answering one question between them: how much
+  should I trust what is above, and does the app still owe me anything. Rule 6 already says Tier C
+  data goes in a `DataRow` rather than a tile, and all of this is Tier C by this document's own
+  definition of the term.
+  - **Adapter health is the specific demotion.** It was an accent-barred panel under its own
+    section label, which on a clean drive meant a green tick at panel weight competing with the
+    panels carrying the drive's actual result. It is diagnostic meta-information about the capture
+    rig; on a good drive it is the least interesting true statement on the screen. It is now one
+    line, and it earns tone colour and a glyph only when genuinely degraded, at which point the
+    verdict band above has already sent the reader looking for it. Tone still comes from *distinct*
+    dropped PIDs, and the "unsupported PID vs. bad adapter" caveat is still there as a `Caption`.
+  - **The cross-check gains from the merge rather than losing.** Its argument was always that the
+    server and on-device figures disagreeing is itself information; as adjacent `DataRow`s in the
+    same panel as the upload state, that comparison is easier to run, not harder, because each
+    number's provenance now sits next to it.
+  - The pipeline nesting rule is unchanged: analysis only appears once backfill succeeded.
+- Every methodology caveat from the original is preserved, demoted to `Caption`.
+
+#### The failed-upload panel never prints the server's address
+
+`SessionEntity.backfillMessage` on the failure path is `Throwable.message` straight out of OkHttp.
+On the real phone that rendered as `failed to connect to <host>/<public IP> (port 8090) from
+/<LAN IP> (port 43348) after 10000ms`, at full width in fault red: the user's home network's
+hostname, public IP, open port and the phone's LAN address, on a screen anyone holding the phone
+can read and that gets screenshotted into forum posts and bug reports.
+
+`ui/PipelineMessages.kt` states the rule and both screens that show upload state go through it.
+**It is a whitelist, not a scrubber.** Nothing tries to redact hostnames or IPs out of an error
+string; that kind of filtering works right up until the exception format changes, and then it
+leaks silently and nobody notices. Instead: a message the app composed itself out of known parts
+may be shown (the success line is three integers the app counted, `"412 measurements, 88 GPS, 19
+events"`), and anything originating in the transport layer is replaced wholesale by one fixed
+sentence about consequences, `"Couldn't reach the server. This drive is saved on the phone and
+will upload on its own."` There is no code path that passes a caught exception's text to a
+composable.
+
+**The diagnostic detail is unpublished, not destroyed.** The raw string is still written to
+`SessionEntity.backfillMessage` (Room, on-device, and deliberately not one of the fields
+`CsvExporter` writes into `metadata.json`, so it was never reaching an export bundle either) and
+still logged by `StreamingClient`. A developer with adb or a database dump can still see exactly
+which host timed out; a passer-by with the phone cannot.
+
+`StreamingClient.pollAnalysis` had the identical leak through a different door: its catch branch
+carried `e.message` up into `AnalysisPollResult.Failed`, which the report renders under "PC
+analysis". That one is fixed at the source rather than at the screen, because unlike
+`backfillMessage` nothing persists it, so logcat is the only place worth putting the raw. The
+server-authored analysis errors are untouched: those are the useful ones, and they describe the
+server's view rather than this phone's.
 
 ### HistoryScreen — logbook
 
@@ -324,10 +426,18 @@ numbers and compares drives, which is the only reason to open this screen that i
 that one upload". A divider-separated stack of text lines cannot be scanned that way. The card's
 left accent bar carries upload state, so a scroll shows which drives still owe an upload without
 reading a word. Upload and analysis states become chips; a failed backfill message becomes a
-`ConsoleLine` in fault red. The header subtitle summarises "N drives, M not uploaded". A
-non-blank session note appears as a two-line `Mist` caption between the figures and the chips:
-the driver's own annotation ranks below what the app measured but above what the app's upload
-pipeline did.
+`ConsoleLine` in fault red, carrying the fixed message from `ui/PipelineMessages.kt`, never
+`session.backfillMessage`, for the reason given under LoggingScreen above. The header subtitle
+summarises "N drives, M not uploaded". A non-blank session note appears as a two-line `Mist`
+caption between the figures and the chips: the driver's own annotation ranks below what the app
+measured but above what the app's upload pipeline did.
+
+The note row is also where a drive gets annotated after the fact. Every card carries an **Add
+note** / **Edit note** control on that row, which swaps it for a `DriveNoteEditor`. Collapsed
+behind a tap rather than always open, because the list's whole job is to be scanned down a column
+of MPG figures and a text field on every card would multiply every row's height for an interaction
+that happens once in twenty views. The logbook is where a drive from days ago gets looked at
+again, and it is where "that was the one with the new tyres" actually occurs to someone.
 
 ## 8. Rules for whoever touches this next
 
@@ -345,6 +455,19 @@ pipeline did.
 11. A colour a hero readout can carry registers a daylight twin in `DaylightReadoutPalette`. The
     map is the whole daylight mode; a token missing from it silently renders at night luminance
     in direct sun.
+12. **A caught exception's text never reaches a composable.** Not filtered, not truncated, not
+    shown behind a "details" toggle. If a failure needs describing on a screen, the app writes the
+    sentence; the raw goes to Room or to logcat. The rule exists because the raw string named the
+    user's home server, its public IP and its open port on a screen they might share, and because
+    a redaction filter is a rule that silently stops holding the day the string changes shape.
+13. **A hero never says `--`.** If the intended figure is missing, the hero falls back to the best
+    figure that does exist rather than spending the screen's largest element on an absence. A
+    screen state with genuinely no number should be an `EmptyState` or a `StatusBand`, not an
+    empty hero.
+14. **A section that reports "normal" on every run does not get a section.** A green confirmation
+    panel repeated after every drive is wallpaper by the third one, it costs a section of vertical
+    space, and it contradicts the ISA-101 rule this document opens with. Report it as a `DataRow`
+    among the other Tier C lines and let it earn weight only when it is abnormal.
 
 ---
 
@@ -436,17 +559,31 @@ All four are built. Kept here rather than deleted, since what each one turned ou
 what got deliberately left out of it, is the useful part.
 
 - ~~**Adapter health from data already collected.**~~ **Built.** `computeAdapterHealth`
-  (`data/SessionDiagnostics.kt`) counts `PID_NO_DATA` / `PID_COOLDOWN` events for one session and
-  the trip report shows "Adapter dropped N PIDs this drive" under an **Adapter health** section.
+  (`data/SessionDiagnostics.kt`) counts `PID_NO_DATA` / `PID_COOLDOWN` events for one session.
   Tone is driven by *distinct* PIDs, not raw failure count: one PID failing two hundred times is
   an unsupported PID cycling through cooldown (expected, see KNOWN_ISSUES.md), several different
-  PIDs failing is the adapter or the link, and the panel's caption says so.
-- ~~**Session notes.**~~ **Built.** A single-line `NoteField` in the Stop dialog, written onto
-  `SessionEntity.notes` (the column already existed, so no schema bump) before backfill runs, and
-  shown back on the logbook card when non-blank. Stop time is the only moment the drive is still
-  in the driver's head. **Local and CSV only:** `CsvExporter`'s `metadata.json` picks the note up
-  for free, but the server's `/sessions/{id}/end` endpoint takes no `notes` field, so the DuckDB
-  copy's `notes` column stays null until someone changes the server.
+  PIDs failing is the adapter or the link, and the caption says so. **Since demoted:** it shipped
+  as its own accent-barred panel under its own section label on the trip report, and seeing that
+  on a phone made it obvious it was outranking the drive's actual figures to report that the rig
+  was fine. It is now one `DataRow` in **Capture and delivery**; see section 7.
+- ~~**Session notes.**~~ **Built,** and since extended past the Stop dialog. A single-line
+  `NoteField` still opens in the Stop confirmation, written onto `SessionEntity.notes` (the column
+  already existed, so no schema bump) before backfill runs, because Stop is the moment the drive
+  is still in the driver's head. It turned out to be a bad *only* moment: the thing worth writing
+  down is often what you work out on the walk back from the car, and a dialog with a Stop button
+  in it is not where anyone composes a careful sentence. `DriveNoteEditor` (`ui/DriveNote.kt`)
+  wraps the same `NoteField` in a load-edit-save cycle over `SessionDao.getSession` /
+  `updateSession` and now appears on **both** screens that show a drive: always open in a **Drive
+  note** section on the trip report, and behind an **Add note** / **Edit note** control on each
+  logbook card. Saving is explicit rather than on-blur or per-keystroke, because a silent autosave to a
+  field whose state the user cannot see is exactly the interaction that makes someone reopen a
+  screen to check whether it took. The Save control appears only when the draft differs from
+  what is stored, so the resting state of a correct note is a plain field with nothing shouting
+  next to it. Clearing a note to empty stores `null` rather than `""`, so every reader's existing
+  `isNotBlank` check keeps working. **Local and CSV only:** `CsvExporter`'s `metadata.json` picks
+  the note up for free, but the server's `/sessions/{id}/end` endpoint takes no `notes` field, so
+  the DuckDB copy's `notes` column stays null until someone changes the server, and a note added
+  days later never had a chance of reaching it, since that endpoint fired at Stop.
 - ~~**A daylight-readable high-contrast mode.**~~ **Built,** and see section 3's daylight table
   for the tokens and section 6 for the mechanism. Still not a light theme: `Ink` stays the ground
   in both modes and only `HeroReadout` reads the boosted palette. Toggle lives on SetupScreen
@@ -463,7 +600,12 @@ what got deliberately left out of it, is the useful part.
   see DATA_SCHEMA.md for the table's coverage limits and the structural fallback for codes
   outside it. Current codes are fault-toned, pending and permanent are caution-toned, and "no
   stored trouble codes" is stated explicitly rather than left as an absent section, because a
-  confirmed clean read is itself the answer someone opened the screen for.
+  confirmed clean read is itself the answer someone opened the screen for. **Half-revised since:**
+  the clean read is still stated, but as one `DataRow` in **Capture and delivery** rather than as a
+  green accent-barred panel under its own section label. The original argument holds, since dropping the
+  clean read entirely would be a real loss, but it never justified full-section weight on every
+  single drive, which is what the first version gave it. Codes *present* still get the full
+  treatment, now immediately under the hero.
 
 ## 10. Android Auto dashboard, instead of the phone screen
 
