@@ -519,7 +519,9 @@ replaced it.
   does double duty there: it picks the container (A/B a tile, C a row) and it sets the staleness
   budget, derived from the scheduler's own rotation arithmetic rather than from taste. A PID
   missing from the table still renders, as a grey housekeeping line, rather than vanishing from a
-  screen whose job is showing everything the car said.
+  screen whose job is showing everything the car said. `PidCategory.accent` is a composable getter
+  rather than a constructor property, per rule 15: which category a PID belongs to is fixed
+  forever, but which hue that category wears follows the active skin.
 - The raw service status string drops to a `ConsoleLine` at the bottom.
 - Stop is a full-width 56dp action in a pinned bar, tinted `StatusFault`. Its confirm dialog also
   carries the drive's optional `NoteField`, because Stop is the last moment the drive is still in

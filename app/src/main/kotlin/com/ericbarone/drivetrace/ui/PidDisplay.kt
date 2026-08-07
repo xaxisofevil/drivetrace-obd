@@ -1,5 +1,7 @@
 package com.ericbarone.drivetrace.ui
 
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.ReadOnlyComposable
 import androidx.compose.ui.graphics.Color
 import com.ericbarone.drivetrace.obd.MeasurementSample
 import com.ericbarone.drivetrace.ui.theme.AccentAirpath
@@ -27,17 +29,32 @@ import com.ericbarone.drivetrace.ui.theme.AccentThermal
  * Colour is never the only carrier. The live cluster prints the category's name as a
  * `SectionLabel` over the tiles it owns, so the grouping survives colour blindness and a
  * greyscale screenshot exactly as the status glyphs do.
+ *
+ * [accent] is a composable getter rather than a constructor property because which hue a category
+ * wears now depends on the active skin (DESIGN_SYSTEM.md section 3.5, and rule 15: a colour token
+ * is read from composable code, never cached outside it). Which *category* a PID belongs to is
+ * still fixed forever; only the hue that category wears moves.
  */
-enum class PidCategory(val accent: Color) {
+enum class PidCategory {
     /** Achromatic on purpose: the primary instrument in a cluster is white on black. */
-    MOTION(AccentMotion),
-    MIXTURE(AccentMixture),
-    AIRPATH(AccentAirpath),
-    THERMAL(AccentThermal),
-    IGNITION(AccentIgnition),
+    MOTION,
+    MIXTURE,
+    AIRPATH,
+    THERMAL,
+    IGNITION,
 
     /** Grey on purpose. Bookkeeping is findable, not glanceable. */
-    HOUSEKEEPING(AccentHousekeeping),
+    HOUSEKEEPING;
+
+    val accent: Color
+        @Composable @ReadOnlyComposable get() = when (this) {
+            MOTION -> AccentMotion
+            MIXTURE -> AccentMixture
+            AIRPATH -> AccentAirpath
+            THERMAL -> AccentThermal
+            IGNITION -> AccentIgnition
+            HOUSEKEEPING -> AccentHousekeeping
+        }
 }
 
 /**
