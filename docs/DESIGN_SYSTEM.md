@@ -259,6 +259,9 @@ rather than one column of rows that changes length.
 - **Pipeline** panel groups upload and analysis into one question with two stages, instead of two
   unrelated status lines. The nesting rule is unchanged: analysis only appears once backfill
   succeeded.
+- **Adapter health** sits below Pipeline, because it describes the capture rig rather than the car
+  or the drive. Accent-barred panel, tone from distinct dropped PIDs, per-PID counts as `DataRow`s
+  and the "unsupported PID vs. bad adapter" caveat as a `Caption`.
 - **Braking** and **Anomaly flags** get their own sections; flags become caution-barred panels
   with a glyph rather than `"- $flag"` text.
 - **On-device cross-check** stays visible even when the server figure is the hero, because the
@@ -373,9 +376,12 @@ things to charge for since nothing functional sits behind the paywall.
 
 ## 9. Smaller things noticed while working
 
-- **Adapter health from data already collected.** `PID_COOLDOWN` and `PID_NO_DATA` events are
-  logged every session. A "your adapter dropped 14 PIDs this drive" summary would tell a user
-  their cheap clone is the problem, which is currently invisible to them.
+- ~~**Adapter health from data already collected.**~~ **Built.** `computeAdapterHealth`
+  (`data/SessionDiagnostics.kt`) counts `PID_NO_DATA` / `PID_COOLDOWN` events for one session and
+  the trip report shows "Adapter dropped N PIDs this drive" under an **Adapter health** section.
+  Tone is driven by *distinct* PIDs, not raw failure count: one PID failing two hundred times is
+  an unsupported PID cycling through cooldown (expected, see KNOWN_ISSUES.md), several different
+  PIDs failing is the adapter or the link, and the panel's caption says so.
 - **Session notes.** `SessionEntity.notes` exists and nothing writes to it. "Cold start, highway,
   93 octane" typed at Stop time is exactly the metadata that makes drive-to-drive comparison
   meaningful.

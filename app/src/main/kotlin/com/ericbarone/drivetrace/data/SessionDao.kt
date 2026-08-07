@@ -42,6 +42,12 @@ interface SessionDao {
     @Query("SELECT * FROM events WHERE sessionId = :sessionId ORDER BY elapsedNs ASC")
     suspend fun getEvents(sessionId: Long): List<EventEntity>
 
+    /** Just the event types a caller actually needs, rather than pulling every event of a whole
+     * drive (a long drive logs thousands of PID_NO_DATA rows alone) to filter three of them out
+     * in Kotlin. Used by the post-drive adapter-health and DTC summaries, see SessionDiagnostics. */
+    @Query("SELECT * FROM events WHERE sessionId = :sessionId AND eventType IN (:eventTypes) ORDER BY elapsedNs ASC")
+    suspend fun getEventsOfTypes(sessionId: Long, eventTypes: List<String>): List<EventEntity>
+
     @Query("SELECT COUNT(*) FROM measurements WHERE sessionId = :sessionId")
     suspend fun getMeasurementCount(sessionId: Long): Int
 }

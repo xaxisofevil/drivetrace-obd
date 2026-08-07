@@ -32,6 +32,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.core.content.FileProvider
+import com.ericbarone.drivetrace.data.AdapterHealth
+import com.ericbarone.drivetrace.data.computeAdapterHealth
 import com.ericbarone.drivetrace.export.CsvExporter
 import com.ericbarone.drivetrace.export.TripSummary
 import com.ericbarone.drivetrace.export.computeTripSummary
@@ -87,6 +89,7 @@ fun LoggingScreen(status: LoggingUiState, onStop: () -> Unit, onNewSession: () -
     var nowMs by remember { mutableLongStateOf(System.currentTimeMillis()) }
     var exporting by remember { mutableStateOf(false) }
     var tripSummary by remember { mutableStateOf<TripSummary?>(null) }
+    var adapterHealth by remember { mutableStateOf<AdapterHealth?>(null) }
 
     LaunchedEffect(Unit) {
         while (true) {
@@ -102,6 +105,10 @@ fun LoggingScreen(status: LoggingUiState, onStop: () -> Unit, onNewSession: () -
     LaunchedEffect(sessionComplete, status.sessionId) {
         val id = status.sessionId
         if (sessionComplete && id != null) {
+            // Both read local Room only, so the whole trip report still fills in with the server
+            // unreachable. Adapter health first: it is the cheap one, and it is the figure that
+            // explains a thin or missing MPG number if the drive went badly.
+            adapterHealth = computeAdapterHealth(context, id)
             tripSummary = computeTripSummary(context, id)
         }
     }
@@ -137,7 +144,7 @@ fun LoggingScreen(status: LoggingUiState, onStop: () -> Unit, onNewSession: () -
         ) {
             Spacer(Modifier.height(Space.xs))
             if (sessionComplete) {
-                CompleteBody(status, tripSummary)
+                CompleteBody(status, tripSummary, adapterHealth)
             } else {
                 LiveBody(status, elapsedSeconds, lastSampleAgeSeconds)
             }
@@ -336,7 +343,11 @@ private fun ConnectionPill(state: ConnectionState) {
  * or provenance for that number.
  */
 @Composable
-private fun ColumnScope.CompleteBody(status: LoggingUiState, tripSummary: TripSummary?) {
+private fun ColumnScope.CompleteBody(
+    status: LoggingUiState,
+    tripSummary: TripSummary?,
+    adapterHealth: AdapterHealth?,
+) {
     val analysis = status.analysisSummary
     val serverMpg = analysis?.overallMpg
     val deviceMpg = tripSummary?.overallMpg
@@ -422,6 +433,10 @@ private fun ColumnScope.CompleteBody(status: LoggingUiState, tripSummary: TripSu
         }
     }
 
+    if (adapterHealth != null) {
+        AdapterHealthSection(adapterHealth)
+    }
+
     if (analysis != null && (analysis.brakingEventCount ?: 0) > 0) {
         Column(verticalArrangement = Arrangement.spacedBy(Space.md)) {
             SectionLabel("Braking")
@@ -504,6 +519,60 @@ private fun ColumnScope.CompleteBody(status: LoggingUiState, tripSummary: TripSu
 
     if (status.statusMessage.isNotBlank()) {
         ConsoleLine(status.statusMessage, color = Ash)
+    }
+}
+
+/**
+ * Adapter health, built entirely from PID_NO_DATA / PID_COOLDOWN events the scheduler already
+ * logs every session (see data/SessionDiagnostics.kt). Without this the user has no way to tell a
+ * clean drive from one where a cheap ELM327 clone dropped a third of its reads: the samples
+ * counter only ever counts what succeeded.
+ *
+ * Sits below Pipeline on purpose. It describes the capture rig, not the car and not the drive, so
+ * it ranks under both the vehicle's own numbers and "did this drive make it off the phone".
+ */
+@Composable
+private fun ColumnScope.AdapterHealthSection(health: AdapterHealth) {
+    // Distinct PIDs, not raw failures, drives the tone: one PID failing repeatedly is an
+    // unsupported PID cycling through its 30s cooldown, which is expected and nearly free (see
+    // KNOWN_ISSUES.md). Several different PIDs failing is the adapter or the link.
+    val tone = when {
+        health.isClean -> Tone.LIVE
+        health.distinctPidsDropped <= 2 -> Tone.CAUTION
+        else -> Tone.FAULT
+    }
+    val headline = if (health.isClean) {
+        "Every read answered"
+    } else {
+        "Adapter dropped ${health.distinctPidsDropped} " +
+            "PID${if (health.distinctPidsDropped == 1) "" else "s"} this drive"
+    }
+
+    Column(verticalArrangement = Arrangement.spacedBy(Space.md)) {
+        SectionLabel("Adapter health")
+        InstrumentPanel(modifier = Modifier.fillMaxWidth(), accent = tone.color) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(Space.md),
+            ) {
+                GlyphMark(tone.glyph, tone.color, sizeDp = 14)
+                Text(headline, style = LocalReadoutType.current.unit, color = tone.color)
+            }
+            if (!health.isClean) {
+                Spacer(Modifier.height(Space.sm))
+                DataRow("Failed reads", health.failedReads.toString())
+                DataRow("Cooldown pauses", health.cooldowns.toString())
+                for ((pidTag, count) in health.worstOffenders) {
+                    DataRow(pidTag, count.toString(), valueColor = Mist)
+                }
+                Spacer(Modifier.height(Space.sm))
+                Caption(
+                    "A PID this ECU genuinely doesn't support fails every attempt too, so one PID " +
+                        "with a high count is more likely unsupported than a bad adapter. Several " +
+                        "different PIDs failing is the adapter or the Bluetooth link.",
+                )
+            }
+        }
     }
 }
 
