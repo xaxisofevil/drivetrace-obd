@@ -284,18 +284,70 @@ and its original comment is preserved verbatim.
 The same composable serves two genuinely different jobs, so it now branches into two layouts
 rather than one column of rows that changes length.
 
-**LIVE** is read from a mount, in motion, at a glance:
+**LIVE** is read from a mount, in motion, at a glance. It is a gauge cluster, which is what this
+whole document was written for and what it could not be until `LoggingUiState` started carrying
+live PID values (idea #1 below, since built). The first version of this layout put session elapsed
+in the hero and sample/GPS counts in the tile band, which was the honest ranking at the time: the
+state object carried nothing from the vehicle at all, so the app's own bookkeeping genuinely was
+the most interesting true thing on the screen. It is not any more, and the ranking below is what
+replaced it.
 
 - Connection state sits in the header as a pulsing dot + word, costing no content row.
-- **Hero:** session elapsed at 64sp. This is the number actually worth a glance today.
-- **Capture band:** three tiles at roughly a third the hero's weight — samples, GPS fixes, last
-  sample age. The last-sample tile carries a tone threshold (<=5s neutral, <=15s caution, beyond
-  that fault). This is styling only; nothing about polling or logging changed. It turns a number
-  already on screen into something whose severity is readable without arithmetic.
-- **One alert slot,** reserved for the engine-detected check. Everything else on this screen is
-  information; this is the only thing that is a decision, and the band's power comes entirely
-  from being the only band.
-- Reconnect count appears as a caution panel only when non-zero.
+- **Hero: Engine RPM** at 64sp, achromatic. MOTION is the achromatic category and the tachometer
+  is what a cluster's largest instrument shows; position plus size already identify it, so the hue
+  budget stays with the diagnostic subsystems. It falls back to session elapsed when RPM has not
+  answered yet or read back implausible, on the same chain-not-a-dash reasoning the trip report's
+  hero uses (rule 13), and elapsed exists from the first second of every session so the chain
+  cannot run out. The caption says which case it is.
+- **Primary pair:** vehicle speed and current short-term fuel trim, two half-width `MetricTile`s.
+  Speed is the other figure a driver already expects; short-term trim is the signal this project
+  exists to chase, and watching it move in real time is the whole argument for a live screen over
+  an export. A missing half keeps its space rather than letting the survivor stretch across the
+  screen and read as a second hero.
+- **One alert slot,** reserved for the engine-detected check, unchanged in form. It moved up to
+  sit directly under the primary readouts: the content below it is now several screens of gauges,
+  and an alert under all of that is an alert nobody sees. Everything else on this screen is
+  information; this is the only thing that is a decision, and the band's power comes entirely from
+  being the only band.
+- **Category grid:** every remaining Tier A/B PID as a `MetricTile`, grouped under a
+  `SectionLabel` naming its category and coloured with that category's fixed accent. The label is
+  the redundant carrier the hue needs (WCAG 1.4.1, section 2); the accent is what lets "which
+  system is this" be answered without reading the label at all. Always three tiles across, even
+  for a category holding one or two: the report's tile rows widen to fill because every tile there
+  is the same rank, whereas a two-tile row here would render at the same half-width as the primary
+  pair above it and flatten the three ranks this screen depends on.
+- **Context:** Tier C and everything in HOUSEKEEPING, collapsed into `DataRow`s in one panel, per
+  rule 6. Category hue survives the demotion, so ambient air is still thermal blue and barometric
+  still airpath violet on the line they end up on. "Slow-changing context" is `PidCatalog`'s own
+  description of Tier C and it is exactly what this block is: real data, worth finding, never worth
+  a glance while moving.
+- **Session:** elapsed, sample count, GPS fixes, last-sample age and reconnects, as `DataRow`s in
+  one panel at the bottom. Demoted, not deleted. Every figure there is still true and still worth
+  having (the counts are the only proof the GPS collector is running; the last-sample age is what
+  separates "the car is idling" from "the link died three minutes ago"), but it is the app talking
+  about itself, which is the same class of information as the report's **Capture and delivery**
+  block and gets the same treatment. The last-sample tone threshold survives the move (<=5s
+  neutral, <=15s caution, beyond that fault), and the reconnect count keeps its caution tone while
+  losing its own accent-barred panel, which was a dedicated frame around one integer. Elapsed is
+  omitted from this panel whenever it is the hero, so the screen never prints one number twice at
+  two sizes.
+- **A reading the scheduler flagged `IMPLAUSIBLE` never renders as a number.** `valueNumeric` is
+  null on those rows by design (`PLAUSIBLE_RANGES` in `PidScheduler.kt`), so the tile prints `--`
+  in `Tone.FAULT` and inherits the cross glyph with it: the status table already has a word for
+  "no real data from the vehicle" and this is that word, not a new vocabulary. A gauge that has
+  merely gone quiet past its tier's polling budget gets `Tone.CAUTION` instead, the table's "stale
+  samples" row. A PID that has never answered draws nothing at all, so `--` in this cluster only
+  ever means "the number that came back was garbage", and the unit is dropped alongside it, since
+  `-- kPa` reads as a measurement that happens to be missing.
+- **No new container type.** The cluster is `HeroReadout`, `MetricTile`, `DataRow`,
+  `SectionLabel`, `InstrumentPanel` and `StatusBand`, arranged; the "large" tiles of the primary
+  pair are `MetricTile`s in a two-column row, not a new component. The one addition is a table,
+  `ui/PidDisplay.kt`, mapping each `canonical_name` to its category, tier, label and decimal
+  places, so neither the screen nor the scheduler carries a `when` block full of PID names. Tier
+  does double duty there: it picks the container (A/B a tile, C a row) and it sets the staleness
+  budget, derived from the scheduler's own rotation arithmetic rather than from taste. A PID
+  missing from the table still renders, as a grey housekeeping line, rather than vanishing from a
+  screen whose job is showing everything the car said.
 - The raw service status string drops to a `ConsoleLine` at the bottom.
 - Stop is a full-width 56dp action in a pinned bar, tinted `StatusFault`. Its confirm dialog also
   carries the drive's optional `NoteField`, because Stop is the last moment the drive is still in
@@ -607,27 +659,48 @@ again, and it is where "that was the one with the new tyres" actually occurs to 
 
 # Feature ideas surfaced during this pass
 
-Observations from redesigning, not implemented, roughly in order of how much they would change
-the product. Monetisation potential called out where it exists.
+Observations from redesigning, roughly in order of how much they would change the product. The
+ones since built say so and keep what building them turned out to require, which is the part worth
+reading. Monetisation potential called out where it exists.
 
-## 1. The live gauge cluster the theme is already built for
+## 1. ~~The live gauge cluster the theme is already built for~~ — built
 
-**This is the big one.** `LoggingUiState` (`service/LoggingStatus.kt`) carries session
-bookkeeping only: connection state, counts, timestamps. It does not carry a single live PID
-value. The Logging screen therefore cannot show RPM, speed, fuel trim, boost, or coolant while
-driving, no matter how it is styled, and this pass could not add it without modifying the service
-layer that was explicitly out of scope.
+**Built.** `LoggingUiState` now carries `latestValues: Map<String, MeasurementSample>`, keyed on
+`canonicalName`, and the LIVE layout in section 7 is the cluster this entry described: RPM in the
+hero, speed and short-term trim as the primary pair, a `MetricTile` grid grouped and coloured by
+category, Tier C in `DataRow`s at the bottom. The prediction that the UI layer was already sized
+for it held: no new component was added to `Instrument.kt` to build it.
 
-The fix is small and well-defined: add a `latestValues: Map<String, MeasurementSample>` (keyed on
-`canonicalName`) to `LoggingUiState`, updated by `PidScheduler` on each successful poll. The UI
-layer is already sized for it — `HeroReadout`, `MetricTile`, and the six category accents exist
-precisely to receive it. The intended live layout is RPM in the hero slot, speed and current
-short-term trim as large tiles, then a `MetricTile` grid grouped and coloured by category, with
-Tier C collapsed into `DataRow`s at the bottom.
+Three things the entry got wrong or left out, which are the parts worth keeping:
 
-*Monetisation:* a configurable gauge layout (pick which PIDs occupy the hero and tile slots, save
-per-vehicle presets) is the single most requested paid feature in this app category and is what
-Torque Pro's paid tier substantially is.
+- **The update happens in `DriveLoggingService`'s `onMeasurement`, not in `PidScheduler`.** The
+  scheduler has no reference to the status bus and should not grow one; it hands every sample to a
+  callback, and the service's callback is already the single place that commits a sample to Room.
+  Putting the state update in that same lambda means a value can only reach the screen once it has
+  been recorded locally, which is this project's ordering rule everywhere else too (Room first,
+  everything else after).
+- **The map holds `MeasurementSample`, the scheduler's own poll-result type, not a new UI shape.**
+  It already carries value, unit, `qualityFlag` and `wallTimeUtc`, which is exactly what a live
+  readout needs, and reusing it means the number on screen is the row that went into the database
+  rather than a re-derived copy that can quietly drift from it.
+- **The map keeps `IMPLAUSIBLE` samples rather than filtering them out,** so the screen can say
+  "this reading is currently garbage" instead of leaving the last good value up as though it were
+  current. See section 7 for how that renders. Filtering at the state layer would have looked
+  tidier and would have been a lie by omission at the exact moment the adapter started
+  misbehaving.
+
+Two smaller findings from actually building it. Grouping by category needs the category's *name*
+printed over the group, not just the hue, or the pre-attentive channel is carrying the whole
+message alone and breaks the moment a screenshot goes greyscale. And staleness has to be
+per-tier: Tier B rotates one command every 3s across a dozen of them, so a Tier B tile is
+routinely 36s old with nothing at all wrong, and a single global "stale after N seconds" rule
+paints half the cluster amber on a perfectly healthy drive.
+
+*Monetisation, still open:* a configurable gauge layout (pick which PIDs occupy the hero and tile
+slots, save per-vehicle presets) is the single most requested paid feature in this app category
+and is what Torque Pro's paid tier substantially is. The table in `ui/PidDisplay.kt` is the seam
+that would widen for it: slot assignment is currently code in `LiveBody` reading a fixed table,
+and a preset is that table plus a stored per-vehicle override.
 
 ## 2. Exportable trip report as PDF
 
@@ -788,10 +861,11 @@ sources" toggle (Settings → Apps → Android Auto → tap the version info ten
 for running apps outside the approved categories, the same sideload posture this whole app
 already lives in.
 
-**Real dependency, not a new one:** this needs the same missing plumbing as idea #1 (live PID
-values flowing into a shared state object). `LoggingStatus` is already a process-wide
-`MutableStateFlow`, not Activity-scoped, so a Car App `Screen` can collect from the exact same
-source the phone UI would once idea #1 lands. Build that plumbing once; both surfaces benefit.
+**Dependency already met.** This needed the same plumbing as idea #1 (live PID values flowing into
+a shared state object), and idea #1 has since shipped it. `LoggingStatus` is a process-wide
+`MutableStateFlow`, not Activity-scoped, so a Car App `Screen` can collect `latestValues` from the
+exact same source the phone cluster reads. The plumbing was built once and both surfaces benefit;
+nothing further is needed on the data side.
 Screens redraw via `invalidate()`, subject to a minimum update interval Android Auto enforces
 (roughly once a second, not live telemetry rate).
 

@@ -1,9 +1,10 @@
 # Data schema
 
-Three shapes of the same data exist: local Room (Android app), CSV export
-bundle, and the DuckDB server. All three carry the same fields; only the
-names' casing/format differs (Room/Kotlin is camelCase, CSV/DuckDB is
-snake_case).
+Three *persisted* shapes of the same data exist: local Room (Android app),
+CSV export bundle, and the DuckDB server. All three carry the same fields;
+only the names' casing/format differs (Room/Kotlin is camelCase, CSV/DuckDB
+is snake_case). A fourth, in-memory and session-scoped, feeds the live
+gauge cluster on the Logging screen; see `latestValues` below.
 
 ## Measurements (the core signal)
 
@@ -86,6 +87,40 @@ nobody's asked to change that side, and it has no UI to clutter.
   that PID (see `PLAUSIBLE_RANGES` in `PidScheduler.kt` / `analyze_drive.py`).
   `value_numeric` is null in this case; `value_text` holds the raw
   (nonsensical) value for forensics. Never silently dropped.
+
+### The live in-memory copy: `LoggingUiState.latestValues`
+
+A fourth shape of the same data, and the only one that is not persisted
+anywhere: `LoggingUiState` (`service/LoggingStatus.kt`) carries
+`latestValues: Map<String, MeasurementSample>`, the most recent sample from
+every PID that has answered during the current session, keyed on
+`canonical_name` (the strings in the table above, which is why they are the
+contract and not an implementation detail). It exists so the Logging
+screen's live gauge cluster has something to render; see
+DESIGN_SYSTEM.md's LIVE layout.
+
+Three properties worth knowing before reading from it:
+
+- **It is the scheduler's own `MeasurementSample`,** the same object handed
+  to `DriveLoggingService`'s `onMeasurement` and written straight into
+  `MeasurementEntity` beside it, not a separate UI-facing type. Every field
+  in the measurements table above is therefore on it, including
+  `qualityFlag`, `unit`, `wallTimeUtc` and `rawResponse`.
+- **It is updated at the same point the row is committed to Room,** so a
+  value can appear on screen only after it has been recorded locally. Room
+  stays authoritative; this map is a view of what was just written, never a
+  separate source.
+- **`IMPLAUSIBLE` samples are kept, not filtered.** The map holds the latest
+  sample whatever its quality, so a UI can say the current reading is
+  garbage rather than leaving the last good number up as though it were
+  current. `value_numeric` is null on those, per the rule above.
+
+Session-scoped and ephemeral: it starts empty, accumulates one entry per
+PID (never one per sample, roughly thirty entries at most for either
+catalog), survives Bluetooth reconnects along with the rest of
+`LoggingUiState`, and is discarded when the process dies or a new session
+starts. Nothing reads it back after a drive; the trip report and every
+analysis path go to Room.
 
 ## Locations (GPS)
 
