@@ -334,8 +334,8 @@ a different list:
   nothing else on the report is allowed to be a band, and there is no band at all on a drive that
   went fine. It fires only when the report has no economy figure (caution when distance was
   recorded but Mass Air Flow never answered, fault when neither came back), and its body names the
-  likely cause rather than restating the symptom, pointing at the section that holds the detail
-  ("the adapter dropped 3 PIDs this drive, see Capture and delivery below"). Making that
+  likely cause rather than restating the symptom, pointing at the control that holds the detail
+  ("the adapter dropped 3 PIDs this drive; open Capture detail below for which ones"). Making that
   connection is the whole job; the old layout had both facts on screen and joined neither.
   **A failed upload deliberately does not qualify for the band.** It retries on its own, the
   logbook has a Retry control, and no data is lost, so it is plumbing.
@@ -352,6 +352,13 @@ a different list:
   the category contract, teal for economy and MOTION white for distance and duration, so the hue
   never lies about which system the number came from. "You drove 12.4 km and got no fuel data" is
   a result. "`-- MPG`" is a layout.
+  **The two surviving `--` branches render in `Ash`, not `Slate`.** They used to use `Slate`, the
+  disabled-text grey, which is about 2.2:1 on `Ink`; at 64sp Light that is a hero which is
+  technically drawn and practically not there, in the one state where the screen most needs to be
+  legible about what it does not know. `Ash` is ~5.4:1, is the grey the hero's own label already
+  uses, cannot be mistaken for a reading because it is achromatic, and keeps rule 13 honest end to
+  end: the hero avoids `--` where it can, and where it cannot the `--` is readable. Both greys
+  already carry daylight twins, so rule 11 holds unchanged.
 - **Diagnostic codes,** immediately under the hero when there are any, unchanged in form: one
   accent-barred panel per code, the code leading and its plain-English meaning under it, the set it
   came from as a `StatusChip`. **Only when there are codes.** The clean case used to get the same
@@ -383,19 +390,77 @@ a different list:
   should I trust what is above, and does the app still owe me anything. Rule 6 already says Tier C
   data goes in a `DataRow` rather than a tile, and all of this is Tier C by this document's own
   definition of the term.
+
+  **That merge fixed the weight and left the substance alone, which was the actual problem.** A
+  photograph of the merged version, taken after a real completed drive, still read in full:
+  `13 PIDs dropped`, `Failed reads 259`, `Cooldown pauses 123`, `LONG_TERM_BANK_2 78`,
+  `SHORT_TERM_BANK_2 78`, `FUEL_CONSUMPTION_RATE 43`, a three-line caption about unsupported PIDs,
+  and then a distance and an MPG that were both already on the screen above it. Compact, correctly
+  ranked, and still a QA log for the capture rig sitting in the default first-look state of the
+  screen whose whole job is "how was my MPG" — on every drive, whether or not anything went wrong.
+
+  **The rule that sorts it, and rule 15 below states it generally: the block carries verdicts, the
+  disclosure carries counts.** A verdict is a word that changes what the reader does next
+  (`complete`, `will retry`, `all answered`, `13 PIDs dropped`, `none`). A count is a number that
+  only means anything once you have already decided to debug the rig. On a clean drive this block
+  is now four achromatic lines and no controls; on a bad one it grows a tone, a glyph, and one
+  collapsed control.
+
+  - **Upload** keeps one line and loses `(verified complete)`, which described the delivery
+    protocol to nobody. **A failed upload is now `CAUTION`, not `FAULT`,** on the same reasoning
+    the verdict band already uses to refuse it a band: it retries on its own, the logbook has a
+    control for it, and no data is lost. `WILL RETRY` in amber is what that state is. `FAILED` in
+    red spent the status table's "broken" tone on something that heals itself, which is the
+    wolf-crying ISA-101 exists to prevent. The success detail (`"412 measurements, 88 GPS, 19
+    events"`) moved into the disclosure: it is the app counting its own rows, and `COMPLETE`
+    already carried the verdict.
+  - **PC analysis** keeps one line and the nesting rule (it only appears once backfill succeeded).
+    Its pending detail line, "Waiting on the PC to analyze this drive...", is gone: the state word
+    `RUNNING` and the pulsing dot beside it already say that, twice. A *failed* analysis keeps its
+    server-authored message, because that is a real cause and the server is the only thing that
+    knows it.
   - **Adapter health is the specific demotion.** It was an accent-barred panel under its own
     section label, which on a clean drive meant a green tick at panel weight competing with the
     panels carrying the drive's actual result. It is diagnostic meta-information about the capture
     rig; on a good drive it is the least interesting true statement on the screen. It is now one
-    line, and it earns tone colour and a glyph only when genuinely degraded, at which point the
-    verdict band above has already sent the reader looking for it. Tone still comes from *distinct*
-    dropped PIDs, and the "unsupported PID vs. bad adapter" caveat is still there as a `Caption`.
-  - **The cross-check gains from the merge rather than losing.** Its argument was always that the
-    server and on-device figures disagreeing is itself information; as adjacent `DataRow`s in the
-    same panel as the upload state, that comparison is easier to run, not harder, because each
-    number's provenance now sits next to it.
-  - The pipeline nesting rule is unchanged: analysis only appears once backfill succeeded.
+    verdict line. **Clean is `NEUTRAL` and glyphless** rather than a green tick, because rule 14
+    and ISA-101 both say the normal state is achromatic and a mark on the one row that is fine,
+    among rows that carry no mark at all, is decoration. Tone still comes from *distinct* dropped
+    PIDs.
+  - **The counts behind that verdict sit behind a tap, collapsed by default, offered only when
+    something actually dropped.** Failed reads, cooldown pauses, the per-PID breakdown and the
+    "unsupported PID vs. bad adapter" caption are all still there, unchanged, one control away.
+    Deleting them was not an option and is worth being explicit about: idea #9 is right that
+    telling "one unsupported PID cycling through cooldown" apart from "several different PIDs
+    failing, so it is the adapter or the link" is the entire reason adapter-health reporting was
+    built, and that distinction lives only in those counts. It is simply never the answer to "how
+    was my MPG". The control is a `SecondaryAction`, the same component and the same move the
+    logbook already uses for its per-card note editor, so this adds no vocabulary and no new
+    container type.
+  - **The clean-DTC line is unchanged.** One achromatic line confirming a clean read of the
+    highest-consequence thing this screen reports is the cheapest true statement on it.
+  - **The cross-check now only appears when it is one.** Two figures computed two different ways
+    disagreeing is real information; the same figure printed twice is not. The screen passes the
+    on-device number down here only when the server also produced one, so on a drive where the
+    server never answered — which is every drive where this block used to be at its longest — the
+    row and its caption both disappear instead of restating the hero at a twentieth the size. That
+    was the state of the photographed report: `23.8` at 64sp, then `23.8` again eleven rows down.
+  - **The on-device distance row is gone outright, and it was never a cross-check.** Both figures
+    come from the same GPS fixes in the same Room table, one computed on the phone and one on the
+    PC after the phone uploaded them. Agreement between them tests the upload, not the
+    measurement. Distance already owns a hero slot and a `MetricTile`; this was its third
+    appearance on one screen.
+  - **The `calculating...` and `n/a (no fuel data)` rows are gone.** The hero says both, at 64sp,
+    before the reader ever gets this far.
 - Every methodology caveat from the original is preserved, demoted to `Caption`.
+- **The report has its own scroll state.** LIVE and COMPLETE used to share one
+  `rememberScrollState()`, so the report opened at whatever pixel offset the live layout had been
+  left at. A `ScrollState` anchors on an offset rather than on content, these two layouts share
+  neither their content nor their length, and this screen deliberately has no scrollbar, so a
+  report opened part-way down is indistinguishable from one that rendered wrong. That is exactly
+  how it was read: a real screenshot showed an empty bordered box under the header where the hero
+  belongs, which turned out to be the empty drive-note field with ~900px of report above the fold.
+  See `docs/KNOWN_ISSUES.md` for the pixel measurements that settled it.
 
 #### The failed-upload panel never prints the server's address
 
@@ -529,6 +594,14 @@ again, and it is where "that was the one with the new tyres" actually occurs to 
     panel repeated after every drive is wallpaper by the third one, it costs a section of vertical
     space, and it contradicts the ISA-101 rule this document opens with. Report it as a `DataRow`
     among the other Tier C lines and let it earn weight only when it is abnormal.
+15. **Verdicts render inline; counts render behind a tap, and only when there is something
+    wrong.** A verdict is a word that changes what the reader does next. A count is a number that
+    only means something once they have already decided to debug the app itself. Rule 14 covers a
+    section that is always normal; this one covers a section that is genuinely useful when
+    abnormal and is still not what the screen is for. Collapse it behind a `SecondaryAction`,
+    default closed, and hide the control entirely in the normal case, so the resting state of a
+    good run carries no controls at all. Demoting such content to nothing is the wrong fix: the
+    same numbers that are noise on a good run are the whole diagnosis on a bad one.
 
 ---
 
@@ -640,10 +713,16 @@ what got deliberately left out of it, is the useful part.
   (`data/SessionDiagnostics.kt`) counts `PID_NO_DATA` / `PID_COOLDOWN` events for one session.
   Tone is driven by *distinct* PIDs, not raw failure count: one PID failing two hundred times is
   an unsupported PID cycling through cooldown (expected, see KNOWN_ISSUES.md), several different
-  PIDs failing is the adapter or the link, and the caption says so. **Since demoted:** it shipped
-  as its own accent-barred panel under its own section label on the trip report, and seeing that
-  on a phone made it obvious it was outranking the drive's actual figures to report that the rig
-  was fine. It is now one `DataRow` in **Capture and delivery**; see section 7.
+  PIDs failing is the adapter or the link, and the caption says so. **Since demoted twice:** it
+  shipped as its own accent-barred panel under its own section label on the trip report, and
+  seeing that on a phone made it obvious it was outranking the drive's actual figures to report
+  that the rig was fine. That became one `DataRow` in **Capture and delivery**, which fixed the
+  weight and kept every count inline, so a real drive's report still read `Failed reads 259`,
+  `Cooldown pauses 123`, `LONG_TERM_BANK_2 78` by default. **The verdict now stays inline and the
+  counts moved behind a Capture detail control, collapsed, and only offered when something
+  dropped.** The reasoning in this entry is exactly why they moved rather than went away: the
+  unsupported-PID-versus-bad-adapter call is the whole point of this feature and it cannot be made
+  without them. See section 7 and rule 15.
 - ~~**Session notes.**~~ **Built,** and since extended past the Stop dialog. A single-line
   `NoteField` still opens in the Stop confirmation, written onto `SessionEntity.notes` (the column
   already existed, so no schema bump) before backfill runs, because Stop is the moment the drive

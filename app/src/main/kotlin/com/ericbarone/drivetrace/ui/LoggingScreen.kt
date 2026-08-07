@@ -28,6 +28,7 @@ import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -75,7 +76,6 @@ import com.ericbarone.drivetrace.ui.theme.Chalk
 import com.ericbarone.drivetrace.ui.theme.Ink
 import com.ericbarone.drivetrace.ui.theme.LocalReadoutType
 import com.ericbarone.drivetrace.ui.theme.Mist
-import com.ericbarone.drivetrace.ui.theme.Slate
 import com.ericbarone.drivetrace.ui.theme.Space
 import com.ericbarone.drivetrace.ui.theme.StatusCaution
 import com.ericbarone.drivetrace.ui.theme.StatusFault
@@ -409,9 +409,11 @@ private fun ConnectionPill(state: ConnectionState) {
  *  4. **How the drive went** — the profile tiles, then anomaly flags and braking.
  *  5. **What you want to remember about it** — the note.
  *  6. **How much to trust all of the above, and whether the app owes you anything** — one
- *     subordinate `DataRow` block at the bottom. Upload, analysis, adapter health, the clean-code
- *     confirmation and the on-device cross-check used to be four separate full-weight sections;
- *     they are all the same question and none of them is about the car or the drive.
+ *     subordinate `DataRow` block at the bottom, carrying verdicts only, with the counts behind
+ *     a tap that only appears when something went wrong. Upload, analysis, adapter health, the
+ *     clean-code confirmation and the on-device cross-check used to be four separate full-weight
+ *     sections; they are all the same question and none of them is about the car or the drive.
+ *     See [CaptureAndDeliverySection] for what each line had to earn to stay.
  */
 @Composable
 private fun ColumnScope.CompleteBody(
@@ -431,6 +433,14 @@ private fun ColumnScope.CompleteBody(
     // every question below is "still working it out", not "it failed".
     val settled = tripSummary != null
     val drove = (distanceKm ?: 0.0) >= 0.05
+    // The on-device figure is only a *cross-check* when there is a server figure to check it
+    // against. The two are computed differently on purpose (the server gates on stoichiometric
+    // operation, this one doesn't), which is the entire reason to show both. When the server
+    // never answered, the on-device number IS the hero, and printing it again in the capture
+    // block is the same number twice at two sizes, which is exactly what DriveProfileSection
+    // already goes out of its way to avoid. That was the state of the real screenshot that
+    // prompted this pass: `23.8` at 64sp, then `23.8` again eleven rows down.
+    val crossCheckMpg = deviceMpg.takeIf { serverMpg != null }
 
     CaptureVerdictBand(settled = settled, haveMpg = mpg != null, drove = drove, health = adapterHealth)
 
@@ -527,7 +537,7 @@ private fun ColumnScope.CompleteBody(
         }
     }
 
-    CaptureAndDeliverySection(status, tripSummary, adapterHealth, dtcs)
+    CaptureAndDeliverySection(status, crossCheckMpg, adapterHealth, dtcs)
 
     if (status.statusMessage.isNotBlank()) {
         ConsoleLine(status.statusMessage, color = Ash)
@@ -654,8 +664,8 @@ private fun ColumnScope.CaptureVerdictBand(
 
     val adapterClause = if (health != null && !health.isClean) {
         " The adapter dropped ${health.distinctPidsDropped} " +
-            "PID${if (health.distinctPidsDropped == 1) "" else "s"} this drive, see Capture and " +
-            "delivery below."
+            "PID${if (health.distinctPidsDropped == 1) "" else "s"} this drive; open Capture " +
+            "detail below for which ones."
     } else {
         ""
     }
@@ -771,53 +781,106 @@ private fun ColumnScope.DriveProfileSection(
 // ---------------------------------------------------------------------------
 
 /**
- * Everything that is about the capture rig and the pipeline rather than about the car or the
- * drive, in one subordinate block of `DataRow`-weight lines.
+ * Everything about the capture rig and the pipeline rather than about the car or the drive.
  *
- * This replaces four full sections: **Pipeline**, **Adapter health**, the clean half of
- * **Diagnostic codes**, and **On-device cross-check**. Each had its own `SectionLabel` and its own
- * panel frame, and together they were most of the report's scroll length while answering exactly
- * one question between them: how much should I trust what is above, and does the app still owe me
- * anything. Rule 6 already says Tier C data goes in a `DataRow` rather than a tile, and all of
- * this is Tier C by the document's own definition of the term.
+ * The first pass at this merged four full sections (**Pipeline**, **Adapter health**, the clean
+ * half of **Diagnostic codes**, **On-device cross-check**) into one `DataRow`-weight block. That
+ * fixed the visual weight and left the *substance* alone, which turned out to be the actual
+ * problem. A photograph of the merged version on a real completed drive still read, in full:
+ * `13 PIDs dropped`, `Failed reads 259`, `Cooldown pauses 123`, `LONG_TERM_BANK_2 78`,
+ * `SHORT_TERM_BANK_2 78`, `FUEL_CONSUMPTION_RATE 43`, a three-line caption about unsupported
+ * PIDs, then a distance and an MPG that were both already on the screen above. That is a QA log
+ * for the capture rig, on the default first-look state of the screen whose entire job is "how was
+ * my MPG", on every drive, whether or not anything went wrong.
  *
- * **Adapter health specifically.** It was an accent-barred panel under its own section label,
- * which on a clean drive meant a green tick at panel weight competing with the panels that carry
- * the drive's actual result. It is diagnostic meta-information about the rig; on a good drive it
- * is the least interesting true statement on the screen. Here it is one line, and it earns tone
- * colour and a glyph only when it is genuinely degraded, at which point the verdict band above
- * has already told the reader to come looking for it.
+ * The rule that sorts it: **the block states verdicts, and the disclosure holds counts.** A
+ * verdict is a word that changes what the reader does next ("complete", "will retry", "all
+ * answered", "13 PIDs dropped", "none"). A count is a number that only means something once
+ * you have already decided to debug the rig, and no count answers the question this screen
+ * exists to answer. So on a clean drive this is four achromatic lines and no controls, and on a
+ * bad one it grows a tone, a glyph, and one collapsed control.
  *
- * **The cross-check gains from this rather than losing.** Its whole argument was that the server
- * and on-device figures disagreeing is itself information; sitting as adjacent `DataRow`s in the
- * same panel as the upload state makes that comparison easier to run, not harder, because the
- * provenance of each number is now next to the number.
+ * Per item, because "made it smaller" is not a reason:
+ *
+ *  - **Upload.** Kept, one line. It is the only thing here the app still owes the user, and the
+ *    only one where the answer changes what they do (nothing, mostly, which is the point). The
+ *    label lost `(verified complete)`, which described the delivery protocol to nobody. **A
+ *    failed upload is now `CAUTION`, not `FAULT`,** matching the reasoning the verdict band
+ *    already uses to refuse it a band: it retries on its own, the logbook has a control for it,
+ *    and no data is lost. `WILL RETRY` in amber is what that is. `FAILED` in red was the status
+ *    table's "broken" tone spent on a state that heals itself, and red for a self-healing state
+ *    is precisely the wolf-crying ISA-101 exists to prevent.
+ *  - **The upload's success detail** (`"412 measurements, 88 GPS, 19 events"`) moved into the
+ *    disclosure. It is the app counting its own rows. `COMPLETE` already carries the verdict.
+ *  - **PC analysis.** Kept, one line, still nested under a successful upload. Its `PENDING`
+ *    detail line ("Waiting on the PC to analyze this drive...") is gone: the state word `RUNNING`
+ *    and the pulsing dot next to it already say that, twice. A *failed* analysis keeps its
+ *    server-authored message, because that one is a real cause and the server is the only thing
+ *    that knows it.
+ *  - **Adapter reads.** Kept as the trust signal, one line, verdict only. Clean is now
+ *    `NEUTRAL` and glyphless rather than a green tick: rule 14 and ISA-101 both say the normal
+ *    state is achromatic, and a tick on the one row that is fine, next to rows that carry no
+ *    glyph at all, reads as decoration.
+ *  - **Failed reads, cooldown pauses, the per-PID breakdown and their caption.** Behind a tap,
+ *    collapsed by default, and only offered at all when something actually dropped. Not deleted:
+ *    idea #9 is right that distinguishing "one unsupported PID cycling through cooldown" from
+ *    "several different PIDs failing, so it's the adapter or the link" is the whole reason
+ *    adapter-health reporting was built, and that distinction lives entirely in these counts.
+ *    It is just never the answer to "how was my MPG". Collapsing it behind a `SecondaryAction`
+ *    is the same move, and the same component, the logbook already uses for its per-card note
+ *    editor, so this adds no vocabulary.
+ *  - **The clean-DTC line.** Kept, unchanged. One achromatic line for a confirmed clean read of
+ *    the highest-consequence thing this screen reports is the cheapest true statement on it.
+ *  - **The on-device cross-check.** Kept only when it is one. Two figures computed two ways
+ *    disagreeing is real information; the same figure printed twice is not. The caller passes a
+ *    number here only when the server also produced one, so on a drive where the server never
+ *    answered (which is every drive where this block used to be at its longest) the row and its
+ *    caption both disappear rather than restating the hero.
+ *  - **The on-device distance row is gone outright.** It was never a cross-check. Both figures
+ *    are computed from the same GPS fixes out of the same Room table, one on the phone and one
+ *    on the PC after the phone uploaded them; agreement between them tests the upload, not the
+ *    measurement. Distance already has a hero slot and a `MetricTile`, and this was its third
+ *    appearance on one screen.
+ *  - **The `calculating...` and `n/a (no fuel data)` rows are gone.** The hero says both, at
+ *    64sp, before the reader gets this far.
  */
 @Composable
 private fun ColumnScope.CaptureAndDeliverySection(
     status: LoggingUiState,
-    tripSummary: TripSummary?,
+    crossCheckMpg: Double?,
     health: AdapterHealth?,
     dtcs: DtcReport?,
 ) {
+    // rememberSaveable, on the same reasoning 120e0e0 applied to MainActivity's showHistory: this
+    // screen outlives a process death under memory pressure often enough to be worth it, and
+    // silently re-collapsing a panel the user opened is the kind of small wrongness nobody
+    // reports and everybody notices.
+    var showDetail by rememberSaveable { mutableStateOf(false) }
+
+    // Never the raw status.backfillMessage: on the failure path that is the transport exception,
+    // naming the server's hostname, public IP and port. ui/PipelineMessages.kt is the single door
+    // and it is a whitelist, not a scrubber; rule 12. On success the string it returns is three
+    // integers the app counted itself, which is a count, so it goes in the disclosure.
+    val uploaded = when (status.backfillStatus) {
+        TriState.YES -> true
+        TriState.NO -> false
+        TriState.PENDING -> null
+    }
+    val uploadMessage = uploadDetail(uploaded = uploaded, rawMessage = status.backfillMessage)
+    val degraded = health != null && !health.isClean
+
     Column(verticalArrangement = Arrangement.spacedBy(Space.md)) {
         SectionLabel("Capture and delivery")
         InstrumentPanel(modifier = Modifier.fillMaxWidth()) {
             StatusRow(
-                label = "Server upload (verified complete)",
-                state = triStateWord(status.backfillStatus, pending = "uploading"),
-                tone = toneOf(status.backfillStatus),
-                // Never the raw status.backfillMessage: on the failure path it is the transport
-                // exception, naming the server's hostname, public IP and port. See
-                // ui/PipelineMessages.kt for why this is a whitelist rather than a scrubber.
-                detail = uploadDetail(
-                    uploaded = when (status.backfillStatus) {
-                        TriState.YES -> true
-                        TriState.NO -> false
-                        TriState.PENDING -> null
-                    },
-                    rawMessage = status.backfillMessage,
-                ),
+                label = "Upload",
+                state = when (status.backfillStatus) {
+                    TriState.PENDING -> "uploading"
+                    TriState.YES -> "complete"
+                    TriState.NO -> "will retry"
+                },
+                tone = if (uploaded == false) Tone.CAUTION else toneOf(status.backfillStatus),
+                detail = uploadMessage.takeIf { uploaded == false },
                 pulsing = status.backfillStatus == TriState.PENDING,
             )
             // Nesting rule unchanged: analysis cannot have an outcome until the upload landed.
@@ -826,18 +889,15 @@ private fun ColumnScope.CaptureAndDeliverySection(
                     label = "PC analysis",
                     state = triStateWord(status.analysisStatus, pending = "running"),
                     tone = toneOf(status.analysisStatus),
-                    detail = when (status.analysisStatus) {
-                        TriState.PENDING -> "Waiting on the PC to analyze this drive..."
-                        TriState.NO -> status.analysisMessage.takeIf { it.isNotBlank() }
-                        TriState.YES -> null
-                    },
+                    detail = status.analysisMessage
+                        .takeIf { status.analysisStatus == TriState.NO && it.isNotBlank() },
                     pulsing = status.analysisStatus == TriState.PENDING,
                 )
             }
 
             if (health != null) {
                 val tone = when {
-                    health.isClean -> Tone.LIVE
+                    health.isClean -> Tone.NEUTRAL
                     health.distinctPidsDropped <= 2 -> Tone.CAUTION
                     else -> Tone.FAULT
                 }
@@ -850,10 +910,24 @@ private fun ColumnScope.CaptureAndDeliverySection(
                             "PID${if (health.distinctPidsDropped == 1) "" else "s"} dropped"
                     },
                     valueColor = tone.color,
-                    leadingGlyph = tone.glyph,
+                    // Glyph only when it carries something. Clean is the normal state and the
+                    // normal state does not get a mark; see rule 5's other half.
+                    leadingGlyph = tone.glyph.takeIf { !health.isClean },
                     glyphColor = tone.color,
                 )
-                if (!health.isClean) {
+            }
+
+            // The counts, off by default, attached directly under the verdict they explain rather
+            // than at the foot of the panel, so the tap and its result are one thought.
+            if (degraded) {
+                Spacer(Modifier.height(Space.xs))
+                SecondaryAction(
+                    text = if (showDetail) "Hide capture detail" else "Capture detail",
+                    onClick = { showDetail = !showDetail },
+                    minHeight = Space.compactTarget,
+                )
+                if (showDetail) {
+                    Spacer(Modifier.height(Space.xs))
                     DataRow("Failed reads", health.failedReads.toString(), valueColor = Mist)
                     DataRow("Cooldown pauses", health.cooldowns.toString(), valueColor = Mist)
                     for ((pidTag, count) in health.worstOffenders) {
@@ -864,6 +938,11 @@ private fun ColumnScope.CaptureAndDeliverySection(
                             "PID with a high count is more likely unsupported than a bad adapter. " +
                             "Several different PIDs failing is the adapter or the Bluetooth link.",
                     )
+                    uploadMessage.takeIf { uploaded == true }?.let {
+                        Spacer(Modifier.height(Space.xs))
+                        Caption("Delivered: $it.")
+                    }
+                    Spacer(Modifier.height(Space.sm))
                 }
             }
 
@@ -873,27 +952,19 @@ private fun ColumnScope.CaptureAndDeliverySection(
                 DataRow("Stored trouble codes", "none", valueColor = Chalk)
             }
 
-            when {
-                tripSummary == null ->
-                    DataRow("Trip MPG (on-device est.)", "calculating...", valueColor = Slate)
-                tripSummary.overallMpg == null ->
-                    DataRow("Trip MPG (on-device est.)", "n/a (no fuel data)", valueColor = Slate)
-                else -> {
-                    tripSummary.distanceKm?.let {
-                        DataRow("Distance (GPS, on-device)", "%.2f km".format(it))
-                    }
-                    DataRow(
-                        "Trip MPG (on-device est.)",
-                        "%.1f".format(tripSummary.overallMpg),
-                        valueColor = AccentMixture,
-                    )
-                }
+            if (crossCheckMpg != null) {
+                DataRow(
+                    "On-device MPG cross-check",
+                    "%.1f".format(crossCheckMpg),
+                    valueColor = AccentMixture,
+                )
+                Spacer(Modifier.height(Space.sm))
+                Caption(
+                    "The hero figure is the PC's, gated on stoichiometric operation. This one is " +
+                        "the phone's: total distance over total fuel burned, ungated. They only " +
+                        "part company when a real share of the drive ran outside closed loop.",
+                )
             }
-            Spacer(Modifier.height(Space.sm))
-            Caption(
-                "On-device estimate is rougher: total distance / total fuel burned, not gated on " +
-                    "stoichiometric operation like the PC analysis is.",
-            )
         }
     }
 }
