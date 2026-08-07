@@ -909,3 +909,79 @@ right first cut, but the deeper fix (a per-command read timeout inside
 `ElmSession`/`PidScheduler`'s actual I/O, so a hang on the fifth PID
 of a drive recovers the same way a hang on the first one now does) is
 still open.
+
+## Trip report's hero readout looked blank (root-caused, not the bug it looked like)
+
+**Observed:** a photograph of the Session Complete screen after a real
+completed drive, taken to complain about the capture block, showed
+nothing at all where the 64sp hero belongs. No label, no value, no
+caption, just empty space under `SESSION COMPLETE / trip report` and
+then straight into `CAPTURE AND DELIVERY`. The same drive's on-device
+MPG (23.8) and GPS distance (14.60 km) rendered correctly further down
+the same screenshot.
+
+**It was never a blank hero, and the screenshot proves it against
+itself.** `CompleteBody` derives `mpg = analysis?.overallMpg ?:
+tripSummary?.overallMpg` and the capture block prints
+`tripSummary.overallMpg` from the same composition, in the same frame.
+For 23.8 to appear in the capture block, `tripSummary.overallMpg` must
+be 23.8, so `mpg` is 23.8, so `heroFigure` returns its `HeroKind.MPG`
+branch and the hero reads `23.8 MPG` in teal. There is no code path
+that can produce one without the other; a screenshot is one frame, so
+they cannot disagree. Same argument for the missing **Drive profile**
+tiles: `distanceKm` was 14.60, so the Distance tile had to render too,
+and it is not on screen either.
+
+**Root cause: the report was scrolled, and nothing on screen said so.**
+Measured off the original 1080x2376 JPEG rather than eyeballed. The
+bright row at y=268 is the `HeaderBar`'s own bottom hairline (luminance
+41, exactly `Hairline` #202B39), so the scroll viewport starts at y=270.
+The one bordered box visible under the header is 43px of fill at
+luminance 27, exactly `PanelRaised` #141C26, with rounded bottom corners,
+a hairline bottom edge at y=311, and no top edge at all: it is clipped
+by the viewport. Below it the gaps measure 22px then 55px before
+`CAPTURE AND DELIVERY` begins, which is `Space.sm` (8dp) then
+`Space.section` (20dp) at this screen's 2.75 px/dp. That is the
+`DriveNoteEditor`'s empty `NoteField` and nothing else in the app: an
+unlabelled, empty, bordered box sitting directly under the header, in
+the slot the eye expects the hero to occupy. Roughly 900px of report,
+hero and drive-profile tiles included, was above the fold. The report
+has no scrollbar (by design, rule 7 and the data-ink argument), so a
+report opened part-way down is indistinguishable from a report that
+rendered wrong.
+
+**How the offset got there.** Two contributors, both real, fixed
+differently:
+
+- `LoggingScreen` ran both its layouts through **one shared
+  `rememberScrollState()`**. LIVE and COMPLETE are, by this project's
+  own design document, two genuinely different layouts of two
+  genuinely different lengths, and a `ScrollState` anchors on a pixel
+  offset rather than on content, so any offset the live screen ended
+  the drive at was inherited unchanged by a report several times its
+  length. **Fixed:** the two layouts now hold separate scroll states
+  and the report always opens on its own hero.
+- `Modifier.imePadding()` sits on the screen's root Column, so
+  focusing the drive-note field shrinks the report's scroll viewport by
+  the full keyboard height, and Compose's own bring-into-view scrolls
+  the focused field up. Dismissing the keyboard restores the viewport
+  but not the offset, which parks the report exactly where the
+  screenshot found it. **Not "fixed"**, because scrolling to a field
+  you tapped is correct behaviour; the mitigation is that the capture
+  block's redesign (see DESIGN_SYSTEM.md section 7) cuts enough length
+  out of the report that far less of it can hide above the fold.
+
+**Fixed alongside it, a genuinely invisible hero that can still
+happen:** `heroFigure`'s two `--` branches painted the numeral `Slate`,
+the disabled-text grey, at about 2.2:1 on `Ink` and at 64sp Light
+weight. The design document already flags that ratio as unreadable in
+sun; it is marginal indoors too. Those branches now use `Ash` (~5.4:1),
+so no branch of the hero can render as nothing. Both greys already
+carry daylight twins, so nothing about the daylight palette changes.
+
+**Confirmed how:** by pixel measurement of the reported screenshot
+(luminance and spacing matched against the theme's own tokens, above)
+plus the same-frame data argument, not by reproducing a blank hero,
+which the code cannot produce. Build passes; the scroll split is
+behavioural and wants one real drive to confirm the report opens on its
+hero.

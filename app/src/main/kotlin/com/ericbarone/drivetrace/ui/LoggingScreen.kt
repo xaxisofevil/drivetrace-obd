@@ -113,6 +113,16 @@ fun LoggingScreen(status: LoggingUiState, onStop: (String) -> Unit, onNewSession
     val elapsedSeconds = status.startedAtMs?.let { (nowMs - it) / 1000 } ?: 0
     val lastSampleAgeSeconds = status.lastSampleAtMs?.let { (nowMs - it) / 1000 }
     val sessionComplete = status.connectionState == ConnectionState.DISCONNECTED && status.sessionId != null
+
+    // Two layouts, two scroll positions. They used to share one rememberScrollState, which meant
+    // the trip report opened at whatever pixel offset the live screen happened to have been left
+    // at, with no affordance anywhere on the screen saying it was scrolled. That is how the report
+    // ends up under the header with its hero above the fold; see docs/KNOWN_ISSUES.md's
+    // "hero readout looked blank" entry for the real screenshot that led here. A ScrollState
+    // anchors on a pixel offset, not on content, and these two layouts share neither their
+    // content nor their length, so an offset carried from one to the other never means anything.
+    val liveScroll = rememberScrollState()
+    val reportScroll = rememberScrollState()
     // Frozen at the moment the session ended rather than ticking off `nowMs`, which would keep
     // counting while the report sits on screen. LoggingUiState carries no end timestamp (the
     // service writes one onto the row, not into the status bus), so the report captures the
@@ -166,7 +176,7 @@ fun LoggingScreen(status: LoggingUiState, onStop: (String) -> Unit, onNewSession
             modifier = Modifier
                 .weight(1f)
                 .fillMaxWidth()
-                .verticalScroll(rememberScrollState())
+                .verticalScroll(if (sessionComplete) reportScroll else liveScroll)
                 .padding(horizontal = Space.gutter),
             verticalArrangement = Arrangement.spacedBy(Space.section),
         ) {
@@ -558,6 +568,14 @@ private data class HeroFigure(
  * accent still obeys the category contract, teal for economy and MOTION white for distance and
  * duration, so the hue never lies about which system the number came from. "You drove 12.4 km and
  * got no fuel data" is a result. "-- MPG" is a layout.
+ *
+ * **The two `--` branches used to paint themselves `Slate`,** which is the disabled-text grey and
+ * sits at about 2.2:1 on `Ink`. At 64sp Light weight that is a hero which is technically drawn
+ * and practically not there, and it is the one state where the screen most needs to be legible
+ * about what it does not know. `Ash` (~5.4:1, the same grey the hero's own label already uses)
+ * costs nothing, cannot be confused with a real reading because it is achromatic, and keeps rule
+ * 13 honest end to end: the hero avoids `--` where it can, and where it cannot the `--` is
+ * readable. Both greys are registered in `DaylightReadoutPalette`, so rule 11 still holds.
  */
 private fun heroFigure(
     mpg: Double?,
@@ -583,7 +601,7 @@ private fun heroFigure(
         label = "Trip economy",
         value = "--",
         unit = "MPG",
-        accent = Slate,
+        accent = Ash,
         caption = "calculating...",
     )
     distanceKm != null -> HeroFigure(
@@ -607,7 +625,7 @@ private fun heroFigure(
         label = "Trip economy",
         value = "--",
         unit = "MPG",
-        accent = Slate,
+        accent = Ash,
         caption = "no fuel data captured",
     )
 }
