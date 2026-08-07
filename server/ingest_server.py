@@ -140,6 +140,12 @@ class SessionEnd(BaseModel):
     completion_status: str
 
 
+class SessionNotes(BaseModel):
+    # None clears the note, matching Room, where clearing a note to empty stores null rather
+    # than "" so every reader's "does this drive have a note" check keeps working.
+    notes: Optional[str] = None
+
+
 class Measurement(BaseModel):
     session_id: int
     sequence: int
@@ -207,6 +213,34 @@ def end_session(session_id: int, body: SessionEnd):
             [body.end_wall_time_utc_ms, body.completion_status, session_id],
         )
     return {"ok": True}
+
+
+@app.patch("/sessions/{session_id}/notes", dependencies=[Depends(_require_auth)])
+def update_session_notes(session_id: int, body: SessionNotes):
+    """The driver's own note, which can be written or rewritten long after the drive ended.
+
+    Deliberately its own endpoint rather than a second call to /sessions/{id}/start, which does
+    INSERT OR REPLACE over a fixed column list that does not include end_wall_time_utc_ms or
+    completion_status: re-posting a start for a finished session would silently wipe both back to
+    null and IN_PROGRESS. This touches one column and nothing else.
+
+    404 rather than a silent no-op when the session was never announced to this server (an
+    offline drive's /start never arrived, and the bulk backfill endpoints only write
+    measurements/locations/events, never a sessions row). The phone treats every response here as
+    best-effort and ignores it either way; the status code is for whoever is looking at the server
+    directly, so a note that had nowhere to land says so instead of appearing to have worked.
+    """
+    with _db_lock:
+        exists = _conn.execute(
+            "SELECT 1 FROM sessions WHERE session_id = ?", [session_id]
+        ).fetchone()
+        if exists is None:
+            raise HTTPException(status_code=404, detail=f"No session {session_id} on this server")
+        _conn.execute(
+            "UPDATE sessions SET notes = ? WHERE session_id = ?",
+            [body.notes, session_id],
+        )
+    return {"ok": True, "session_id": session_id}
 
 
 @app.post("/measurements", dependencies=[Depends(_require_auth)])

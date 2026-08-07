@@ -1,6 +1,7 @@
 package com.ericbarone.drivetrace.ui
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -14,24 +15,31 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.systemBarsPadding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.work.WorkManager
 import com.ericbarone.drivetrace.data.AppDatabase
 import com.ericbarone.drivetrace.data.SessionEntity
+import com.ericbarone.drivetrace.obd.VehicleProfile
 import com.ericbarone.drivetrace.service.BackfillRetryWorker
 import com.ericbarone.drivetrace.streaming.analysisSummaryFromJson
 import com.ericbarone.drivetrace.ui.components.Caption
+import com.ericbarone.drivetrace.ui.components.ChoiceChip
 import com.ericbarone.drivetrace.ui.components.ConsoleLine
 import com.ericbarone.drivetrace.ui.components.EmptyState
 import com.ericbarone.drivetrace.ui.components.HeaderBar
@@ -56,15 +64,22 @@ import java.util.Locale
 /**
  * Every session ever logged, read straight from local Room (the authoritative copy, per the
  * blueprint's reliability rules), not the server, so this works even if the server's never been
- * reachable for a given session. "Retry upload" is the "force failed uploads" ask made concrete:
- * queues BackfillRetryWorker for just that session, which runs even after this screen (and the
- * whole app) is closed again, see BackfillRetryWorker's own docs for why WorkManager, not a
- * plain coroutine, is what makes that guarantee possible.
+ * reachable for a given session.
+ *
+ * Two retry controls, never both at once, since at most one thing can be outstanding. "Retry
+ * upload" is the "force failed uploads" ask made concrete, and "Retry analysis" covers the case
+ * where the upload landed and only the server-side analysis did not, without re-sending a drive
+ * the server already holds. Both queue BackfillRetryWorker for just that session, which runs even
+ * after this screen (and the whole app) is closed again, see BackfillRetryWorker's own docs for
+ * why WorkManager, not a plain coroutine, is what makes that guarantee possible. Both also read
+ * their in-flight state back out of WorkManager rather than tracking it here.
  *
  * Laid out as a logbook: one card per drive, MPG right-aligned in a fixed column so the eye can
  * run straight down the numbers and compare drives, which is the only reason to open this screen
  * that isn't "why didn't that one upload". A divider-separated stack of text lines cannot be
- * scanned that way. See docs/DESIGN_SYSTEM.md.
+ * scanned that way. Each card names its vehicle, and the list filters down to one vehicle once
+ * more than one has logged a drive, because a column of MPG figures from two different cars is
+ * not a column that can be compared. See docs/DESIGN_SYSTEM.md.
  */
 @Composable
 fun HistoryScreen(onBack: () -> Unit) {
@@ -72,6 +87,9 @@ fun HistoryScreen(onBack: () -> Unit) {
     val scope = rememberCoroutineScope()
     var sessions by remember { mutableStateOf<List<SessionEntity>>(emptyList()) }
     var loading by remember { mutableStateOf(true) }
+    // The stored VehicleProfile name, or null for "All". Saveable so a rotation or a trip through
+    // the note editor's IME doesn't quietly widen the list back out under the user.
+    var vehicleFilter by rememberSaveable { mutableStateOf<String?>(null) }
 
     suspend fun reload() {
         sessions = AppDatabase.getInstance(context).sessionDao().getAllSessions()
@@ -80,7 +98,23 @@ fun HistoryScreen(onBack: () -> Unit) {
 
     LaunchedEffect(Unit) { reload() }
 
-    val pendingUploads = sessions.count { it.backfillStatus != "SUCCESS" }
+    // Only vehicles that actually logged something, in the enum's own order so the row doesn't
+    // reshuffle itself as drives come and go. A profile nobody has driven is not a filter, it is
+    // a dead control.
+    val loggedVehicles = remember(sessions) {
+        val present = sessions.mapTo(mutableSetOf()) { it.vehicleProfile }
+        VehicleProfile.entries.map { it.name }.filter { it in present } +
+            present.filter { name -> VehicleProfile.entries.none { it.name == name } }.sorted()
+    }
+    // Nothing to filter when every drive is the same car, and a control that can only ever be in
+    // one state is clutter on a screen whose job is scanning a column of figures.
+    val showFilter = loggedVehicles.size > 1
+    val visibleSessions = remember(sessions, vehicleFilter, showFilter) {
+        if (!showFilter || vehicleFilter == null) sessions
+        else sessions.filter { it.vehicleProfile == vehicleFilter }
+    }
+
+    val pendingUploads = visibleSessions.count { it.backfillStatus != "SUCCESS" }
 
     Column(
         modifier = Modifier
@@ -93,15 +127,43 @@ fun HistoryScreen(onBack: () -> Unit) {
     ) {
         HeaderBar(
             title = "Logbook",
+            // Counts what is on screen, not what is in the database. With a filter applied the
+            // subtitle describing the whole database would be answering a question nobody asked.
             subtitle = when {
                 loading -> null
-                sessions.isEmpty() -> null
-                pendingUploads > 0 -> "${sessions.size} drives, $pendingUploads not uploaded"
-                else -> "${sessions.size} drives, all uploaded"
+                visibleSessions.isEmpty() -> null
+                pendingUploads > 0 -> "${visibleSessions.size} drives, $pendingUploads not uploaded"
+                else -> "${visibleSessions.size} drives, all uploaded"
             },
             onBack = onBack,
             modifier = Modifier.padding(horizontal = Space.gutter),
         )
+
+        // Pinned above the scroll rather than riding in it: a filter you have to scroll back up
+        // to reach is a filter you stop using. Horizontally scrollable so a third vehicle widens
+        // the row instead of squeezing the names.
+        if (!loading && showFilter) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .horizontalScroll(rememberScrollState())
+                    .padding(horizontal = Space.gutter, vertical = Space.md),
+                horizontalArrangement = Arrangement.spacedBy(Space.sm),
+            ) {
+                ChoiceChip(
+                    text = "All",
+                    selected = vehicleFilter == null,
+                    onSelect = { vehicleFilter = null },
+                )
+                for (name in loggedVehicles) {
+                    ChoiceChip(
+                        text = vehicleLabel(name),
+                        selected = vehicleFilter == name,
+                        onSelect = { vehicleFilter = name },
+                    )
+                }
+            }
+        }
 
         when {
             loading -> EmptyState(title = "Loading", body = "Reading the local database...")
@@ -119,13 +181,19 @@ fun HistoryScreen(onBack: () -> Unit) {
                 ),
                 verticalArrangement = Arrangement.spacedBy(Space.md),
             ) {
-                items(sessions, key = { it.sessionId }) { session ->
+                items(visibleSessions, key = { it.sessionId }) { session ->
                     SessionCard(
                         session = session,
-                        onRetry = {
-                            BackfillRetryWorker.enqueueRetryNow(context, session.sessionId)
-                            scope.launch { reload() }
+                        // No reload() here. The old version reloaded the instant the button was
+                        // tapped, which read the row back before WorkManager had even started the
+                        // job, so nothing on screen changed and the button was indistinguishable
+                        // from a dead one. The card now watches the work itself and reloads when
+                        // it finishes, which is the moment the row on disk actually changed.
+                        onRetry = { BackfillRetryWorker.enqueueRetryNow(context, session.sessionId) },
+                        onRetryAnalysis = {
+                            BackfillRetryWorker.enqueueAnalysisRetryNow(context, session.sessionId)
                         },
+                        onRetryFinished = { scope.launch { reload() } },
                         onNoteSaved = { scope.launch { reload() } },
                     )
                 }
@@ -134,8 +202,56 @@ fun HistoryScreen(onBack: () -> Unit) {
     }
 }
 
+/**
+ * The stored `vehicleProfile` as the name of an actual car. Falls back to the raw stored string
+ * rather than to nothing if the enum no longer has that entry, since the row's own value is then
+ * the only record left of which vehicle the drive belongs to and losing it silently is worse than
+ * printing an enum name.
+ */
+private fun vehicleLabel(storedName: String): String =
+    VehicleProfile.entries.find { it.name == storedName }?.displayName ?: storedName
+
+/**
+ * True while the unique work queued under [uniqueWorkName] is enqueued or running, straight from
+ * WorkManager's own store rather than from a boolean this screen sets on tap. WorkManager is
+ * already the authority on whether that job is outstanding, it stays the authority after the app's
+ * process is killed and restarted, and a hand-rolled flag would quietly disagree with it the first
+ * time that happened.
+ *
+ * [onFinished] fires on the running-to-finished edge, which is the moment the session row on disk
+ * actually changed and therefore the only moment a reload is worth anything. Work that finished
+ * before this screen was ever opened stays finished and fires nothing: WorkManager keeps completed
+ * WorkInfos around, and the initial state is only ever compared against a transition.
+ */
 @Composable
-private fun SessionCard(session: SessionEntity, onRetry: () -> Unit, onNoteSaved: () -> Unit) {
+private fun workInFlight(uniqueWorkName: String, onFinished: () -> Unit): Boolean {
+    val context = LocalContext.current
+    val flow = remember(uniqueWorkName) {
+        WorkManager.getInstance(context).getWorkInfosForUniqueWorkFlow(uniqueWorkName)
+    }
+    val infos by flow.collectAsState(initial = emptyList())
+    val inFlight = infos.any { !it.state.isFinished }
+    val finishedCallback by rememberUpdatedState(onFinished)
+    var wasInFlight by remember(uniqueWorkName) { mutableStateOf(false) }
+    LaunchedEffect(inFlight) {
+        if (inFlight) {
+            wasInFlight = true
+        } else if (wasInFlight) {
+            wasInFlight = false
+            finishedCallback()
+        }
+    }
+    return inFlight
+}
+
+@Composable
+private fun SessionCard(
+    session: SessionEntity,
+    onRetry: () -> Unit,
+    onRetryAnalysis: () -> Unit,
+    onRetryFinished: () -> Unit,
+    onNoteSaved: () -> Unit,
+) {
     val type = LocalReadoutType.current
     var editingNote by remember(session.sessionId) { mutableStateOf(false) }
     val dateFmt = remember { SimpleDateFormat("MMM d, yyyy h:mm a", Locale.US) }
@@ -168,12 +284,22 @@ private fun SessionCard(session: SessionEntity, onRetry: () -> Unit, onNoteSaved
                 Spacer(Modifier.height(2.dp))
                 Text(
                     buildString {
-                        durationMin?.let { append("%.0f min".format(it)); append("  /  ") }
-                        append(session.completionStatus.lowercase())
+                        append(vehicleLabel(session.vehicleProfile))
+                        durationMin?.let { append("  /  "); append("%.0f min".format(it)) }
+                        // Only when it is not the ordinary case. "completed" was on every card,
+                        // which is rule 14 applied at line level: a field that reads the same
+                        // after every drive is wallpaper, and dropping it is what makes room for
+                        // the vehicle without growing the card. An interrupted drive is a real
+                        // result and still says so.
+                        if (!session.completionStatus.equals("COMPLETED", ignoreCase = true)) {
+                            append("  /  ")
+                            append(session.completionStatus.lowercase())
+                        }
                     },
                     style = type.unit,
                     color = Ash,
                     maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
                 )
             }
             // MPG in a fixed right-hand column: this is the value the list exists to compare.
@@ -264,11 +390,35 @@ private fun SessionCard(session: SessionEntity, onRetry: () -> Unit, onNoteSaved
             )
         }
 
+        // At most one retry control, because at most one thing can be owed. The two states are
+        // mutually exclusive by their own conditions: an upload that has not succeeded is the
+        // only thing worth asking for until it does, and only once it has does an analysis that
+        // never landed become the outstanding item. So the analysis control replaces the upload
+        // one in that slot rather than sitting beside it, and the card's height does not change
+        // between the two.
         if (session.backfillStatus != "SUCCESS") {
+            val retrying = workInFlight(
+                BackfillRetryWorker.retryWorkName(session.sessionId),
+                onFinished = onRetryFinished,
+            )
             Spacer(Modifier.height(Space.md))
             SecondaryAction(
-                text = "Retry upload",
+                text = if (retrying) "Uploading..." else "Retry upload",
                 onClick = onRetry,
+                busy = retrying,
+                contentColor = Mist,
+                minHeight = Space.compactTarget,
+            )
+        } else if (session.analysisStatus != "DONE") {
+            val analyzing = workInFlight(
+                BackfillRetryWorker.analysisRetryWorkName(session.sessionId),
+                onFinished = onRetryFinished,
+            )
+            Spacer(Modifier.height(Space.md))
+            SecondaryAction(
+                text = if (analyzing) "Analyzing..." else "Retry analysis",
+                onClick = onRetryAnalysis,
+                busy = analyzing,
                 contentColor = Mist,
                 minHeight = Space.compactTarget,
             )

@@ -19,6 +19,21 @@ data class BackfillOutcome(
     val analysisMessage: String?,
 )
 
+data class AnalysisOutcome(
+    /** "DONE" | "FAILED" */
+    val status: String,
+    val summary: AnalysisSummary?,
+    val message: String?,
+    /**
+     * True when the failure was this phone not reaching the analysis server, rather than the
+     * server reporting that the analysis itself failed. Only the first kind is worth queueing
+     * again; re-running an analysis the server has already rejected fails identically, and a
+     * worker that returned [androidx.work.ListenableWorker.Result.retry] for it would back off
+     * and try forever for no reason.
+     */
+    val worthRetrying: Boolean,
+)
+
 /**
  * Takes a session from "logged locally" to "confirmed uploaded and analyzed", persisting the
  * outcome onto SessionEntity at every step. Shared by the live Stop-button flow
@@ -58,10 +73,42 @@ suspend fun runBackfillAndAnalysis(
         return BackfillOutcome(false, backfillMessage, "PENDING", null, null)
     }
 
+    // Re-push the note while we are here. The note is edited on its own schedule, days after the
+    // drive if that is when the driver remembered something, and its own push is fire-and-forget
+    // with no durable record of whether it landed. Sending the current value alongside every
+    // successful backfill costs one small request and means an offline note edit gets a second
+    // chance for free on the next retry sweep. It is not a general fix for a lost note edit on a
+    // session that already uploaded cleanly; see DATA_SCHEMA.md for why that one is still open.
+    dao.getSession(sessionId)?.notes?.takeIf { it.isNotBlank() }?.let {
+        streamingClient.updateSessionNotes(sessionId, it)
+    }
+
+    val analysis = runAnalysisOnly(dao, streamingClient, sessionId)
+    return BackfillOutcome(true, backfillMessage, analysis.status, analysis.summary, analysis.message)
+}
+
+/**
+ * The second half of the above on its own: ask the server to analyze a session it already holds,
+ * then poll until it answers. No [StreamingClient.backfillSession] call at all.
+ *
+ * Split out because backfill succeeding and analysis failing is a real, observed combination, not
+ * a theoretical one: the ingest server was up and the analysis server was not, leaving a session
+ * at `backfillStatus = SUCCESS, analysisStatus = FAILED`. The only retry path that existed re-ran
+ * the whole thing from the top, re-uploading every measurement of a drive the server already had
+ * a complete copy of, to get back to the one call that had actually failed. This is that one call.
+ *
+ * Writes the same fields onto the same row as the full path, so a session analyzed this way is
+ * indistinguishable afterwards from one analyzed at Stop.
+ */
+suspend fun runAnalysisOnly(
+    dao: SessionDao,
+    streamingClient: StreamingClient,
+    sessionId: Long,
+): AnalysisOutcome {
     if (!streamingClient.requestAnalysis(sessionId)) {
         val msg = "Could not reach the server to request analysis."
         dao.getSession(sessionId)?.let { s -> dao.updateSession(s.copy(analysisStatus = "FAILED")) }
-        return BackfillOutcome(true, backfillMessage, "FAILED", null, msg)
+        return AnalysisOutcome("FAILED", null, msg, worthRetrying = true)
     }
 
     var pollsLeft = ANALYSIS_MAX_POLLS
@@ -72,17 +119,19 @@ suspend fun runBackfillAndAnalysis(
                 dao.getSession(sessionId)?.let { s ->
                     dao.updateSession(s.copy(analysisStatus = "DONE", analysisSummaryJson = poll.summary.toJson()))
                 }
-                return BackfillOutcome(true, backfillMessage, "DONE", poll.summary, null)
+                return AnalysisOutcome("DONE", poll.summary, null, worthRetrying = false)
             }
             is AnalysisPollResult.Failed -> {
                 dao.getSession(sessionId)?.let { s -> dao.updateSession(s.copy(analysisStatus = "FAILED")) }
-                return BackfillOutcome(true, backfillMessage, "FAILED", null, poll.error)
+                return AnalysisOutcome("FAILED", null, poll.error, worthRetrying = !poll.fromServer)
             }
             is AnalysisPollResult.Running -> Unit // keep polling
         }
         pollsLeft--
     }
+    // Worth retrying: the server may simply still be chewing on a long drive, and requesting the
+    // analysis again is idempotent from its side.
     val timeoutMsg = "Timed out waiting for analysis; check the PC directly."
     dao.getSession(sessionId)?.let { s -> dao.updateSession(s.copy(analysisStatus = "FAILED")) }
-    return BackfillOutcome(true, backfillMessage, "FAILED", null, timeoutMsg)
+    return AnalysisOutcome("FAILED", null, timeoutMsg, worthRetrying = true)
 }

@@ -225,11 +225,12 @@ is a design-system change and belongs in this document.
 | `StatusRow` | A named pipeline stage with a dot, a state word, and an optional detail line |
 | `StatusBand` | Full-width alert. Tinted fill + accent bar + glyph. |
 | `StatusChip` | Compact badge for list rows |
+| `ChoiceChip` | One option in a small set, laid out in a row. The logbook's vehicle filter |
 | `StatusDot` | Pulsing when live |
 | `ConsoleLine` | Monospaced, dim, `>`-prefixed machine output |
 | `NoteField` | The one text input: a short drive note. M3 `OutlinedTextField` restyled to the panel language, hard length cap. Used raw in the Stop dialog and wrapped by `DriveNoteEditor` (`ui/DriveNote.kt`) everywhere a note is edited after the fact. |
 | `Caption` | Methodology caveats and small print |
-| `PrimaryAction` / `SecondaryAction` / `ActionBar` | 56dp full-width primary in a pinned bar |
+| `PrimaryAction` / `SecondaryAction` / `ActionBar` | 56dp full-width primary in a pinned bar. `SecondaryAction` also carries a `busy` state for work that outlives the tap |
 | `EmptyState` | Says what to do next, not only what is missing |
 | `GlyphMark` | The five drawn glyphs (tick, bang, cross, dash, dots, chevron) |
 
@@ -251,6 +252,14 @@ on the screens above it.
 **Exactly one animation exists in the app:** `StatusDot`'s slow alpha pulse, roughly one cycle a
 second, when data is arriving. Motion is the strongest pre-attentive cue there is, so it only
 stays meaningful if it is the only thing moving.
+
+**`SecondaryAction(busy = true)` is that same dot, not a second animation.** An action whose work
+outlives the tap (the logbook's retry controls) disables itself and grows a pulsing `StatusDot`
+ahead of its label, toned `CAUTION` to match the status table's "pending upload" row: the work is
+under way and not yet confirmed. A Material `CircularProgressIndicator` would have been a second
+kind of motion saying the same thing the app already has a shape for, and rule 9 rules it out.
+The flag is the caller's, and where the work is a WorkManager job the caller reads it back from
+WorkManager rather than setting a boolean at tap time; see the logbook below.
 
 ## 7. Screen layouts
 
@@ -428,9 +437,61 @@ left accent bar carries upload state, so a scroll shows which drives still owe a
 reading a word. Upload and analysis states become chips; a failed backfill message becomes a
 `ConsoleLine` in fault red, carrying the fixed message from `ui/PipelineMessages.kt`, never
 `session.backfillMessage`, for the reason given under LoggingScreen above. The header subtitle
-summarises "N drives, M not uploaded". A non-blank session note appears as a two-line `Mist`
+summarises "N drives, M not uploaded".
+
+**The card names the vehicle,** on the line under the date, as `VehicleProfile.displayName` and
+never the stored enum name. `SessionEntity.vehicleProfile` has tagged every session since the
+multi-vehicle work, and the logbook was the one screen where that mattered and the one screen
+that never showed it: with two cars in rotation, a column of dates and MPG figures cannot be
+compared at all, because the reader cannot tell which drives belong to the same car. It costs no
+new line, because it took the slot **`completed` used to hold.** That word was on every card, and
+rule 14 applies at line level as well as at section level: a field that reads the same after every
+drive is wallpaper. `interrupted` is a real result and still prints. The line is
+`vehicle / duration`, with the status appended only when it is not the ordinary one, and it
+ellipsises rather than wrapping so the card's height is fixed regardless of how long a vehicle's
+name is.
+
+**And the list filters by it.** A row of `ChoiceChip`s (All, then one per vehicle) sits between
+the header and the scroll. Naming the vehicle on each card answers "whose drive is this"; the
+filter answers the question that immediately follows it, which is "show me only that car", and
+without it the MPG column still mixes two vehicles' figures into one column that cannot be
+compared down. Three rules it follows:
+
+- **Only vehicles that have actually logged a drive get a chip,** in the enum's own order so the
+  row does not reshuffle as drives come and go. A profile nobody has driven is not a filter, it is
+  a dead control.
+- **The whole row disappears when only one vehicle is represented,** which is rule 14 again: a
+  control that can only ever be in one state is clutter on a screen whose job is scanning a column
+  of figures. A single-vehicle user never sees it.
+- **The header subtitle counts what is on screen,** not what is in the database. With a filter
+  applied, "12 drives, 2 not uploaded" would be answering a question nobody asked.
+
+It is pinned above the scroll rather than riding in it, on the same reasoning as the pinned
+`ActionBar`: a filter you have to scroll back up to reach is a filter you stop using. The row
+scrolls horizontally, so a third vehicle widens it instead of squeezing the names. A non-blank session note appears as a two-line `Mist`
 caption between the figures and the chips: the driver's own annotation ranks below what the app
 measured but above what the app's upload pipeline did.
+
+**There are two retry controls, and never more than one at a time.** "Retry upload" while the
+upload has not succeeded; **"Retry analysis"** once it has but the analysis has not, which is a
+real observed state rather than a hypothetical one (the ingest server was up, the analysis server
+was not). They occupy the same slot rather than sitting side by side, because at most one thing
+can be outstanding: until the drive is on the server there is nothing to analyze, and once the
+analysis is done neither control has anything to offer. The card's height therefore does not
+change between the two states. The analysis retry skips the upload entirely rather than re-sending
+a drive the server already holds in full; see `BackfillRetryWorker`'s `KEY_ANALYSIS_ONLY`.
+
+**The retry control reports its own progress.** It used to enqueue the work and immediately re-read
+the database, which happens before WorkManager has started the job, so nothing on the card changed
+and the button was indistinguishable from a dead one until you went and checked the server. It now
+shows a `SecondaryAction(busy = true)` while its work is outstanding and reverts on its own when
+the work finishes, at which point the card reloads: the running-to-finished edge is the moment the
+row on disk actually changed and therefore the only moment a reload is worth anything. **The flag
+comes from WorkManager, not from the card.** `WorkManager.getWorkInfosForUniqueWorkFlow` on the
+same unique name the enqueue used (`BackfillRetryWorker.retryWorkName`) is already the durable
+record of whether that job is outstanding; a boolean set at tap time would disagree with it the
+first time the app's process died mid-retry, coming back looking idle while the work was still
+queued.
 
 The note row is also where a drive gets annotated after the fact. Every card carries an **Add
 note** / **Edit note** control on that row, which swaps it for a `DriveNoteEditor`. Collapsed
@@ -597,10 +658,15 @@ what got deliberately left out of it, is the useful part.
   screen to check whether it took. The Save control appears only when the draft differs from
   what is stored, so the resting state of a correct note is a plain field with nothing shouting
   next to it. Clearing a note to empty stores `null` rather than `""`, so every reader's existing
-  `isNotBlank` check keeps working. **Local and CSV only:** `CsvExporter`'s `metadata.json` picks
-  the note up for free, but the server's `/sessions/{id}/end` endpoint takes no `notes` field, so
-  the DuckDB copy's `notes` column stays null until someone changes the server, and a note added
-  days later never had a chance of reaching it, since that endpoint fired at Stop.
+  `isNotBlank` check keeps working. **It reaches the server now too,** which it did not when this
+  entry was first written: neither `/sessions/{id}/start` nor `/end` could carry a note edited
+  days after the drive, so the DuckDB copy's `notes` column stayed null forever. A narrow
+  `PATCH /sessions/{id}/notes` fixes that; see DATA_SCHEMA.md for the endpoint and for why
+  re-posting `/start` would have been the wrong way to do it. The order is the important part and
+  it is the general rule for this app rather than anything specific to notes: **Room commits
+  first and synchronously, then the server hears about it, fire-and-forget.** The confirmation
+  next to the field is a statement about Room, which is what it is worth; a push that never lands
+  costs nothing, interrupts nobody, and leaves the note exactly where it already was.
 - ~~**A daylight-readable high-contrast mode.**~~ **Built,** and see section 3's daylight table
   for the tokens and section 6 for the mechanism. Still not a light theme: `Ink` stays the ground
   in both modes and only `HeroReadout` reads the boosted palette. Toggle lives on SetupScreen

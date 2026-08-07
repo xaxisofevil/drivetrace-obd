@@ -26,6 +26,7 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -43,6 +44,7 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.ericbarone.drivetrace.ui.theme.AccentMixture
@@ -484,6 +486,52 @@ fun StatusChip(text: String, tone: Tone, modifier: Modifier = Modifier) {
 }
 
 /**
+ * One option in a small set of them, laid out in a row. The logbook's vehicle filter is what this
+ * exists for.
+ *
+ * Deliberately not a Material `FilterChip` and not a dropdown. An M3 filter chip animates in a
+ * leading tick and rides on the M3 colour roles this theme overrides everywhere else, and a
+ * dropdown hides the options behind a tap and a surface that has no equivalent anywhere in this
+ * app. It is the same argument [SelectableRow]-style controls already make on SetupScreen,
+ * compressed to a chip: the whole chip is the target, selection is carried by fill, border and
+ * text colour at once rather than by hue alone, and `Role.RadioButton` keeps the single-choice
+ * semantics TalkBack needs.
+ *
+ * Sized to `compactTarget` like any other secondary control rather than to the text, so a row of
+ * these is a segmented control rather than a row of labels that happen to be tappable.
+ */
+@Composable
+fun ChoiceChip(
+    text: String,
+    selected: Boolean,
+    onSelect: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Box(
+        modifier = modifier
+            .heightIn(min = Space.compactTarget)
+            .clip(DriveTraceShapes.chip)
+            .background(if (selected) PanelActive else PanelRaised)
+            .border(
+                Space.hairline,
+                if (selected) AccentMixture.copy(alpha = 0.45f) else Hairline,
+                DriveTraceShapes.chip,
+            )
+            .selectable(selected = selected, role = Role.RadioButton, onClick = onSelect)
+            .padding(horizontal = Space.md),
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(
+            text.uppercase(),
+            style = LocalReadoutType.current.label,
+            color = if (selected) Chalk else Ash,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+    }
+}
+
+/**
  * Machine output: the raw status string from the service, adapter addresses, session IDs.
  * Monospaced and dim, so it reads as a log the app is keeping rather than as a message the app
  * is giving you, and so it can sit at the bottom of a screen without pulling the eye.
@@ -581,20 +629,34 @@ fun PrimaryAction(
     }
 }
 
-/** The alternative action. Outlined, never coloured, so it can never be mistaken for primary. */
+/**
+ * The alternative action. Outlined, never coloured, so it can never be mistaken for primary.
+ *
+ * [busy] is the "this is happening right now" state, for an action whose work outlives the tap:
+ * the button disables itself and grows a pulsing [StatusDot] ahead of its label. The dot is
+ * deliberately the same pulse as the live heartbeat rather than a Material spinner, because rule 9
+ * says only StatusDot animates and because "in progress" already has a shape in this app. Tone is
+ * CAUTION, matching the status table's "pending upload" row: the work is under way and not yet
+ * confirmed, which is exactly what a caution reads as here.
+ *
+ * The caller owns the flag. The one on the logbook comes from WorkManager's own record of the
+ * queued work rather than from a boolean set at tap time, so it survives the app's process dying
+ * mid-retry; see HistoryScreen.
+ */
 @Composable
 fun SecondaryAction(
     text: String,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
     enabled: Boolean = true,
+    busy: Boolean = false,
     contentColor: Color = Mist,
     borderColor: Color = HairlineBright,
     minHeight: androidx.compose.ui.unit.Dp = Space.touchTarget,
 ) {
     OutlinedButton(
         onClick = onClick,
-        enabled = enabled,
+        enabled = enabled && !busy,
         shape = DriveTraceShapes.control,
         border = androidx.compose.foundation.BorderStroke(Space.hairline, borderColor),
         colors = ButtonDefaults.outlinedButtonColors(
@@ -603,6 +665,10 @@ fun SecondaryAction(
         ),
         modifier = modifier.defaultMinSize(minHeight = minHeight),
     ) {
+        if (busy) {
+            StatusDot(tone = Tone.CAUTION, pulsing = true, sizeDp = 7)
+            Spacer(Modifier.width(Space.sm))
+        }
         Text(text.uppercase(), style = LocalReadoutType.current.label)
     }
 }
