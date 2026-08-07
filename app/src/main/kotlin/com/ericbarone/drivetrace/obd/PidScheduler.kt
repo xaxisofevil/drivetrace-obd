@@ -69,6 +69,17 @@ private val PLAUSIBLE_RANGES: Map<String, ClosedFloatingPointRange<Double>> = ma
     "Catalyst Temperature Bank 1 Sensor 1" to -40.0..2000.0,
     "Throttle Position" to 0.0..100.0,
     "Timing Advance" to -64.0..63.5, // full range the PID 0E formula can express (A/2 - 64)
+    // Community-sourced Mode 22 parameters, see MazdaEnhancedCommands.kt for the real
+    // uncertainty behind these. Ranges below are derived from each formula's own achievable
+    // output, not copied from the source CSV's stated Min/Max columns: Knock Control System's
+    // CSV entry claims a -100..100 range, but its own formula (divisor 16384) can only ever
+    // produce roughly -2.0..+2.0, confirmed directly by computing the formula's extremes, a
+    // real inconsistency in that file, not something to propagate into this project.
+    "Intake Manifold Pressure Desired" to 0.0..400.0,
+    "Turbocharger A Compressor Inlet Pressure" to 0.0..2040.0, // formula's own max (255*8)
+    "Turbocharger B Compressor Inlet Pressure" to 0.0..2040.0,
+    "Knock Retard" to -70.0..70.0, // formula's own extremes are -64..+64; generous margin beyond that
+    "Knock Control System" to -3.0..3.0, // formula's own extremes are -2.0..+2.0, see note above
     "Intake Manifold Pressure" to 0.0..400.0,
     "Barometric Pressure" to 50.0..150.0,
     "Distance traveled since codes cleared" to 0.0..100_000.0,

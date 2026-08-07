@@ -72,7 +72,11 @@ PID_KEYWORDS: dict[str, list[str]] = {
     "coolant_c": [r"coolant"],
     "iat_c": [r"intake air temp", r"air intake temp"],
     "throttle_pct": [r"throttle position"],
-    "map_kpa": [r"intake manifold", r"manifold pressure"],
+    # Negative lookahead excludes "Intake Manifold Pressure Desired" (the new enhanced PID,
+    # see map_desired_kpa below): both this pattern and "manifold pressure" alone would
+    # otherwise match that longer name too as a substring, confirmed directly before fixing,
+    # silently mixing target-boost data into the actual-MAP column.
+    "map_kpa": [r"intake manifold pressure(?! desired)"],
     "fuel_rail_kpa": [r"fuel rail pressure"],
     "fuel_rate_lph": [r"fuel consumption rate", r"fuel rate"],
     "baro_kpa": [r"barometric"],
@@ -84,6 +88,12 @@ PID_KEYWORDS: dict[str, list[str]] = {
     "fuel_level_pct": [r"fuel level"],
     "catalyst_temp_c": [r"catalyst temp"],
     "oil_temp_c": [r"oil temp"],
+    # Community-sourced Mode 22 parameters, Mazda-only, see MazdaEnhancedCommands.kt.
+    "map_desired_kpa": [r"intake manifold pressure desired"],
+    "turbo_a_inlet_kpa": [r"turbocharger a compressor inlet pressure"],
+    "turbo_b_inlet_kpa": [r"turbocharger b compressor inlet pressure"],
+    "knock_retard_deg": [r"knock retard"],
+    "knock_control_pct": [r"knock control system"],
 }
 
 STOICH_AFR_GASOLINE = 14.7  # air:fuel mass ratio at lambda = 1
@@ -269,6 +279,15 @@ def add_derived_columns(snap: pd.DataFrame) -> pd.DataFrame:
     # weather timescale, not a driving one, unlike everything else derived in this function.
     if "map_kpa" in snap and "baro_kpa" in snap:
         snap["boost_kpa"] = snap["map_kpa"] - snap["baro_kpa"]
+
+    # Commanded/target boost, Mazda-only community-sourced enhanced PID (see
+    # MazdaEnhancedCommands.kt): the one thing standard OBD-II has no PID for at all. Same
+    # actual-minus-atmospheric logic as boost_kpa above, just against the ECU's target instead
+    # of its measured value. A persistent gap between boost_kpa and boost_desired_kpa (actual
+    # running well below target) is itself a real turbo-health signal: wastegate stuck open,
+    # a boost leak, or a failing/lazy turbo all show up this way.
+    if "map_desired_kpa" in snap and "baro_kpa" in snap:
+        snap["boost_desired_kpa"] = snap["map_desired_kpa"] - snap["baro_kpa"]
 
     # Intake air temp above ambient: a bigger-than-expected gap during/after boosted driving
     # points at a heat-soaked or failing intercooler, or oil in the intake tract from a failing

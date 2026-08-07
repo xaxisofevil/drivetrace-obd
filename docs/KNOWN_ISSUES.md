@@ -670,6 +670,64 @@ PIDs needed for this part. The diagnostic signatures worth knowing:
 None of this has been checked against a real boosted drive yet, only
 verified as computing correctly on synthetic values.
 
+## Five manufacturer-specific enhanced PIDs added (Mazda only, substantially untested)
+
+The user found real evidence that Mazda exposes enhanced (Mode 22)
+parameters for exactly the signals generic OBD-II can't provide: Boost
+Pressure Desired (target boost, something no standard PID covers at
+all), Turbocharger A/B Compressor Inlet Pressure, and Knock Retard/Knock
+Control System (a more direct knock signal than Timing Advance alone,
+directly relevant to the octane investigation). Source: a community-
+compiled CSV of extended Mazda Skyactiv PIDs (Torque custom-PID format)
+shared on the Mazdas247 forum, not official Mazda documentation.
+
+**Real technical differences from every other command in this project,
+carried into `MazdaEnhancedCommands.kt`'s own documentation, not hidden:**
+- The source CSV's header column was corrupted by Excel's own
+  auto-formatting before reaching this project (`"7.00E+00"` etc.),
+  almost certainly Excel misreading the literal text `"7E0"` (a
+  completely standard CAN request ID) as scientific notation.
+  Reconstructed as `7E0`, inferred from the corruption pattern, not
+  confirmed against an original.
+- This project has **no mechanism to override the CAN header per
+  command at all** (confirmed against kotlin-obd-api's `ObdCommand` base
+  class). Some rows in the source file explicitly said `"Auto"` while
+  others specified a real header, a deliberate distinction its author
+  made, real evidence these specific requests may need an explicit
+  header this project never sends.
+- These responses are **longer than anything successfully parsed
+  before** (5+ data bytes plus a 3-byte echo prefix, vs. every other
+  command's 1-2 data bytes), depending on the same kind of multi-frame
+  CAN reassembly that VIN needs and has never once worked on this
+  adapter, for a reason never fully resolved.
+- Byte-offset math differs from every other command: a 2-byte Data
+  Identifier echoes back 3 bytes (mode + 2-byte DID) before real data,
+  not the 2-byte echo (mode + 1-byte PID) every other command in this
+  project assumes. Verified this directly with a worked example before
+  writing the formulas, and separately verified the "signed(A)" knock
+  formulas byte-by-byte (byte A alone reinterpreted as signed 8-bit,
+  byte B stays unsigned, not "reinterpret the combined value as signed",
+  a different, wrong operation that was easy to reach for instead).
+- **A real inconsistency found in the source file itself**: Knock
+  Control System's row claims a -100..100 range, but its own formula
+  (divisor 16384) can only ever produce roughly ±2.0, confirmed by
+  computing the formula's actual extremes. Used the derived range for
+  this project's plausibility clamp, not the CSV's stated one.
+- Compressor inlet **pressure**, not temperature, despite resembling
+  what was originally asked about, the source file has no compressor
+  inlet temperature entry at all.
+
+`boost_desired_kpa` added to `analyze_drive.py` alongside the existing
+`boost_kpa` (same MAP-minus-Barometric logic, against the ECU's target
+instead of its measurement): a persistent gap between the two, actual
+running well below target, is itself a real turbo-health signal
+(wastegate stuck open, a boost leak, or a lazy/failing turbo).
+
+**Completely untested against a real vehicle.** If these come back
+`NO DATA` on a real drive, check the raw response text (captured for
+every attempt) before assuming the PID itself is wrong, the header or
+multi-frame reception is the more likely culprit given everything above.
+
 ## Miscellaneous
 
 - Fuel Rail Pressure and Fuel Consumption Rate frequently return

@@ -62,6 +62,11 @@ matches this table without checking directly against that vehicle's ECU.
 | 2F | `Fuel Level` | % | C | |
 | 3C | `Catalyst Temperature Bank 1 Sensor 1` | °C | C | Not in kotlin-obd-api; custom `CatalystTemperatureBank1Sensor1Command`, checks for exhaust restriction from a failing converter |
 | 5C | `Engine Oil Temperature` | °C | C | Not in kotlin-obd-api; custom `OilTemperatureCommand`, complements coolant temp for the warm-up hypothesis |
+| 22 F470 | `Intake Manifold Pressure Desired` | kPa | B | Mazda-only, Mode 22, community-sourced, untested; see `MazdaEnhancedCommands.kt` and KNOWN_ISSUES.md |
+| 22 F46F | `Turbocharger A Compressor Inlet Pressure` | kPa | B | Mazda-only, Mode 22, community-sourced, untested |
+| 22 F46F | `Turbocharger B Compressor Inlet Pressure` | kPa | B | Same request as Turbo A, different data byte offset |
+| 22 03EC | `Knock Retard` | ° | B | Mazda-only, Mode 22, community-sourced, untested; more direct than Timing Advance for the octane/knock investigation |
+| 22 03E8 | `Knock Control System` | % | B | Mazda-only, Mode 22, community-sourced, untested |
 
 One-time reads at session start: fuel type, MIL status, current/pending/
 permanent DTCs (read-only, this app and pc_logger never clear codes), and

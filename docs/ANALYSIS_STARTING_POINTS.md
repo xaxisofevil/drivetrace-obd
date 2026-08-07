@@ -54,7 +54,10 @@ Everything in `analyze_drive.py`, run either manually or automatically via
   underperforms for the same RPM/throttle points at a leak between the
   turbo and the cylinders rather than a compressor problem), intake air
   temp above ambient (a widening gap under boost points at a heat-soaked
-  or failing intercooler), MAF-estimated fuel rate (gated on equivalence
+  or failing intercooler), desired/target boost on the Mazda specifically
+  (`boost_desired_kpa`, from a community-sourced enhanced PID, see
+  KNOWN_ISSUES.md, a persistent gap vs. actual boost is itself a
+  turbo-health signal), MAF-estimated fuel rate (gated on equivalence
   ratio near 1.0), instantaneous MPG (suppressed below ~8 km/h)
 - `compute_idle_fraction`, `compute_warmup_duration_s`,
   `compute_trip_distance` (GPS vs OBD, compared), `compute_overall_mpg`

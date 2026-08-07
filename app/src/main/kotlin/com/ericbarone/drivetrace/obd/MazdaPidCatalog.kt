@@ -58,6 +58,13 @@ object MazdaPidCatalog : PidCatalog {
             { SafeFuelConsumptionRateCommand() }, // ditto FuelConsumptionRateCommand
             { TimingAdvanceCommand() }, // not in the library; added for octane/knock-retard checks
             { SafeAbsoluteLoadCommand() }, // library's AbsoluteLoadCommand has the unbounded-byte bug too
+            // Manufacturer-specific (Mode 22), community-sourced, untested: see
+            // MazdaEnhancedCommands.kt for the real, substantial uncertainty behind all five.
+            { KnockRetardCommand() },
+            { KnockControlSystemCommand() },
+            { IntakeManifoldPressureDesiredCommand() },
+            { TurbochargerACompressorInletPressureCommand() },
+            { TurbochargerBCompressorInletPressureCommand() },
         )
 
     override fun tierC(): List<() -> ObdCommand> =
