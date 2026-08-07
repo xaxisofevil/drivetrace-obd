@@ -182,6 +182,21 @@ private fun SessionCard(session: SessionEntity, onRetry: () -> Unit) {
             }
         }
 
+        // The note is the whole reason SessionEntity.notes exists: "same route, different result"
+        // is only answerable if something recorded what was different. Kept to two lines and set
+        // in Mist so it reads as the driver's own annotation, below the machine-written figures
+        // above it but above the pipeline chips, which are about the app rather than the drive.
+        session.notes?.takeIf { it.isNotBlank() }?.let { note ->
+            Spacer(Modifier.height(Space.sm))
+            Text(
+                note,
+                style = type.unit,
+                color = Mist,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+
         Spacer(Modifier.height(Space.md))
 
         Row(horizontalArrangement = Arrangement.spacedBy(Space.sm)) {

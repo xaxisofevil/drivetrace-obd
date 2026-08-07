@@ -53,6 +53,7 @@ class DriveLoggingService : Service() {
         const val ACTION_STOP = "com.ericbarone.drivetrace.action.STOP"
         const val EXTRA_DEVICE_ADDRESS = "device_address"
         const val EXTRA_VEHICLE_PROFILE = "vehicle_profile"
+        const val EXTRA_NOTES = "notes"
 
         fun startIntent(context: Context, deviceAddress: String, vehicleProfile: VehicleProfile): Intent =
             Intent(context, DriveLoggingService::class.java).apply {
@@ -61,8 +62,14 @@ class DriveLoggingService : Service() {
                 putExtra(EXTRA_VEHICLE_PROFILE, vehicleProfile.name)
             }
 
-        fun stopIntent(context: Context): Intent =
-            Intent(context, DriveLoggingService::class.java).apply { action = ACTION_STOP }
+        /** [notes] is the optional free-text note typed into the Stop dialog. Null from the
+         * notification's own Stop action, which has no way to collect one; a null note leaves
+         * whatever is already on the session row alone rather than blanking it. */
+        fun stopIntent(context: Context, notes: String? = null): Intent =
+            Intent(context, DriveLoggingService::class.java).apply {
+                action = ACTION_STOP
+                if (!notes.isNullOrBlank()) putExtra(EXTRA_NOTES, notes)
+            }
     }
 
     private val serviceJob = SupervisorJob()
@@ -94,7 +101,7 @@ class DriveLoggingService : Service() {
                     sessionJob = serviceScope.launch { runSession(deviceAddress, vehicleProfile) }
                 }
             }
-            ACTION_STOP -> stopSession()
+            ACTION_STOP -> stopSession(intent.getStringExtra(EXTRA_NOTES))
         }
         return START_NOT_STICKY
     }
@@ -286,7 +293,7 @@ class DriveLoggingService : Service() {
 
     private fun currentCoroutineIsActive(): Boolean = sessionJob?.isActive == true
 
-    private fun stopSession() {
+    private fun stopSession(notes: String? = null) {
         val sessionId = currentSessionId
         serviceScope.launch {
             sessionJob?.cancel()
@@ -295,7 +302,16 @@ class DriveLoggingService : Service() {
                 val dao = AppDatabase.getInstance(applicationContext).sessionDao()
                 val endWallTimeUtc = System.currentTimeMillis()
                 dao.getSession(sessionId)?.let { s ->
-                    dao.updateSession(s.copy(endWallTimeUtc = endWallTimeUtc, completionStatus = "COMPLETED"))
+                    dao.updateSession(
+                        s.copy(
+                            endWallTimeUtc = endWallTimeUtc,
+                            completionStatus = "COMPLETED",
+                            // Written here, before backfill runs, so the note is already on the
+                            // row when CsvExporter's metadata.json is written. A blank/absent
+                            // note keeps whatever was there rather than clearing it.
+                            notes = notes?.takeIf { it.isNotBlank() } ?: s.notes,
+                        ),
+                    )
                 }
                 streamingClient.endSession(sessionId, endWallTimeUtc, "COMPLETED")
 

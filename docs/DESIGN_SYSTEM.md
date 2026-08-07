@@ -205,6 +205,7 @@ is a design-system change and belongs in this document.
 | `StatusChip` | Compact badge for list rows |
 | `StatusDot` | Pulsing when live |
 | `ConsoleLine` | Monospaced, dim, `>`-prefixed machine output |
+| `NoteField` | The one text input: a short drive note, typed at Stop. M3 `OutlinedTextField` restyled to the panel language, hard length cap. |
 | `Caption` | Methodology caveats and small print |
 | `PrimaryAction` / `SecondaryAction` / `ActionBar` | 56dp full-width primary in a pinned bar |
 | `EmptyState` | Says what to do next, not only what is missing |
@@ -248,7 +249,9 @@ rather than one column of rows that changes length.
   from being the only band.
 - Reconnect count appears as a caution panel only when non-zero.
 - The raw service status string drops to a `ConsoleLine` at the bottom.
-- Stop is a full-width 56dp action in a pinned bar, tinted `StatusFault`.
+- Stop is a full-width 56dp action in a pinned bar, tinted `StatusFault`. Its confirm dialog also
+  carries the drive's optional `NoteField`, because Stop is the last moment the drive is still in
+  the driver's head.
 
 **COMPLETE** is read stationary, so density is affordable, but the ranking still holds:
 
@@ -279,7 +282,10 @@ numbers and compares drives, which is the only reason to open this screen that i
 that one upload". A divider-separated stack of text lines cannot be scanned that way. The card's
 left accent bar carries upload state, so a scroll shows which drives still owe an upload without
 reading a word. Upload and analysis states become chips; a failed backfill message becomes a
-`ConsoleLine` in fault red. The header subtitle summarises "N drives, M not uploaded".
+`ConsoleLine` in fault red. The header subtitle summarises "N drives, M not uploaded". A
+non-blank session note appears as a two-line `Mist` caption between the figures and the chips:
+the driver's own annotation ranks below what the app measured but above what the app's upload
+pipeline did.
 
 ## 8. Rules for whoever touches this next
 
@@ -382,9 +388,12 @@ things to charge for since nothing functional sits behind the paywall.
   Tone is driven by *distinct* PIDs, not raw failure count: one PID failing two hundred times is
   an unsupported PID cycling through cooldown (expected, see KNOWN_ISSUES.md), several different
   PIDs failing is the adapter or the link, and the panel's caption says so.
-- **Session notes.** `SessionEntity.notes` exists and nothing writes to it. "Cold start, highway,
-  93 octane" typed at Stop time is exactly the metadata that makes drive-to-drive comparison
-  meaningful.
+- ~~**Session notes.**~~ **Built.** A single-line `NoteField` in the Stop dialog, written onto
+  `SessionEntity.notes` (the column already existed, so no schema bump) before backfill runs, and
+  shown back on the logbook card when non-blank. Stop time is the only moment the drive is still
+  in the driver's head. **Local and CSV only:** `CsvExporter`'s `metadata.json` picks the note up
+  for free, but the server's `/sessions/{id}/end` endpoint takes no `notes` field, so the DuckDB
+  copy's `notes` column stays null until someone changes the server.
 - **A daylight-readable high-contrast mode.** Distinct from a light theme: same dark ground, but
   boosted luminance on hero readouts for direct sun. This is what the dark-first decision should
   be paired with, rather than a conventional light mode.

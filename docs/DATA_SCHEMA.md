@@ -137,6 +137,18 @@ KNOWN_ISSUES.md for the real incident this fixed.
 (`IN_PROGRESS`/`COMPLETED`/`INTERRUPTED`), `measurementCount`,
 `locationCount`.
 
+`notes` is the driver's own free-text note ("cold start, highway, 93
+octane"), typed into the Stop dialog and written onto the session row by
+`DriveLoggingService.stopSession` before backfill runs, capped at 120
+characters. The column has existed since the first schema, so wiring it up
+needed no version bump. **It reaches Room and the CSV bundle's
+`metadata.json` only.** `POST /sessions/{id}/start` accepts a `notes`
+field but a note typed at Stop obviously doesn't exist yet at start, and
+`POST /sessions/{id}/end` has no such field, so the DuckDB `sessions.notes`
+column stays null until the server gains one. Stopping from the
+notification's own Stop action sends no note at all (there's nowhere to
+type one), which leaves any existing value alone rather than blanking it.
+
 Room-only (not part of the server's `sessions` table, these describe the
 *local device's* view of upload progress, not the drive itself):
 `backfillStatus` (`PENDING`/`SUCCESS`/`FAILED`), `backfillMessage`,

@@ -50,6 +50,7 @@ import com.ericbarone.drivetrace.ui.components.HeaderBar
 import com.ericbarone.drivetrace.ui.components.HeroReadout
 import com.ericbarone.drivetrace.ui.components.InstrumentPanel
 import com.ericbarone.drivetrace.ui.components.MetricTile
+import com.ericbarone.drivetrace.ui.components.NoteField
 import com.ericbarone.drivetrace.ui.components.PrimaryAction
 import com.ericbarone.drivetrace.ui.components.SecondaryAction
 import com.ericbarone.drivetrace.ui.components.SectionLabel
@@ -82,10 +83,11 @@ import kotlinx.coroutines.launch
  *    figures, then the pipeline's own state and the methodology caveats underneath.
  */
 @Composable
-fun LoggingScreen(status: LoggingUiState, onStop: () -> Unit, onNewSession: () -> Unit) {
+fun LoggingScreen(status: LoggingUiState, onStop: (String) -> Unit, onNewSession: () -> Unit) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     var showStopConfirm by remember { mutableStateOf(false) }
+    var stopNote by remember { mutableStateOf("") }
     var nowMs by remember { mutableLongStateOf(System.currentTimeMillis()) }
     var exporting by remember { mutableStateOf(false) }
     var tripSummary by remember { mutableStateOf<TripSummary?>(null) }
@@ -196,9 +198,23 @@ fun LoggingScreen(status: LoggingUiState, onStop: () -> Unit, onNewSession: () -
             titleContentColor = Chalk,
             textContentColor = Mist,
             title = { Text("Stop logging?", style = MaterialTheme.typography.headlineSmall) },
-            text = { Text("This ends the current drive session.") },
+            text = {
+                // The note lives here rather than on its own screen because Stop is the only
+                // moment the drive is still in the driver's head. "Cold start, highway, 93
+                // octane" is exactly the context that makes two drives comparable later, and
+                // nobody goes back to add it afterwards.
+                Column(verticalArrangement = Arrangement.spacedBy(Space.md)) {
+                    Text("This ends the current drive session.")
+                    SectionLabel("Note (optional)")
+                    NoteField(
+                        value = stopNote,
+                        onValueChange = { stopNote = it },
+                        placeholder = "Cold start, highway, 93 octane",
+                    )
+                }
+            },
             confirmButton = {
-                TextButton(onClick = { showStopConfirm = false; onStop() }) {
+                TextButton(onClick = { showStopConfirm = false; onStop(stopNote.trim()) }) {
                     Text("STOP", style = LocalReadoutType.current.label, color = StatusFault)
                 }
             },

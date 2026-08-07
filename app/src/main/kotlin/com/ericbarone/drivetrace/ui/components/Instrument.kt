@@ -31,6 +31,8 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -43,6 +45,7 @@ import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import com.ericbarone.drivetrace.ui.theme.AccentMixture
 import com.ericbarone.drivetrace.ui.theme.AccentMotion
 import com.ericbarone.drivetrace.ui.theme.Ash
 import com.ericbarone.drivetrace.ui.theme.Chalk
@@ -489,6 +492,48 @@ fun ConsoleLine(text: String, modifier: Modifier = Modifier, color: Color = Slat
         Text(">", style = LocalReadoutType.current.mono, color = Hairline)
         Text(text, style = LocalReadoutType.current.mono, color = color)
     }
+}
+
+/**
+ * The one text input in the app: a short free-text note about a drive, typed at Stop time.
+ *
+ * Material's own `OutlinedTextField` underneath rather than a hand-rolled `BasicTextField`,
+ * because a text field is the one place where the platform behaviour (IME, selection handles,
+ * autofill, TalkBack's editable semantics) is worth far more than pixel control over the frame.
+ * Only the frame is restyled: control radius rather than M3's default, hairline border, raised
+ * panel fill, and the same `unit` type as every other body value, so it reads as a slot on an
+ * instrument panel rather than as a chat box.
+ *
+ * [maxLength] is a hard cap, not a hint. This exists to hold "cold start, highway, 93 octane",
+ * not a paragraph; a long note would be unreadable on a logbook card anyway.
+ */
+@Composable
+fun NoteField(
+    value: String,
+    onValueChange: (String) -> Unit,
+    modifier: Modifier = Modifier,
+    placeholder: String? = null,
+    maxLength: Int = 120,
+) {
+    val type = LocalReadoutType.current
+    OutlinedTextField(
+        value = value,
+        onValueChange = { if (it.length <= maxLength) onValueChange(it) },
+        modifier = modifier.fillMaxWidth(),
+        singleLine = true,
+        shape = DriveTraceShapes.control,
+        textStyle = type.unit,
+        placeholder = placeholder?.let { { Text(it, style = type.unit, color = Slate, maxLines = 1) } },
+        colors = OutlinedTextFieldDefaults.colors(
+            focusedTextColor = Chalk,
+            unfocusedTextColor = Chalk,
+            focusedContainerColor = PanelRaised,
+            unfocusedContainerColor = PanelRaised,
+            cursorColor = AccentMixture,
+            focusedBorderColor = AccentMixture.copy(alpha = 0.65f),
+            unfocusedBorderColor = Hairline,
+        ),
+    )
 }
 
 /** Small print: caveats, methodology notes, the "this is an estimate" disclaimers. */

@@ -35,7 +35,7 @@ class MainActivity : ComponentActivity() {
                 when {
                     status.sessionId != null -> LoggingScreen(
                         status = status,
-                        onStop = { startService(DriveLoggingService.stopIntent(this)) },
+                        onStop = { note -> startService(DriveLoggingService.stopIntent(this, note)) },
                         onNewSession = { LoggingStatus.state.value = LoggingUiState() },
                     )
                     showHistory -> HistoryScreen(onBack = { showHistory = false })
