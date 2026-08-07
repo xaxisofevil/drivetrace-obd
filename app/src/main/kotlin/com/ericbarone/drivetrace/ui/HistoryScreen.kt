@@ -1,19 +1,19 @@
 package com.ericbarone.drivetrace.ui
 
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.systemBarsPadding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.material3.Button
-import androidx.compose.material3.HorizontalDivider
-import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -23,13 +23,30 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.ericbarone.drivetrace.data.AppDatabase
 import com.ericbarone.drivetrace.data.SessionEntity
 import com.ericbarone.drivetrace.service.BackfillRetryWorker
 import com.ericbarone.drivetrace.streaming.analysisSummaryFromJson
+import com.ericbarone.drivetrace.ui.components.Caption
+import com.ericbarone.drivetrace.ui.components.ConsoleLine
+import com.ericbarone.drivetrace.ui.components.EmptyState
+import com.ericbarone.drivetrace.ui.components.HeaderBar
+import com.ericbarone.drivetrace.ui.components.InstrumentPanel
+import com.ericbarone.drivetrace.ui.components.SecondaryAction
+import com.ericbarone.drivetrace.ui.components.StatusChip
+import com.ericbarone.drivetrace.ui.components.Tone
+import com.ericbarone.drivetrace.ui.theme.AccentMixture
+import com.ericbarone.drivetrace.ui.theme.Ash
+import com.ericbarone.drivetrace.ui.theme.Chalk
+import com.ericbarone.drivetrace.ui.theme.Ink
+import com.ericbarone.drivetrace.ui.theme.LocalReadoutType
+import com.ericbarone.drivetrace.ui.theme.Mist
+import com.ericbarone.drivetrace.ui.theme.Slate
+import com.ericbarone.drivetrace.ui.theme.Space
+import com.ericbarone.drivetrace.ui.theme.StatusCaution
 import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -42,6 +59,11 @@ import java.util.Locale
  * queues BackfillRetryWorker for just that session, which runs even after this screen (and the
  * whole app) is closed again, see BackfillRetryWorker's own docs for why WorkManager, not a
  * plain coroutine, is what makes that guarantee possible.
+ *
+ * Laid out as a logbook: one card per drive, MPG right-aligned in a fixed column so the eye can
+ * run straight down the numbers and compare drives, which is the only reason to open this screen
+ * that isn't "why didn't that one upload". A divider-separated stack of text lines cannot be
+ * scanned that way. See docs/DESIGN_SYSTEM.md.
  */
 @Composable
 fun HistoryScreen(onBack: () -> Unit) {
@@ -57,28 +79,50 @@ fun HistoryScreen(onBack: () -> Unit) {
 
     LaunchedEffect(Unit) { reload() }
 
+    val pendingUploads = sessions.count { it.backfillStatus != "SUCCESS" }
+
     Column(
-        modifier = Modifier.fillMaxSize().systemBarsPadding().padding(24.dp),
-        verticalArrangement = Arrangement.spacedBy(8.dp),
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Ink)
+            .systemBarsPadding(),
     ) {
-        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            TextButton(onClick = onBack) { Text("< Back") }
-            Text("Trip History", style = MaterialTheme.typography.headlineSmall)
-        }
+        HeaderBar(
+            title = "Logbook",
+            subtitle = when {
+                loading -> null
+                sessions.isEmpty() -> null
+                pendingUploads > 0 -> "${sessions.size} drives, $pendingUploads not uploaded"
+                else -> "${sessions.size} drives, all uploaded"
+            },
+            onBack = onBack,
+            modifier = Modifier.padding(horizontal = Space.gutter),
+        )
 
         when {
-            loading -> Text("Loading...")
-            sessions.isEmpty() -> Text("No trips logged yet.")
-            else -> LazyColumn(modifier = Modifier.fillMaxSize()) {
+            loading -> EmptyState(title = "Loading", body = "Reading the local database...")
+            sessions.isEmpty() -> EmptyState(
+                title = "No trips logged yet",
+                body = "Start a drive from the setup screen and it will appear here.",
+            )
+            else -> LazyColumn(
+                modifier = Modifier.fillMaxSize(),
+                contentPadding = PaddingValues(
+                    start = Space.gutter,
+                    end = Space.gutter,
+                    top = Space.lg,
+                    bottom = Space.xxl,
+                ),
+                verticalArrangement = Arrangement.spacedBy(Space.md),
+            ) {
                 items(sessions, key = { it.sessionId }) { session ->
-                    SessionHistoryRow(
+                    SessionCard(
                         session = session,
                         onRetry = {
                             BackfillRetryWorker.enqueueRetryNow(context, session.sessionId)
                             scope.launch { reload() }
                         },
                     )
-                    HorizontalDivider()
                 }
             }
         }
@@ -86,47 +130,95 @@ fun HistoryScreen(onBack: () -> Unit) {
 }
 
 @Composable
-private fun SessionHistoryRow(session: SessionEntity, onRetry: () -> Unit) {
+private fun SessionCard(session: SessionEntity, onRetry: () -> Unit) {
+    val type = LocalReadoutType.current
     val dateFmt = remember { SimpleDateFormat("MMM d, yyyy h:mm a", Locale.US) }
     val summary = remember(session.analysisSummaryJson) {
         session.analysisSummaryJson?.let { analysisSummaryFromJson(it) }
     }
 
-    Column(modifier = Modifier.fillMaxWidth().padding(vertical = 12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-        Text(dateFmt.format(Date(session.startWallTimeUtc)), style = MaterialTheme.typography.titleMedium)
+    val uploadTone = when (session.backfillStatus) {
+        "SUCCESS" -> Tone.LIVE
+        "FAILED" -> Tone.FAULT
+        else -> Tone.UNKNOWN
+    }
+    val durationMin = session.endWallTimeUtc?.let { (it - session.startWallTimeUtc) / 60000.0 }
 
-        val durationMin = session.endWallTimeUtc?.let { (it - session.startWallTimeUtc) / 60000.0 }
-        Text(
-            durationMin?.let { "%.0f min, %s".format(it, session.completionStatus.lowercase()) }
-                ?: session.completionStatus.lowercase(),
-            style = MaterialTheme.typography.bodySmall,
-        )
-
-        val backfillColor = when (session.backfillStatus) {
-            "SUCCESS" -> Color(0xFF2E7D32)
-            "FAILED" -> MaterialTheme.colorScheme.error
-            else -> MaterialTheme.colorScheme.onSurfaceVariant
+    InstrumentPanel(
+        modifier = Modifier.fillMaxWidth(),
+        // The left bar carries upload state for the whole card, so a scroll down the list shows
+        // at a glance which drives still owe an upload without reading a single word.
+        accent = uploadTone.color,
+    ) {
+        Row(verticalAlignment = Alignment.Top) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    dateFmt.format(Date(session.startWallTimeUtc)),
+                    style = type.small,
+                    color = Chalk,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                Spacer(Modifier.height(2.dp))
+                Text(
+                    buildString {
+                        durationMin?.let { append("%.0f min".format(it)); append("  /  ") }
+                        append(session.completionStatus.lowercase())
+                    },
+                    style = type.unit,
+                    color = Ash,
+                    maxLines = 1,
+                )
+            }
+            // MPG in a fixed right-hand column: this is the value the list exists to compare.
+            Column(horizontalAlignment = Alignment.End) {
+                Text(
+                    summary?.overallMpg?.let { "%.1f".format(it) } ?: "--",
+                    style = type.medium,
+                    color = if (summary?.overallMpg != null) AccentMixture else Slate,
+                    maxLines = 1,
+                )
+                Text("MPG", style = type.label, color = Ash)
+            }
         }
-        Text(
-            "Upload: ${session.backfillStatus.lowercase()}",
-            color = backfillColor,
-            style = MaterialTheme.typography.bodySmall,
-        )
+
+        Spacer(Modifier.height(Space.md))
+
+        Row(horizontalArrangement = Arrangement.spacedBy(Space.sm)) {
+            StatusChip(
+                text = "upload ${session.backfillStatus.lowercase()}",
+                tone = uploadTone,
+            )
+            val analysisChip: Pair<String, Tone>? = when {
+                summary?.overallMpg != null -> "analysis done" to Tone.LIVE
+                session.analysisStatus == "FAILED" -> "analysis failed" to Tone.FAULT
+                session.backfillStatus == "SUCCESS" -> "analysis pending" to Tone.UNKNOWN
+                else -> null
+            }
+            analysisChip?.let { (text, tone) -> StatusChip(text = text, tone = tone) }
+        }
+
         if (session.backfillStatus == "FAILED" && !session.backfillMessage.isNullOrBlank()) {
-            Text(session.backfillMessage!!, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
+            Spacer(Modifier.height(Space.sm))
+            ConsoleLine(session.backfillMessage!!, color = Tone.FAULT.color)
         }
 
-        when {
-            summary?.overallMpg != null ->
-                Text("Trip MPG: %.1f".format(summary.overallMpg), style = MaterialTheme.typography.bodySmall)
-            session.analysisStatus == "FAILED" ->
-                Text("Analysis failed", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
-            session.backfillStatus == "SUCCESS" ->
-                Text("Analysis pending", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        if (summary != null && summary.flags.isNotEmpty()) {
+            Spacer(Modifier.height(Space.sm))
+            Caption(
+                "${summary.flags.size} anomaly flag${if (summary.flags.size == 1) "" else "s"}",
+                color = StatusCaution,
+            )
         }
 
         if (session.backfillStatus != "SUCCESS") {
-            Button(onClick = onRetry) { Text("Retry upload") }
+            Spacer(Modifier.height(Space.md))
+            SecondaryAction(
+                text = "Retry upload",
+                onClick = onRetry,
+                contentColor = Mist,
+                minHeight = Space.compactTarget,
+            )
         }
     }
 }

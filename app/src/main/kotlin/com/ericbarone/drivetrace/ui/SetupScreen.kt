@@ -7,33 +7,62 @@ import android.content.pm.PackageManager
 import android.os.Build
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.systemBarsPadding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.selection.selectable
-import androidx.compose.material3.Button
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
-import androidx.compose.foundation.layout.Row
-import androidx.compose.material3.RadioButton
-import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.material3.Text
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import com.ericbarone.drivetrace.obd.BluetoothTransport
 import com.ericbarone.drivetrace.obd.VehicleProfile
+import com.ericbarone.drivetrace.ui.components.ActionBar
+import com.ericbarone.drivetrace.ui.components.Caption
+import com.ericbarone.drivetrace.ui.components.EmptyState
+import com.ericbarone.drivetrace.ui.components.HeaderBar
+import com.ericbarone.drivetrace.ui.components.InstrumentPanel
+import com.ericbarone.drivetrace.ui.components.PrimaryAction
+import com.ericbarone.drivetrace.ui.components.SecondaryAction
+import com.ericbarone.drivetrace.ui.components.SectionLabel
+import com.ericbarone.drivetrace.ui.components.StatusBand
+import com.ericbarone.drivetrace.ui.components.Tone
+import com.ericbarone.drivetrace.ui.theme.AccentMixture
+import com.ericbarone.drivetrace.ui.theme.Ash
+import com.ericbarone.drivetrace.ui.theme.Chalk
+import com.ericbarone.drivetrace.ui.theme.Hairline
+import com.ericbarone.drivetrace.ui.theme.Ink
+import com.ericbarone.drivetrace.ui.theme.LocalReadoutType
+import com.ericbarone.drivetrace.ui.theme.Mist
+import com.ericbarone.drivetrace.ui.theme.PanelActive
+import com.ericbarone.drivetrace.ui.theme.Slate
+import com.ericbarone.drivetrace.ui.theme.Space
 
 private const val PREFS_NAME = "drivetrace_prefs"
 private const val PREF_LAST_DEVICE = "last_device_address"
@@ -74,6 +103,11 @@ private fun defaultObdDeviceAddress(devices: List<BluetoothDevice>): String? =
 private fun sortWithLikelyObdFirst(devices: List<BluetoothDevice>): List<BluetoothDevice> =
     devices.sortedByDescending { looksLikeObdAdapter(it) }
 
+/**
+ * Pre-flight. Two decisions (which car, which adapter) and one action, so the screen is laid out
+ * as two labelled config sections over a pinned action bar rather than as a scrolling column of
+ * controls. See docs/DESIGN_SYSTEM.md.
+ */
 @Composable
 fun SetupScreen(onStartLogging: (String, VehicleProfile) -> Unit, onShowHistory: () -> Unit) {
     val context = LocalContext.current
@@ -102,92 +136,194 @@ fun SetupScreen(onStartLogging: (String, VehicleProfile) -> Unit, onShowHistory:
         if (selectedAddress == null) selectedAddress = defaultObdDeviceAddress(devices)
     }
 
-    // See LoggingScreen.kt for why systemBarsPadding() comes first: content was drawing
-    // straight under the status/nav bars, not just missing a few dp of breathing room.
+    // systemBarsPadding() before any other padding: content was drawing straight under the
+    // status/nav bars, not just missing a few dp of breathing room.
     Column(
-        modifier = Modifier.fillMaxSize().systemBarsPadding().padding(24.dp),
-        verticalArrangement = Arrangement.spacedBy(16.dp),
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Ink)
+            .systemBarsPadding(),
     ) {
-        Text("DriveTrace", style = MaterialTheme.typography.headlineMedium)
-        OutlinedButton(onClick = onShowHistory) { Text("Trip History") }
+        HeaderBar(
+            title = "DriveTrace",
+            subtitle = "OBD-II drive logger",
+            modifier = Modifier.padding(horizontal = Space.gutter),
+            trailing = {
+                SecondaryAction(
+                    text = "Logbook",
+                    onClick = onShowHistory,
+                    minHeight = Space.compactTarget,
+                )
+            },
+        )
 
         if (!permissionsGranted) {
-            Text("Bluetooth, location, and notification permissions are needed to log a drive.")
-            Button(onClick = { permissionLauncher.launch(requiredPermissions()) }) {
-                Text("Grant permissions")
+            Column(
+                modifier = Modifier
+                    .weight(1f)
+                    .fillMaxWidth()
+                    .padding(horizontal = Space.gutter, vertical = Space.section),
+                verticalArrangement = Arrangement.spacedBy(Space.lg),
+            ) {
+                StatusBand(
+                    tone = Tone.CAUTION,
+                    title = "Permissions required",
+                    body = "Bluetooth, location, and notification permissions are needed to log a drive.",
+                )
+                Caption(
+                    "Bluetooth reaches the adapter, location supplies the GPS track a drive is " +
+                        "measured against, and the notification keeps logging alive with the screen off.",
+                    color = Ash,
+                )
+            }
+            ActionBar {
+                PrimaryAction(
+                    text = "Grant permissions",
+                    onClick = { permissionLauncher.launch(requiredPermissions()) },
+                )
             }
             return@Column
         }
 
-        Text("Vehicle:", style = MaterialTheme.typography.titleMedium)
-        // A plain Row list, not a LazyColumn: only a couple of vehicle profiles exist, no need
-        // for the bonded-devices list's scroll handling below.
-        for (profile in VehicleProfile.entries) {
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .selectable(
-                        selected = profile == selectedVehicleProfile,
-                        onClick = {
-                            selectedVehicleProfile = profile
-                            prefs.edit().putString(PREF_VEHICLE_PROFILE, profile.name).apply()
-                        },
-                    ),
-            ) {
-                RadioButton(
+        Column(
+            modifier = Modifier
+                .weight(1f)
+                .fillMaxWidth()
+                .padding(horizontal = Space.gutter),
+            verticalArrangement = Arrangement.spacedBy(Space.md),
+        ) {
+            Spacer(Modifier.height(Space.md))
+            SectionLabel("Vehicle")
+
+            // A plain loop, not a LazyColumn: only a couple of vehicle profiles exist, no need
+            // for the bonded-devices list's scroll handling below.
+            for (profile in VehicleProfile.entries) {
+                SelectableRow(
                     selected = profile == selectedVehicleProfile,
-                    onClick = {
+                    onSelect = {
                         selectedVehicleProfile = profile
                         prefs.edit().putString(PREF_VEHICLE_PROFILE, profile.name).apply()
                     },
+                    title = profile.displayName,
+                    detail = "${profile.name.lowercase()} PID catalog",
                 )
-                Text(profile.displayName, modifier = Modifier.padding(top = 12.dp))
             }
-        }
 
-        Text("Select the paired ELM327 adapter:", style = MaterialTheme.typography.titleMedium)
+            Spacer(Modifier.height(Space.xs))
+            SectionLabel("Adapter")
 
-        if (devices.isEmpty()) {
-            Text("No bonded Bluetooth devices found. Pair your ELM327 adapter in Android's Bluetooth settings first.")
-        } else {
-            // weight(1f), not just fillMaxWidth: without a bounded height, this LazyColumn
-            // expands to fit every bonded device and pushes Start Logging off the bottom of the
-            // screen, unreachable, since it's outside the list's own internal scroll area (a
-            // long bonded-device list, confirmed for real: earbuds, other cars' kits, etc. add
-            // up). weight(1f) caps it to the remaining space in the outer Column, so the list
-            // scrolls internally and Start Logging stays pinned below it, always visible.
-            LazyColumn(modifier = Modifier.fillMaxWidth().weight(1f)) {
-                items(devices) { device ->
-                    val address = device.address
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .selectable(
-                                selected = address == selectedAddress,
-                                onClick = { selectedAddress = address },
-                            )
-                            .padding(vertical = 8.dp),
-                    ) {
-                        RadioButton(selected = address == selectedAddress, onClick = { selectedAddress = address })
-                        Column {
-                            Text(device.name ?: "(unknown name)")
-                            Text(address, style = MaterialTheme.typography.bodySmall)
-                        }
+            if (devices.isEmpty()) {
+                EmptyState(
+                    title = "No bonded devices",
+                    body = "Pair your ELM327 adapter in Android's Bluetooth settings first.",
+                )
+            } else {
+                // weight(1f), not just fillMaxWidth: without a bounded height, this LazyColumn
+                // expands to fit every bonded device and pushes Start Logging off the bottom of
+                // the screen, unreachable, since it's outside the list's own internal scroll area
+                // (a long bonded-device list, confirmed for real: earbuds, other cars' kits, etc.
+                // add up). weight(1f) caps it to the remaining space in the outer Column, so the
+                // list scrolls internally and the action bar stays pinned below it, always visible.
+                LazyColumn(
+                    modifier = Modifier.fillMaxWidth().weight(1f),
+                    verticalArrangement = Arrangement.spacedBy(Space.sm),
+                    contentPadding = PaddingValues(bottom = Space.md),
+                ) {
+                    items(devices) { device ->
+                        val address = device.address
+                        SelectableRow(
+                            selected = address == selectedAddress,
+                            onSelect = { selectedAddress = address },
+                            title = device.name ?: "(unknown name)",
+                            detail = address,
+                            detailIsMachine = true,
+                            flagged = looksLikeObdAdapter(device),
+                        )
                     }
                 }
             }
         }
 
-        Button(
-            enabled = selectedAddress != null,
-            onClick = {
-                selectedAddress?.let { address ->
-                    prefs.edit().putString(PREF_LAST_DEVICE, address).apply()
-                    onStartLogging(address, selectedVehicleProfile)
-                }
-            },
-        ) {
-            Text("Start Logging")
+        ActionBar {
+            PrimaryAction(
+                text = "Start logging",
+                onClick = {
+                    selectedAddress?.let { address ->
+                        prefs.edit().putString(PREF_LAST_DEVICE, address).apply()
+                        onStartLogging(address, selectedVehicleProfile)
+                    }
+                },
+                enabled = selectedAddress != null,
+            )
+        }
+    }
+}
+
+/**
+ * One choice in a config section. Replaces the stock RadioButton row: the whole panel is the
+ * target (not a 20dp circle), selection is carried by three signals at once (accent bar, border,
+ * fill) so it survives a glance, and `role = Role.RadioButton` keeps the single-choice semantics
+ * TalkBack needs now that the RadioButton widget itself is gone.
+ */
+@Composable
+private fun SelectableRow(
+    selected: Boolean,
+    onSelect: () -> Unit,
+    title: String,
+    detail: String,
+    modifier: Modifier = Modifier,
+    detailIsMachine: Boolean = false,
+    flagged: Boolean = false,
+) {
+    val type = LocalReadoutType.current
+    InstrumentPanel(
+        modifier = modifier
+            .fillMaxWidth()
+            .selectable(selected = selected, role = Role.RadioButton, onClick = onSelect),
+        accent = if (selected) AccentMixture else null,
+        fill = if (selected) PanelActive else com.ericbarone.drivetrace.ui.theme.Panel,
+        border = if (selected) AccentMixture.copy(alpha = 0.45f) else Hairline,
+        contentPadding = PaddingValues(horizontal = Space.lg, vertical = Space.md),
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            SelectionMark(selected)
+            Spacer(Modifier.width(Space.md))
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    title,
+                    style = type.small,
+                    color = if (selected) Chalk else Mist,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                Text(
+                    detail,
+                    style = if (detailIsMachine) type.mono else type.unit,
+                    color = Slate,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+            if (flagged && !selected) {
+                Text("LIKELY", style = type.label, color = Ash)
+            }
+        }
+    }
+}
+
+/** Selection indicator, drawn rather than borrowed from Material, so its ring weight matches the
+ *  1dp hairline language the panels use. */
+@Composable
+private fun SelectionMark(selected: Boolean, modifier: Modifier = Modifier) {
+    val ring: Color = if (selected) AccentMixture else Hairline
+    val core: Color = if (selected) AccentMixture else Color.Transparent
+    Box(modifier = modifier.size(18.dp), contentAlignment = Alignment.Center) {
+        Canvas(Modifier.size(18.dp)) {
+            val c = Offset(size.width / 2f, size.height / 2f)
+            drawCircle(ring, radius = size.minDimension / 2f - 1f, center = c, style = androidx.compose.ui.graphics.drawscope.Stroke(width = 1.5.dp.toPx()))
+            if (core != Color.Transparent) {
+                drawCircle(core, radius = size.minDimension * 0.22f, center = c)
+            }
         }
     }
 }
