@@ -1,10 +1,15 @@
 # DriveTrace design system
 
 The visual language, why each choice was made, and what a future change has to stay consistent
-with. Code lives in `app/src/main/kotlin/com/ericbarone/drivetrace/ui/theme/` (tokens) and
-`ui/components/Instrument.kt` (the component vocabulary). Those files are the machine-readable
-copy of this document, not an independent source of truth; if they disagree, this document is
-wrong and should be fixed, or the code drifted and should be pulled back.
+with. Code lives in `app/src/main/kotlin/com/ericbarone/drivetrace/ui/theme/` (token names in
+`Color.kt`, the values they resolve to in `Skin.kt`) and `ui/components/Instrument.kt` (the
+component vocabulary). Those files are the machine-readable copy of this document, not an
+independent source of truth; if they disagree, this document is wrong and should be fixed, or the
+code drifted and should be pulled back.
+
+Two of the claims in here are numeric rather than stylistic — the contrast floors in section 3 and
+the category separation section 8 rule 4 depends on — and `docs/skin_check.py` checks both against
+every skin that ships. Run it after touching a colour.
 
 ## 1. What this thing actually is
 
@@ -64,7 +69,13 @@ colour.
 
 ## 3. Colour
 
-Defined in `ui/theme/Color.kt`. Two channels, and they never borrow from each other.
+Two channels, and they never borrow from each other.
+
+**Every hex in this section belongs to a skin.** `ui/theme/Color.kt` holds the token *names* and
+`ui/theme/Skin.kt` holds the values; two skins ship, and section 3.5 covers the second one and the
+rules any further one has to keep. Everything from here to section 3.5 describes **Instrument**,
+the default, which is the skin every value in this document was originally derived for and the
+benchmark the others are measured against.
 
 ### Surfaces and text
 
@@ -154,6 +165,141 @@ contract has to survive the mode change, or the pre-attentive hue channel breaks
 user flips the switch. Pure white appears here and nowhere else, and only on a 64sp numeral; the
 OLED smear that rules `#000000` out as a *surface* has no bearing on foreground text.
 
+**The daylight mode is a property of the active skin, not a skin of its own.** The twins above are
+Instrument's; every skin declares its own five, and `Skin.readoutPalette(highContrast)` builds the
+mapping out of whichever skin is running. So the boost is relative to the palette in front of the
+user rather than pinned to the default one, and a new skin gets a working direct-sun mode by
+supplying five colours and no code at all.
+
+## 3.5 Skins
+
+Alternate visual identities, selected on SetupScreen and persisted as `instrument_skin` in the
+existing `drivetrace_prefs` store. This is idea #8 in the feature list below, built.
+
+### The mechanism, and why it is this one
+
+Every token name in `ui/theme/Color.kt` (`Ink`, `Panel`, `Chalk`, `AccentMixture`, all of them) is
+now a property whose getter reads the value off `LocalSkin`, a `CompositionLocal` provided at the
+theme root. The hex literals moved into `Skin`, a data class holding one complete set of tokens;
+`SkinId` names the skins that ship.
+
+The names did not change and neither did any call site. `Text(color = Chalk)` inside a composable
+compiles, reads and means exactly what it did before, and now follows whichever skin is active.
+That property is the reason this shape was chosen over the obvious alternative: a theme object
+(`DriveTraceTheme.colors.chalk`, which is how Material does it) would have meant rewriting every
+colour reference on three screens and in the whole of `Instrument.kt`, and charging every future
+screen a prefix forever to support a setting most users will never touch. The refactor as built
+changed **one line** outside `ui/theme/` and `SetupScreen.kt`.
+
+`@ReadOnlyComposable` on every getter means the read does not open a group in the composition, so
+a token reference costs what the `val` it replaced cost. `LocalSkin` is a `staticCompositionLocalOf`
+for the same reason `LocalReadoutType` is: this changes about once a year in response to a
+deliberate tap, so paying for fine-grained invalidation tracking on every colour read in the app to
+make that one moment cheaper is the wrong trade.
+
+**The constraint it imposes:** a token can only be read from composable code. That cost exactly two
+things in the entire app, and both are in the code rather than in any screen's structure.
+`Tone.color` and `Tone.fill` stopped being enum constructor properties and became composable
+getters (members, not extensions, so no screen needed a new import; `Tone.glyph` is untouched
+because a glyph is fixed for all time), and `heroFigure` in `LoggingScreen.kt` gained `@Composable`,
+which is honest, since what colour that figure gets genuinely depends on composition state now.
+
+**A skin re-picks values. It does not change structure.** Four things are properties on `Skin`
+rather than constructor parameters, precisely so a new skin cannot get them wrong: `accentMotion`
+is `chalk` (MOTION is achromatic in every skin), `accentHousekeeping` is `ash`, `statusUnknown` is
+`slate`, and the status fills are their status colour at a fixed low alpha. Section 8's rules apply
+to every skin without exception. A skin that breaks them is not a reskin, it is a different app.
+
+**Skins are colour only. Shape and type are not skinnable and should not become so.** `Shape.kt`
+and `Type.kt` are unchanged and take no `Skin`. Tabular figures (section 4) and rectilinear radii
+(section 5) are answers to how this thing is read, from a mount, in a moving vehicle, in a glance:
+a skin that shipped pill-shaped buttons or proportional digits would be selling the user a worse
+instrument, and "it was a cosmetic option" is not a defence for a readout that jitters. A skin gets
+to decide what colour the thing is. It does not get to decide whether the numbers hold still.
+
+### Instrument (default)
+
+Sections 3 and 3.5 above are its documentation. Blue-black glass-cockpit ground, near-white
+primaries, cool accents.
+
+### Amber
+
+A seventies cluster. The doc's own suggestion under idea #8, and the more interesting of the two
+candidates listed there because it stresses the design system rather than restating it: a warm
+ground is exactly where an accent set tuned on a cool one stops working.
+
+**The warmth is spent on the ground, the chrome, and the achromatic MOTION readout,** which is
+where a real amber cluster puts it. The four diagnostic hues then take the half of the hue circle
+that ground leaves open. Recolouring the whole palette amber would have collapsed the category
+channel to nothing, which is the one thing this design system cannot trade away.
+
+| Token | Instrument | Amber | Note |
+|---|---|---|---|
+| `Ink` | `#06090E` | `#0A0805` | Warm near-black. Still not `#000000`, for the same OLED-smear and hairline-visibility reasons. |
+| `Panel` | `#0D131B` | `#15100A` | |
+| `PanelRaised` | `#141C26` | `#1F1810` | |
+| `PanelActive` | `#1A2431` | `#2A2015` | |
+| `Hairline` | `#202B39` | `#3A2C1B` | 1.40:1 on `Panel`, against Instrument's 1.30:1. A bezel line has to be resolvable and nothing more. |
+| `HairlineBright` | `#33455A` | `#5C4629` | |
+| `Chalk` | `#F2F6FA` | `#FFF3E0` | The phosphor. 18.24:1 on `Ink`. |
+| `Mist` | `#9AA9BA` | `#C7AC84` | 9.20:1, which is the first time the ~9:1 the table claims is actually met; Instrument's own `Mist` measures 8.32:1. |
+| `Ash` | `#7C8B9E` | `#A08A65` | 6.02:1 against the 5.4 floor. |
+| `Slate` | `#4A5768` | `#63543B` | 2.73:1. Deliberately below body contrast in both skins. |
+| `AccentMixture` | `#2ED3C6` | `#1FD8CC` | Teal in both. It is the brand colour and the flagship category, and it is the complement of the ground here, which is the best place a warm skin has to put its most-read hue. |
+| `AccentAirpath` | `#8E7BFF` | `#A78BFF` | |
+| `AccentThermal` | `#5AC8FA` | `#5CB8FF` | Blue in both, non-negotiable: the cold-engine telltale is blue in every OEM cluster. |
+| `AccentIgnition` | `#FF66C4` | `#FF70C0` | |
+| `StatusLive` | `#31C56A` | `#34C765` | |
+| `StatusCaution` | `#FFC53D` | `#FFA51F` | Pushed orange, away from the phosphor. See below. |
+| `StatusFault` | `#FF4D4F` | `#FF5340` | |
+
+Daylight twins, on the same terms as section 3's table (each one its standard twin lifted toward
+white, never a fresh pick):
+
+| Standard | Daylight | Instrument | Amber |
+|---|---|---|---|
+| `Chalk` | `DaylightChalk` | `#FFFFFF` | `#FFFFFF` |
+| `AccentMixture` | `DaylightMixture` | `#7DF5E8` | `#79F2E9` |
+| `AccentAirpath` | `DaylightAirpath` | `#C0B4FF` | `#CDBFFF` |
+| `AccentThermal` | `DaylightThermal` | `#A8E4FF` | `#AEDCFF` |
+| `AccentIgnition` | `DaylightIgnition` | `#FFA8DC` | `#FFB2DA` |
+
+#### The problem an amber skin creates, and how it was settled
+
+MOTION is achromatic by construction, so on this skin it is the phosphor white. That puts a warm
+near-neutral token in the same frame as an amber `CAUTION` and a warm-tan `HOUSEKEEPING`, which is
+precisely the collision rule 5 exists to prevent. Whether it is a real collision is a claim about
+perception, so it is measured rather than argued.
+
+`docs/skin_check.py` computes it. WCAG contrast for every text and accent token against every
+surface it can land on; CIEDE2000 across all 15 category pairs and all 24 category-vs-status
+pairs; and, for rule 11, that each daylight twin is brighter than its standard twin without
+drifting in hue. **The floors are Instrument's own worst cases rather than abstract thresholds:**
+a new skin has to be at least as separable as the skin this design system was written around, and
+anything looser is a number nobody checked. The script exits non-zero when a floor is missed.
+
+|  | Instrument | Amber |
+|---|---|---|
+| Worst category pair | 13.02 ΔE (AIRPATH/HOUSEKEEPING) | **22.54** ΔE (AIRPATH/IGNITION) |
+| Worst category-vs-status pair | 19.90 ΔE (MIXTURE/LIVE) | **21.57** ΔE (MIXTURE/LIVE) |
+| MOTION vs CAUTION | 31.96 ΔE | **26.89** ΔE |
+
+Amber's six categories separate further from each other than Instrument's do, which is not a
+flourish: the tuning was run against these numbers, and `AccentMixture`, `StatusLive`,
+`AccentIgnition` and `AccentAirpath` all moved from their first draft to clear the two floors.
+
+MOTION against CAUTION, the pair the amber ground put at risk, lands at 26.89 ΔE — lower than
+Instrument's 31.96, and twice Instrument's own worst *category* pair. It separates on chroma and
+luminance rather than on hue (C\* 11 against 78), which is the same mechanism that already lets
+Instrument's near-white MOTION sit beside a blue THERMAL 12° away in hue. Rule 5's redundant glyph
+carries the rest, which is what it is for.
+
+The one figure that genuinely got worse is `CAUTION` against `FAULT` within the status channel:
+29.94 ΔE against Instrument's 43.30, because pushing caution orange to clear the phosphor walks it
+toward the fault red. It is still more than twice the shipped default's worst category pair, and
+those two tones never appear without their glyphs (bang against cross) or without different fills,
+so three carriers survive. Worth knowing about; not worth spending the phosphor's separation on.
+
 ## 4. Typography
 
 Defined in `ui/theme/Type.kt`. No font file is bundled; Roboto is the platform font and its
@@ -225,6 +371,7 @@ is a design-system change and belongs in this document.
 | `StatusRow` | A named pipeline stage with a dot, a state word, and an optional detail line |
 | `StatusBand` | Full-width alert. Tinted fill + accent bar + glyph. |
 | `StatusChip` | Compact badge for list rows |
+| `Tone` | The five status tones. Carries the glyph as a fixed constructor property and the colour and fill as composable getters, so a tone follows the active skin. |
 | `ChoiceChip` | One option in a small set, laid out in a row. The logbook's vehicle filter |
 | `StatusDot` | Pulsing when live |
 | `ConsoleLine` | Monospaced, dim, `>`-prefixed machine output |
@@ -249,6 +396,20 @@ lives in `ui/DisplaySettings.kt`, a process-wide `StateFlow` over SharedPreferen
 `service/LoggingStatus`; the theme takes it as a parameter so `ui.theme` keeps no dependency back
 on the screens above it.
 
+**Since skins landed, that palette is built rather than picked.** `Skin.readoutPalette(highContrast)`
+constructs both instances from the active skin's own tokens, so the boost is measured against
+whatever palette is in front of the user rather than against the default one, and neither the
+mechanism nor `HeroReadout` has any per-skin branch in it. The theme takes the skin and the
+toggle as two independent parameters, which is the honest shape: they are orthogonal settings,
+one choosing the palette and the other choosing how much luminance the hero spends out of it.
+
+**The one thing a skin swap touches outside composition.** `res/values/themes.xml` pins the
+pre-Compose window background to `@color/ink`, which is Instrument's ground and cannot follow a
+runtime setting. On Amber that would leave a cool near-black behind a warm one, visible for the
+frame before Compose draws and under a dialog's scrim. `DriveTraceTheme`'s existing `SideEffect`
+sets the window background from the active skin, which is the right place because that function is
+already the only thing that knows which skin won.
+
 **Exactly one animation exists in the app:** `StatusDot`'s slow alpha pulse, roughly one cycle a
 second, when data is arriving. Motion is the strongest pre-attentive cue there is, so it only
 stays meaningful if it is the only thing moving.
@@ -265,13 +426,24 @@ WorkManager rather than setting a boolean at tap time; see the logbook below.
 
 ### SetupScreen — pre-flight
 
-Two decisions, one setting and one action, so it is three labelled config sections over a pinned
-action bar, not a scrolling column of controls. The **Display** section holds the single daylight
-toggle: a `ToggleRow`, same panel-is-the-target treatment as `SelectableRow` with `Role.Switch`
-and a square check mark rather than the round single-choice mark, deliberately not a Material
-`Switch` (a 52x32dp sliding pill is the one shape this system rules out everywhere else). It sits
-on the pre-flight screen rather than behind a settings screen because the question it answers is
-"is it sunny right now", asked while sitting in the car about to press Start. Bonded devices are `SelectableRow` panels where the whole
+Two decisions, two display settings and one action, so it is three labelled config sections over a
+pinned action bar, not a scrolling column of controls.
+
+The **Display** section holds both display settings, skin first and the daylight toggle under it,
+in that order because the skin is the outer of the two: it decides what the palette is, the toggle
+decides how much luminance the hero spends out of it. The **skin picker** is a plain loop over
+`SkinId.entries` emitting the same `SelectableRow` the vehicle picker above it uses, so a third
+skin is one entry in `SkinId` and nothing on this screen. The **daylight toggle** is a `ToggleRow`,
+same panel-is-the-target treatment as `SelectableRow` with `Role.Switch` and a square check mark
+rather than the round single-choice mark, deliberately not a Material `Switch` (a 52x32dp sliding
+pill is the one shape this system rules out everywhere else). Both sit on the pre-flight screen
+rather than behind a settings screen for the same reason: the question the toggle answers is "is it
+sunny right now", asked while sitting in the car about to press Start, and a settings screen for
+two rows is a navigation framework this app spent section 10's rule avoiding.
+
+The section costs the bonded-device list two rows of height, which it absorbs: the list's
+`weight(1f)` caps it to the space left and it scrolls internally, which is what that weight has
+always been there to do. Bonded devices are `SelectableRow` panels where the whole
 panel is the target rather than a 20dp `RadioButton` circle, selection is carried by accent bar +
 border + fill simultaneously, the MAC address is monospaced (it is an identifier to compare
 character by character, not prose), and adapters matching the name heuristic are marked `LIKELY`.
@@ -623,16 +795,17 @@ again, and it is where "that was the one with the new tyres" actually occurs to 
 2. A number that changes uses a `tnum` style. No exceptions.
 3. The unit is a separate `Text`. Never concatenated into the value string.
 4. Category hue is fixed per system. A new PID joins an existing category; it does not get a new
-   colour.
+   colour. A *skin* may re-pick what that hue is, but not how many there are and not which system
+   owns which; MOTION stays achromatic and THERMAL stays blue in every skin.
 5. Status colour never doubles as a category colour, and never travels without its glyph.
 6. Tier C data goes in a `DataRow`, not a tile, and never in the hero.
 7. Elevation is a hairline border, not a shadow.
 8. Primary actions are 56dp and live in a pinned `ActionBar`, never at the end of a scroll.
 9. Only `StatusDot` animates.
 10. No `TopAppBar`, no hamburger, no bottom nav. Three screens do not need a navigation framework.
-11. A colour a hero readout can carry registers a daylight twin in `DaylightReadoutPalette`. The
-    map is the whole daylight mode; a token missing from it silently renders at night luminance
-    in direct sun.
+11. A colour a hero readout can carry registers a daylight twin on the `Skin`. The map
+    `Skin.readoutPalette` builds is the whole daylight mode; a token missing from it silently
+    renders at night luminance in direct sun.
 12. **A caught exception's text never reaches a composable.** Not filtered, not truncated, not
     shown behind a "details" toggle. If a failure needs describing on a screen, the app writes the
     sentence; the raw goes to Room or to logcat. The rule exists because the raw string named the
@@ -646,6 +819,16 @@ again, and it is where "that was the one with the new tyres" actually occurs to 
     panel repeated after every drive is wallpaper by the third one, it costs a section of vertical
     space, and it contradicts the ISA-101 rule this document opens with. Report it as a `DataRow`
     among the other Tier C lines and let it earn weight only when it is abnormal.
+15. **A colour token is read from composable code, never stored outside it.** The token names in
+    `Color.kt` resolve through `LocalSkin`, so a helper that picks a colour is `@Composable` and
+    anything that genuinely needs one outside composition takes a `Skin` explicitly. Caching a
+    token in a top-level `val`, an enum constructor, or an object initialiser pins it to whichever
+    skin happened to be first and silently stops following the setting.
+16. **A new skin runs `docs/skin_check.py` and clears Instrument's floors before it ships.** Both
+    of section 8's colour rules, the six-category budget and the status/category separation, are
+    measurable claims, and a skin inherits neither of them from the skin they were tuned for. The
+    script is the check; it exits non-zero when a floor is missed. Eyeballing a palette against a
+    hex table is how a skin ships with two categories nobody can tell apart in a moving car.
 15. **Verdicts render inline; counts render behind a tap, and only when there is something
     wrong.** A verdict is a word that changes what the reader does next. A count is a number that
     only means something once they have already decided to debug the app itself. Rule 14 covers a
@@ -764,18 +947,40 @@ The `StatusBand` and tone machinery already exist. Speaking or chiming on a user
 stay face-down during a drive, which is both a safety improvement and the answer to "why am I
 staring at my phone while driving".
 
-## 8. Premium instrument skins
+## 8. ~~Premium instrument skins~~ **Built.**
 
-Explicitly worth flagging because the token layer now supports it cleanly: every colour, shape,
-and type value routes through `ui/theme/`, so alternate visual identities (a warm amber
-seventies-cluster theme, a high-contrast daylight theme, an OEM-alike per vehicle) are a palette
-swap rather than a rewrite. Low effort, and cosmetic packs are among the least objectionable
-things to charge for since nothing functional sits behind the paywall.
+See section 3.5 for the mechanism, the second skin's full palette, and the numbers behind it.
+Kept here rather than deleted, because the original claim was only about three-quarters right and
+what the fourth quarter cost is the useful part.
 
-The daylight variant named above has since been built (section 3) and is a useful proof of the
-claim, with one correction to it: it needed a `CompositionLocal` carrying a token *mapping*, not
-just a second set of token values, because the screens name colours by their standard token. A
-full skin would work the same way, and `ReadoutPalette` is the seam to widen.
+The claim was: every colour, shape, and type value routes through `ui/theme/`, so alternate visual
+identities are a palette swap rather than a rewrite. Two corrections, both of which a future
+"skins are cheap" argument about some other codebase should be checked against:
+
+**Routing through a package is not the same as being swappable.** The values did all live in
+`ui/theme/`, and they lived there as top-level `val`s holding literal hex, which is one identity
+rather than a swappable one. The fix was to move the hex into a `Skin` data class and turn each
+token name into a property with a composable getter reading `LocalSkin`. That is genuinely small
+— the refactor changed one line outside `ui/theme/` and `SetupScreen.kt`, and `HistoryScreen.kt`
+and `DriveNote.kt` were not touched at all — but "small" and "already done" are different claims
+and this document made the second one.
+
+**The expensive part was never the code.** Meeting section 8's rules under a warm ground took
+several rounds of re-tuning `AccentMixture`, `AccentIgnition`, `AccentAirpath` and `StatusLive`
+against measured CIEDE2000 separations, and produced `docs/skin_check.py` and two new rules (15
+and 16) as a byproduct. A skin is cheap to *wire up* and costs real work to *get right*, which is
+the opposite of how the paragraph above read. Anyone pricing a cosmetic pack off "low effort"
+should price the second sentence, not the first.
+
+The daylight variant (section 3) was the earlier proof of the same idea, and its correction still
+stands and generalised: it needed a `CompositionLocal` carrying a token *mapping* rather than a
+second set of values, because screens name colours by their standard token. `ReadoutPalette` was
+indeed the seam to widen — it is now built from the active skin, so the direct-sun mode works
+under any skin without being reimplemented per skin.
+
+*Monetisation, unchanged:* cosmetic packs are among the least objectionable things to charge for,
+since nothing functional sits behind the paywall. Two skins ship free; the shape that makes a third
+one one `SkinId` entry is the same shape that makes a paid pack one entry.
 
 ## 9. Smaller things noticed while working
 
@@ -823,7 +1028,11 @@ what got deliberately left out of it, is the useful part.
   for the tokens and section 6 for the mechanism. Still not a light theme: `Ink` stays the ground
   in both modes and only `HeroReadout` reads the boosted palette. Toggle lives on SetupScreen
   under a **Display** section, persisted as `high_contrast_daylight` in the existing
-  `drivetrace_prefs` store. **Deliberately hero-only for now:** `MetricTile`, `DataRow` and the
+  `drivetrace_prefs` store. **Since generalised:** the twins moved onto the `Skin` and
+  `Skin.readoutPalette` builds the mapping, so the boost is relative to the running skin rather
+  than to the palette it was first written against. Nothing about the toggle, its storage, or
+  `HeroReadout` changed to make that true, which was the point of building it as a token mapping
+  in the first place. **Deliberately hero-only for now:** `MetricTile`, `DataRow` and the
   status chips are unchanged, so the second-order band is still `Mist`/`Ash` in direct sun. The
   mechanism extends to them for free (read `LocalReadoutPalette` in those composables too) if
   real use says the hero alone isn't enough.
