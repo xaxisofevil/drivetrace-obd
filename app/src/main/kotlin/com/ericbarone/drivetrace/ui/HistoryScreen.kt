@@ -2,7 +2,6 @@ package com.ericbarone.drivetrace.ui
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.horizontalScroll
-import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -16,6 +15,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.systemBarsPadding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -64,15 +64,22 @@ import java.util.Locale
 /**
  * Every session ever logged, read straight from local Room (the authoritative copy, per the
  * blueprint's reliability rules), not the server, so this works even if the server's never been
- * reachable for a given session. "Retry upload" is the "force failed uploads" ask made concrete:
- * queues BackfillRetryWorker for just that session, which runs even after this screen (and the
- * whole app) is closed again, see BackfillRetryWorker's own docs for why WorkManager, not a
- * plain coroutine, is what makes that guarantee possible.
+ * reachable for a given session.
+ *
+ * Two retry controls, never both at once, since at most one thing can be outstanding. "Retry
+ * upload" is the "force failed uploads" ask made concrete, and "Retry analysis" covers the case
+ * where the upload landed and only the server-side analysis did not, without re-sending a drive
+ * the server already holds. Both queue BackfillRetryWorker for just that session, which runs even
+ * after this screen (and the whole app) is closed again, see BackfillRetryWorker's own docs for
+ * why WorkManager, not a plain coroutine, is what makes that guarantee possible. Both also read
+ * their in-flight state back out of WorkManager rather than tracking it here.
  *
  * Laid out as a logbook: one card per drive, MPG right-aligned in a fixed column so the eye can
  * run straight down the numbers and compare drives, which is the only reason to open this screen
  * that isn't "why didn't that one upload". A divider-separated stack of text lines cannot be
- * scanned that way. See docs/DESIGN_SYSTEM.md.
+ * scanned that way. Each card names its vehicle, and the list filters down to one vehicle once
+ * more than one has logged a drive, because a column of MPG figures from two different cars is
+ * not a column that can be compared. See docs/DESIGN_SYSTEM.md.
  */
 @Composable
 fun HistoryScreen(onBack: () -> Unit) {
