@@ -45,6 +45,7 @@ import com.ericbarone.drivetrace.data.readSessionDtcs
 import com.ericbarone.drivetrace.export.CsvExporter
 import com.ericbarone.drivetrace.export.TripSummary
 import com.ericbarone.drivetrace.export.computeTripSummary
+import com.ericbarone.drivetrace.obd.MeasurementSample
 import com.ericbarone.drivetrace.service.ConnectionState
 import com.ericbarone.drivetrace.service.LoggingUiState
 import com.ericbarone.drivetrace.service.TriState
@@ -184,7 +185,7 @@ fun LoggingScreen(status: LoggingUiState, onStop: (String) -> Unit, onNewSession
             if (sessionComplete) {
                 CompleteBody(status, tripSummary, adapterHealth, dtcs, completedDurationSeconds)
             } else {
-                LiveBody(status, elapsedSeconds, lastSampleAgeSeconds)
+                LiveBody(status, elapsedSeconds, lastSampleAgeSeconds, nowMs)
             }
             Spacer(Modifier.height(Space.sm))
         }
@@ -267,73 +268,109 @@ fun LoggingScreen(status: LoggingUiState, onStop: (String) -> Unit, onNewSession
 // Live
 // ---------------------------------------------------------------------------
 
+/** Canonical names this layout addresses by hand; the rest come from the table in PidDisplay.kt. */
+private const val CANONICAL_RPM = "Engine RPM"
+private const val CANONICAL_SPEED = "Vehicle Speed"
+
+/** Short-term trim, whichever bank this vehicle has. Bank 1 wins when both are present, because
+ *  [LIVE_PID_DISPLAY] lists it first and the search below preserves that order. */
+private val SHORT_TERM_TRIMS = setOf(
+    "Short Term Fuel Trim Bank 1",
+    "Short Term Fuel Trim Bank 2",
+)
+
 /**
- * Live layout. The hierarchy is the point: elapsed time is the one number worth a glance from a
- * mount, so it gets the hero slot at 64sp; sample/fix counts are confirmation the pipeline is
- * alive, so they get tiles at roughly a third the weight; and the engine-detected check gets the
- * screen's single alert slot, because it is the only condition here that means "stop and fix
- * something before you waste the whole drive".
+ * The category grid is always three tiles across, even for a category holding one or two.
+ *
+ * The drive report's tile rows widen to fill (see DriveProfileSection), which is right there:
+ * every tile on that screen is the same rank. Here they are not. A two-tile row would render at
+ * the same half-width as the speed/trim row directly above it, and that row is deliberately the
+ * second tier of the hierarchy. Fixing the grid at a third-width keeps the three ranks, hero,
+ * primary pair, grid, readable by size alone from a mount.
+ */
+private const val GRID_COLUMNS = 3
+
+/**
+ * Live layout: the gauge cluster this theme was built for, read from a mount, in motion, often at
+ * a glance. Feature idea #1 in docs/DESIGN_SYSTEM.md, now that [LoggingUiState.latestValues]
+ * exists to feed it.
+ *
+ * The layout it replaces had session elapsed in the hero and sample/GPS counts in the tiles, which
+ * was the honest ranking when the state object carried no vehicle data at all: the app's own
+ * bookkeeping was genuinely the most interesting true thing on the screen. It is not any more.
+ * Ranked by what a driver glances at:
+ *
+ *  1. **Engine RPM in the hero,** 64sp and achromatic, because MOTION is the achromatic category
+ *     and the tachometer is what a cluster's largest instrument shows. Falls back to session
+ *     elapsed when RPM has not answered yet or read back implausible: rule 13, a hero never says
+ *     `--`, and elapsed exists from the first second of every session.
+ *  2. **Speed and short-term fuel trim** as a half-width pair. Speed is the other thing a driver
+ *     already expects to see; short-term trim is the signal this whole project exists to chase,
+ *     and watching it move in real time is the entire argument for a live screen over an export.
+ *  3. **The one alert slot,** unchanged in form and still reserved for the engine-detected check.
+ *     Moved up to sit under the primary readouts rather than after them, because everything below
+ *     it is now several screens of gauges and an alert under all of that is an alert nobody sees.
+ *  4. **The category grid:** every other Tier A/B PID as a `MetricTile`, grouped under a
+ *     `SectionLabel` naming its category and coloured with that category's fixed accent. The label
+ *     is the redundant carrier the hue needs (WCAG 1.4.1); the accent is what lets "which system
+ *     is this" be answered without reading it.
+ *  5. **Tier C and housekeeping** collapsed into `DataRow`s in one **Context** panel, per rule 6.
+ *     Category hue survives the demotion, so ambient air is still thermal blue on its line.
+ *  6. **Session:** elapsed, sample count, GPS fixes, last-sample age, reconnects, as `DataRow`s in
+ *     one panel at the bottom. None of it is gone and all of it is still real information; it is
+ *     just the app talking about itself, which is exactly the demotion the trip report's own
+ *     "Capture and delivery" block makes for the same reason. Elapsed is omitted from the block
+ *     while it is the hero, so the screen never prints one number twice at two sizes.
+ *
+ * **A value the scheduler flagged `IMPLAUSIBLE` never renders as a number.** `valueNumeric` is
+ * null on those rows by design (see PidScheduler's PLAUSIBLE_RANGES), so the tile prints `--` in
+ * `Tone.FAULT`, which brings the cross glyph with it: the existing status vocabulary already has
+ * a word for "no real data from the vehicle" and this is that word, not a new one. A tile that has
+ * simply gone quiet longer than its tier's polling cadence allows gets `Tone.CAUTION` instead,
+ * matching the status table's "stale samples" row. A PID that has never answered at all draws
+ * nothing, so `--` in this cluster only ever means "the number that came back was garbage".
  */
 @Composable
 private fun ColumnScope.LiveBody(
     status: LoggingUiState,
     elapsedSeconds: Long,
     lastSampleAgeSeconds: Long?,
+    nowMs: Long,
 ) {
-    val streaming = status.connectionState == ConnectionState.LOGGING
+    // Table order, not arrival order, so nothing reshuffles under a glance as slow PIDs answer.
+    val gauges: List<Pair<PidDisplay, MeasurementSample>> =
+        livePidDisplays(status.latestValues.keys)
+            .mapNotNull { display -> status.latestValues[display.canonicalName]?.let { display to it } }
 
+    val hero = liveHero(
+        rpm = status.latestValues[CANONICAL_RPM],
+        elapsedSeconds = elapsedSeconds,
+        connectionState = status.connectionState,
+        nowMs = nowMs,
+    )
     HeroReadout(
-        label = "Session elapsed",
-        value = formatDuration(elapsedSeconds),
+        label = hero.label,
+        value = hero.value,
+        unit = hero.unit,
         accent = AccentMotion,
-        caption = if (streaming) "recording" else status.connectionState.name.lowercase(),
+        caption = hero.caption,
     )
 
-    // Threshold styling only. Nothing here changes what is polled or logged; it turns a number
-    // that is already on screen into something whose severity is readable without arithmetic.
-    val sampleTone = when {
-        lastSampleAgeSeconds == null -> Tone.UNKNOWN
-        lastSampleAgeSeconds <= 5 -> Tone.NEUTRAL
-        lastSampleAgeSeconds <= 15 -> Tone.CAUTION
-        else -> Tone.FAULT
-    }
-
-    Column(verticalArrangement = Arrangement.spacedBy(Space.md)) {
-        SectionLabel("Capture")
+    val speed = gauges.firstOrNull { it.first.canonicalName == CANONICAL_SPEED }
+    val shortTrim = gauges.firstOrNull { it.first.canonicalName in SHORT_TERM_TRIMS }
+    if (speed != null || shortTrim != null) {
         Row(horizontalArrangement = Arrangement.spacedBy(Space.tileGap)) {
-            MetricTile(
-                label = "Samples",
-                value = status.measurementCount.toString(),
-                accent = AccentMixture,
-                modifier = Modifier.weight(1f),
-            )
-            MetricTile(
-                label = "GPS fixes",
-                value = status.locationCount.toString(),
-                accent = AccentThermal,
-                modifier = Modifier.weight(1f),
-            )
-            MetricTile(
-                label = "Last",
-                value = lastSampleAgeSeconds?.toString() ?: "--",
-                unit = if (lastSampleAgeSeconds != null) "s" else null,
-                tone = sampleTone,
-                modifier = Modifier.weight(1f),
-            )
-        }
-        if (status.reconnectCount > 0) {
-            InstrumentPanel(
-                modifier = Modifier.fillMaxWidth(),
-                accent = StatusCaution,
-                contentPadding = PaddingValues(horizontal = Space.lg, vertical = Space.sm),
-            ) {
-                DataRow(
-                    label = "Bluetooth reconnects",
-                    value = status.reconnectCount.toString(),
-                    valueColor = StatusCaution,
-                    leadingGlyph = Glyph.BANG,
-                    glyphColor = StatusCaution,
-                )
+            // A missing half keeps its space rather than letting the survivor stretch across the
+            // screen and read as a second hero, the same rule the report's short tile rows follow.
+            if (speed != null) {
+                GaugeTile(speed.first, speed.second, nowMs)
+            } else {
+                Spacer(Modifier.weight(1f))
+            }
+            if (shortTrim != null) {
+                GaugeTile(shortTrim.first, shortTrim.second, nowMs)
+            } else {
+                Spacer(Modifier.weight(1f))
             }
         }
     }
@@ -357,8 +394,245 @@ private fun ColumnScope.LiveBody(
         )
     }
 
+    // Whatever the hero and the primary pair already drew is not drawn again below.
+    val claimed = setOfNotNull(
+        CANONICAL_RPM.takeIf { hero.kind == LiveHeroKind.RPM },
+        speed?.first?.canonicalName,
+        shortTrim?.first?.canonicalName,
+    )
+    val grid = gauges
+        .filter { (display, _) ->
+            display.tier != PidTier.C &&
+                display.category != PidCategory.HOUSEKEEPING &&
+                display.canonicalName !in claimed
+        }
+        .groupBy { it.first.category }
+
+    // PidCategory's own order, not the map's, so a category appearing late in the drive slots
+    // into the same place it always occupies rather than onto the end.
+    for (category in PidCategory.entries) {
+        val entries = grid[category] ?: continue
+        Column(verticalArrangement = Arrangement.spacedBy(Space.md)) {
+            SectionLabel(category.name)
+            for (rowEntries in entries.chunked(GRID_COLUMNS)) {
+                Row(horizontalArrangement = Arrangement.spacedBy(Space.tileGap)) {
+                    for ((display, sample) in rowEntries) GaugeTile(display, sample, nowMs)
+                    repeat(GRID_COLUMNS - rowEntries.size) { Spacer(Modifier.weight(1f)) }
+                }
+            }
+        }
+    }
+
+    val context = gauges.filter { (display, _) ->
+        display.tier == PidTier.C || display.category == PidCategory.HOUSEKEEPING
+    }
+    if (context.isNotEmpty()) {
+        Column(verticalArrangement = Arrangement.spacedBy(Space.md)) {
+            // "Slow-changing context" is PidCatalog's own description of Tier C, and it is what
+            // this block is: real data, worth finding, never worth a glance while moving.
+            SectionLabel("Context")
+            InstrumentPanel(modifier = Modifier.fillMaxWidth()) {
+                for ((display, sample) in context) ContextRow(display, sample, nowMs)
+            }
+        }
+    }
+
+    SessionBlock(
+        status = status,
+        elapsedSeconds = elapsedSeconds,
+        lastSampleAgeSeconds = lastSampleAgeSeconds,
+        showElapsed = hero.kind != LiveHeroKind.ELAPSED,
+    )
+
     if (status.statusMessage.isNotBlank()) {
         ConsoleLine(status.statusMessage)
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Live: the hero
+// ---------------------------------------------------------------------------
+
+private enum class LiveHeroKind { RPM, ELAPSED }
+
+private data class LiveHero(
+    val kind: LiveHeroKind,
+    val label: String,
+    val value: String,
+    val unit: String?,
+    val caption: String,
+)
+
+/**
+ * Which number owns the live screen.
+ *
+ * RPM, whenever there is a real one. It is the tachometer's job in every cluster this design
+ * borrows from, it is MOTION so it is achromatic, and it changes fast enough that a glance at it
+ * confirms the whole pipeline is alive without reading a count.
+ *
+ * Session elapsed is the fallback rather than a `--` tachometer, on the same reasoning as the trip
+ * report's own hero chain: rule 13 says a hero never says `--`, and spending the screen's largest
+ * element on an absence defeats the hierarchy it exists to create. Elapsed exists from the first
+ * second of every session, so the chain cannot run out. The caption says which case this is, and
+ * an implausible RPM still appears, as a fault-toned tile in the MOTION group, because the fact
+ * that the adapter answered with garbage is itself worth seeing.
+ */
+private fun liveHero(
+    rpm: MeasurementSample?,
+    elapsedSeconds: Long,
+    connectionState: ConnectionState,
+    nowMs: Long,
+): LiveHero {
+    val display = pidDisplayFor(CANONICAL_RPM)
+    val connectionWord = if (connectionState == ConnectionState.LOGGING) {
+        "recording"
+    } else {
+        connectionState.name.lowercase()
+    }
+    val formatted = rpm?.formattedValue(display)
+    if (rpm != null && formatted != null) {
+        val ageMs = nowMs - rpm.wallTimeUtc
+        return LiveHero(
+            kind = LiveHeroKind.RPM,
+            label = "Engine speed",
+            value = formatted,
+            unit = rpm.displayUnit ?: "RPM",
+            caption = if (ageMs > display.tier.staleAfterMs) {
+                "last answered ${ageMs / 1000}s ago"
+            } else {
+                connectionWord
+            },
+        )
+    }
+    return LiveHero(
+        kind = LiveHeroKind.ELAPSED,
+        label = "Session elapsed",
+        value = formatDuration(elapsedSeconds),
+        unit = null,
+        caption = when {
+            rpm != null -> "engine rpm read back implausible"
+            connectionState == ConnectionState.LOGGING -> "waiting for engine rpm"
+            else -> connectionWord
+        },
+    )
+}
+
+// ---------------------------------------------------------------------------
+// Live: one gauge
+// ---------------------------------------------------------------------------
+
+/**
+ * The status tone a live reading has earned, or null when it has earned none and should therefore
+ * keep its category hue. Both cases below already have a word in the status table
+ * (docs/DESIGN_SYSTEM.md section 3); neither invents one.
+ *
+ *  - **No number at all** is FAULT. Either the scheduler flagged the value `IMPLAUSIBLE` and
+ *    stored the raw text instead, or it never parsed as a number. Both mean the same thing to a
+ *    driver, "no real data from the vehicle", which is exactly what FAULT means here.
+ *  - **A number that has stopped arriving** is CAUTION, the table's "stale samples" row. The
+ *    threshold is the PID's own tier budget; see PidTier.
+ */
+private fun liveTone(sample: MeasurementSample, display: PidDisplay, nowMs: Long): Tone? = when {
+    sample.formattedValue(display) == null -> Tone.FAULT
+    nowMs - sample.wallTimeUtc > display.tier.staleAfterMs -> Tone.CAUTION
+    else -> null
+}
+
+@Composable
+private fun RowScope.GaugeTile(display: PidDisplay, sample: MeasurementSample, nowMs: Long) {
+    val text = sample.formattedValue(display)
+    MetricTile(
+        label = display.label,
+        value = text ?: "--",
+        // No unit next to a dash: "-- kPa" reads as a measurement that happens to be missing,
+        // which is precisely the wrong impression for a reading that came back as garbage.
+        unit = if (text != null) sample.displayUnit else null,
+        accent = display.category.accent,
+        tone = liveTone(sample, display, nowMs),
+        modifier = Modifier.weight(1f),
+    )
+}
+
+/** The same reading at `DataRow` weight, for Tier C and housekeeping. */
+@Composable
+private fun ContextRow(display: PidDisplay, sample: MeasurementSample, nowMs: Long) {
+    val text = sample.formattedValue(display)
+    val tone = liveTone(sample, display, nowMs)
+    DataRow(
+        label = display.label,
+        // A DataRow holds one Text by design, so the unit joins the value here rather than getting
+        // its own slot. The separate-unit rule exists to keep a large numeral's left edge and
+        // baseline fixed; nothing at this size is being scanned as a column of digits.
+        value = if (text == null) "--" else listOfNotNull(text, sample.displayUnit).joinToString(" "),
+        valueColor = tone?.color ?: display.category.accent,
+        leadingGlyph = tone?.glyph,
+        glyphColor = tone?.color ?: Ash,
+    )
+}
+
+// ---------------------------------------------------------------------------
+// Live: the app talking about itself
+// ---------------------------------------------------------------------------
+
+/**
+ * Elapsed time, capture counts and link health, demoted from the hero and the tile band to one
+ * subordinate panel of `DataRow`s at the bottom of the screen.
+ *
+ * Not deleted, demoted. Every figure here is still true and still worth having: elapsed answers
+ * "how long have I been driving", the counts are the only proof the GPS collector is running at
+ * all, and the last-sample age is what distinguishes "the car is idling" from "the link died three
+ * minutes ago". They were the top of this screen only because nothing better existed. Now that
+ * real telemetry does, they are the same class of information as the trip report's "Capture and
+ * delivery" block, which is the app's account of its own plumbing, and they get the same treatment.
+ *
+ * The reconnect count keeps its caution tone but loses its separate accent-barred panel: a
+ * dedicated panel for one integer, sitting among panels that carry the drive's actual data, was
+ * exactly the weight mismatch the trip report's adapter-health line already corrected.
+ */
+@Composable
+private fun ColumnScope.SessionBlock(
+    status: LoggingUiState,
+    elapsedSeconds: Long,
+    lastSampleAgeSeconds: Long?,
+    showElapsed: Boolean,
+) {
+    // Threshold styling only. Nothing here changes what is polled or logged; it turns a number
+    // that is already on screen into something whose severity is readable without arithmetic.
+    val sampleTone = when {
+        lastSampleAgeSeconds == null -> Tone.UNKNOWN
+        lastSampleAgeSeconds <= 5 -> Tone.NEUTRAL
+        lastSampleAgeSeconds <= 15 -> Tone.CAUTION
+        else -> Tone.FAULT
+    }
+    val sampleDegraded = sampleTone == Tone.CAUTION || sampleTone == Tone.FAULT
+
+    Column(verticalArrangement = Arrangement.spacedBy(Space.md)) {
+        SectionLabel("Session")
+        InstrumentPanel(modifier = Modifier.fillMaxWidth()) {
+            // Omitted while the hero is showing it, so the screen never prints the same number
+            // twice at two sizes.
+            if (showElapsed) {
+                DataRow("Elapsed", formatDuration(elapsedSeconds))
+            }
+            DataRow("Samples", status.measurementCount.toString())
+            DataRow("GPS fixes", status.locationCount.toString())
+            DataRow(
+                label = "Last sample",
+                value = lastSampleAgeSeconds?.let { "$it s" } ?: "none yet",
+                valueColor = if (sampleDegraded) sampleTone.color else Chalk,
+                leadingGlyph = if (sampleDegraded) sampleTone.glyph else null,
+                glyphColor = sampleTone.color,
+            )
+            if (status.reconnectCount > 0) {
+                DataRow(
+                    label = "Bluetooth reconnects",
+                    value = status.reconnectCount.toString(),
+                    valueColor = StatusCaution,
+                    leadingGlyph = Glyph.BANG,
+                    glyphColor = StatusCaution,
+                )
+            }
+        }
     }
 }
 
