@@ -1,5 +1,6 @@
 package com.ericbarone.drivetrace.ui.theme
 
+import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.graphics.Color
 
 /**
@@ -115,3 +116,80 @@ val StatusLiveFill = Color(0x1A31C56A)
 val StatusCautionFill = Color(0x1AFFC53D)
 val StatusFaultFill = Color(0x1FFF4D4F)
 val AccentMixtureFill = Color(0x1A2ED3C6)
+
+// ---------------------------------------------------------------------------
+// Daylight variants. Explicitly NOT a light theme.
+//
+// The dark-first decision (see Theme.kt and docs/DESIGN_SYSTEM.md section 2) is about night
+// driving and holds regardless of a user toggle: a bright panel at cabin-forward brightness
+// wrecks dark adaptation and reflects off the windscreen. Direct sun is the opposite failure,
+// and the fix for it is not inverting the display, it is spending more luminance on the one
+// thing that has to survive a two-second glance. So Ink stays the ground in both modes and only
+// the hero readout's ink gets brighter.
+//
+// Each value below is the same hue as its standard twin, lifted toward white rather than
+// re-picked: the category contract (mixture is teal forever, thermal is blue forever) has to
+// survive the mode change or the pre-attentive channel breaks the moment a user toggles it.
+// ---------------------------------------------------------------------------
+
+/** Boosted MOTION / primary readout. The one place pure white is allowed, and only on a
+ *  64sp numeral: the smearing problem that rules #000000 out as a surface doesn't apply to
+ *  foreground text. ~21:1 on Ink. */
+val DaylightChalk = Color(0xFFFFFFFF)
+
+/** Boosted MIXTURE. */
+val DaylightMixture = Color(0xFF7DF5E8)
+
+/** Boosted AIRPATH. */
+val DaylightAirpath = Color(0xFFC0B4FF)
+
+/** Boosted THERMAL. */
+val DaylightThermal = Color(0xFFA8E4FF)
+
+/** Boosted IGNITION. */
+val DaylightIgnition = Color(0xFFFFA8DC)
+
+/**
+ * The mapping a hero readout runs its colours through, threaded down as a CompositionLocal
+ * exactly like [LocalReadoutType], so the daylight mode is one provider swap at the theme root
+ * rather than a `if (highContrast)` at every call site.
+ *
+ * Unknown colours pass through untouched, which is the graceful part: a future accent that
+ * forgets to register a daylight twin renders at its normal luminance instead of crashing or
+ * rendering as something unrelated.
+ */
+data class ReadoutPalette(
+    /** Colour of the hero's uppercase field legend. */
+    val heroLabel: Color = Ash,
+    /** Colour of the hero's provenance caption. */
+    val heroCaption: Color = Slate,
+    private val heroAccents: Map<Color, Color> = emptyMap(),
+) {
+    fun hero(accent: Color): Color = heroAccents[accent] ?: accent
+}
+
+/** Identity. Every colour renders exactly as the palette above defines it. */
+val StandardReadoutPalette = ReadoutPalette()
+
+/**
+ * Direct-sun variant. Note `Slate to Ash`: the hero renders in Slate when there is no value to
+ * show ("--"), and at 2.2:1 that is genuinely invisible outdoors, so even the absence of a
+ * number has to survive. Ash also replaces Slate on the caption for the same reason.
+ */
+val DaylightReadoutPalette = ReadoutPalette(
+    heroLabel = Mist,
+    heroCaption = Mist,
+    heroAccents = mapOf(
+        // AccentMotion is Chalk and AccentHousekeeping is Ash, so those two tokens are keyed by
+        // their underlying colour; adding both names would be a duplicate map key.
+        Chalk to DaylightChalk,
+        Ash to Mist,
+        AccentMixture to DaylightMixture,
+        AccentAirpath to DaylightAirpath,
+        AccentThermal to DaylightThermal,
+        AccentIgnition to DaylightIgnition,
+        Slate to Ash,
+    ),
+)
+
+val LocalReadoutPalette = staticCompositionLocalOf { StandardReadoutPalette }

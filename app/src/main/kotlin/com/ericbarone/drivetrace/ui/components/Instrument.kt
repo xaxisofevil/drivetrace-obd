@@ -53,6 +53,7 @@ import com.ericbarone.drivetrace.ui.theme.DriveTraceShapes
 import com.ericbarone.drivetrace.ui.theme.Hairline
 import com.ericbarone.drivetrace.ui.theme.HairlineBright
 import com.ericbarone.drivetrace.ui.theme.Ink
+import com.ericbarone.drivetrace.ui.theme.LocalReadoutPalette
 import com.ericbarone.drivetrace.ui.theme.LocalReadoutType
 import com.ericbarone.drivetrace.ui.theme.Mist
 import com.ericbarone.drivetrace.ui.theme.Panel
@@ -300,24 +301,28 @@ fun HeroReadout(
     caption: String? = null,
 ) {
     val type = LocalReadoutType.current
+    // The one place the daylight boost applies. Routing the accent through the palette rather
+    // than branching on a flag here is what keeps "high contrast" from becoming a second copy of
+    // every screen: the theme swaps one CompositionLocal and this composable is the only reader.
+    val palette = LocalReadoutPalette.current
     Column(modifier = modifier.fillMaxWidth()) {
-        Text(label.uppercase(), style = type.label, color = Ash)
+        Text(label.uppercase(), style = type.label, color = palette.heroLabel)
         Spacer(Modifier.height(Space.sm))
         Row(verticalAlignment = Alignment.Bottom) {
-            Text(value, style = type.hero, color = accent, maxLines = 1)
+            Text(value, style = type.hero, color = palette.hero(accent), maxLines = 1)
             if (unit != null) {
                 Spacer(Modifier.width(Space.sm))
                 Text(
                     unit,
                     style = type.unit,
-                    color = Ash,
+                    color = palette.heroLabel,
                     modifier = Modifier.padding(bottom = 12.dp),
                 )
             }
         }
         if (caption != null) {
             Spacer(Modifier.height(Space.xs))
-            Text(caption, style = type.mono, color = Slate)
+            Text(caption, style = type.mono, color = palette.heroCaption)
         }
     }
 }

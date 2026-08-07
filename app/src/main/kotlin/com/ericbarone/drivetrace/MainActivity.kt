@@ -14,6 +14,7 @@ import com.ericbarone.drivetrace.service.BackfillRetryWorker
 import com.ericbarone.drivetrace.service.DriveLoggingService
 import com.ericbarone.drivetrace.service.LoggingStatus
 import com.ericbarone.drivetrace.service.LoggingUiState
+import com.ericbarone.drivetrace.ui.DisplaySettings
 import com.ericbarone.drivetrace.ui.HistoryScreen
 import com.ericbarone.drivetrace.ui.LoggingScreen
 import com.ericbarone.drivetrace.ui.SetupScreen
@@ -27,9 +28,13 @@ class MainActivity : ComponentActivity() {
         // top of WorkManager's own network-regained retries. Cheap and safe to call every launch,
         // enqueueUniqueWork + KEEP means this just no-ops if a sweep is already queued/running.
         BackfillRetryWorker.enqueueSweep(applicationContext)
+        // Before setContent, so the first frame is already in the right display mode rather than
+        // rendering the standard palette and correcting itself a frame later.
+        DisplaySettings.load(applicationContext)
 
         setContent {
-            DriveTraceTheme {
+            val highContrast by DisplaySettings.highContrast.collectAsState()
+            DriveTraceTheme(highContrast = highContrast) {
                 val status by LoggingStatus.state.collectAsState()
                 var showHistory by remember { mutableStateOf(false) }
                 when {

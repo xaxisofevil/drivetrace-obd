@@ -9,6 +9,7 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -25,7 +26,9 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.selection.selectable
+import androidx.compose.foundation.selection.toggleable
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -34,6 +37,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.material3.Text
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
@@ -46,6 +50,8 @@ import com.ericbarone.drivetrace.obd.VehicleProfile
 import com.ericbarone.drivetrace.ui.components.ActionBar
 import com.ericbarone.drivetrace.ui.components.Caption
 import com.ericbarone.drivetrace.ui.components.EmptyState
+import com.ericbarone.drivetrace.ui.components.Glyph
+import com.ericbarone.drivetrace.ui.components.GlyphMark
 import com.ericbarone.drivetrace.ui.components.HeaderBar
 import com.ericbarone.drivetrace.ui.components.InstrumentPanel
 import com.ericbarone.drivetrace.ui.components.PrimaryAction
@@ -56,6 +62,7 @@ import com.ericbarone.drivetrace.ui.components.Tone
 import com.ericbarone.drivetrace.ui.theme.AccentMixture
 import com.ericbarone.drivetrace.ui.theme.Ash
 import com.ericbarone.drivetrace.ui.theme.Chalk
+import com.ericbarone.drivetrace.ui.theme.DriveTraceShapes
 import com.ericbarone.drivetrace.ui.theme.Hairline
 import com.ericbarone.drivetrace.ui.theme.Ink
 import com.ericbarone.drivetrace.ui.theme.LocalReadoutType
@@ -64,9 +71,8 @@ import com.ericbarone.drivetrace.ui.theme.PanelActive
 import com.ericbarone.drivetrace.ui.theme.Slate
 import com.ericbarone.drivetrace.ui.theme.Space
 
-private const val PREFS_NAME = "drivetrace_prefs"
-private const val PREF_LAST_DEVICE = "last_device_address"
-private const val PREF_VEHICLE_PROFILE = "vehicle_profile"
+// PREFS_NAME / PREF_LAST_DEVICE / PREF_VEHICLE_PROFILE / PREF_HIGH_CONTRAST live in
+// DisplaySettings.kt now, same package, since the theme layer needs one of them too.
 
 private fun requiredPermissions(): Array<String> =
     buildList {
@@ -120,6 +126,7 @@ fun SetupScreen(onStartLogging: (String, VehicleProfile) -> Unit, onShowHistory:
         val saved = savedName?.let { name -> VehicleProfile.entries.find { it.name == name } }
         mutableStateOf(saved ?: VehicleProfile.entries.first())
     }
+    val highContrast by DisplaySettings.highContrast.collectAsState()
 
     val permissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions(),
@@ -208,6 +215,19 @@ fun SetupScreen(onStartLogging: (String, VehicleProfile) -> Unit, onShowHistory:
                     detail = "${profile.name.lowercase()} PID catalog",
                 )
             }
+
+            Spacer(Modifier.height(Space.xs))
+            SectionLabel("Display")
+
+            // One row, and it belongs here rather than behind a settings screen: the choice is
+            // "is it sunny right now", which is answered while sitting in the car about to press
+            // Start, not once during onboarding.
+            ToggleRow(
+                checked = highContrast,
+                onToggle = { DisplaySettings.setHighContrast(context, it) },
+                title = "Daylight readout boost",
+                detail = "Brighter hero numerals for direct sun. Background stays dark.",
+            )
 
             Spacer(Modifier.height(Space.xs))
             SectionLabel("Adapter")
@@ -308,6 +328,63 @@ private fun SelectableRow(
                 Text("LIKELY", style = type.label, color = Ash)
             }
         }
+    }
+}
+
+/**
+ * A binary setting. Same panel-is-the-target treatment as [SelectableRow] and the same three
+ * redundant selection signals, with `Role.Switch` instead of `Role.RadioButton` so TalkBack
+ * announces it as a toggle. Deliberately not a Material `Switch`: an M3 switch is a 52x32dp pill
+ * with a sliding thumb, which is the one shape this design system has ruled out everywhere else.
+ */
+@Composable
+private fun ToggleRow(
+    checked: Boolean,
+    onToggle: (Boolean) -> Unit,
+    title: String,
+    detail: String,
+    modifier: Modifier = Modifier,
+) {
+    val type = LocalReadoutType.current
+    InstrumentPanel(
+        modifier = modifier
+            .fillMaxWidth()
+            .toggleable(value = checked, role = Role.Switch, onValueChange = onToggle),
+        accent = if (checked) AccentMixture else null,
+        fill = if (checked) PanelActive else com.ericbarone.drivetrace.ui.theme.Panel,
+        border = if (checked) AccentMixture.copy(alpha = 0.45f) else Hairline,
+        contentPadding = PaddingValues(horizontal = Space.lg, vertical = Space.md),
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            CheckMark(checked)
+            Spacer(Modifier.width(Space.md))
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    title,
+                    style = type.small,
+                    color = if (checked) Chalk else Mist,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                Text(detail, style = type.unit, color = Slate, maxLines = 2)
+            }
+        }
+    }
+}
+
+/** On/off indicator. Square with the chip radius, so it can never be confused with the round
+ *  single-choice [SelectionMark] two rows above it. */
+@Composable
+private fun CheckMark(checked: Boolean, modifier: Modifier = Modifier) {
+    Box(
+        modifier = modifier
+            .size(18.dp)
+            .clip(DriveTraceShapes.chip)
+            .background(if (checked) AccentMixture else Color.Transparent)
+            .border(1.5.dp, if (checked) AccentMixture else Hairline, DriveTraceShapes.chip),
+        contentAlignment = Alignment.Center,
+    ) {
+        if (checked) GlyphMark(Glyph.TICK, Ink, sizeDp = 12)
     }
 }
 

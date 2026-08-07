@@ -159,6 +159,19 @@ real numbers without a live round-trip to the server). Persisted
 specifically so a failed upload survives the app being closed, see
 KNOWN_ISSUES.md's "Trip history and forced backfill retry" entry.
 
+## Local preferences (Android)
+
+Not part of any of the three data shapes; user settings, all in one
+SharedPreferences store named `drivetrace_prefs`. Keys are declared in
+`ui/DisplaySettings.kt` rather than privately per screen, since more than
+one layer reads them now.
+
+| Key | Type | Meaning |
+|---|---|---|
+| `last_device_address` | string | MAC of the last-used ELM327 adapter |
+| `vehicle_profile` | string | `VehicleProfile` enum name, picks the PID catalog |
+| `high_contrast_daylight` | bool | Daylight readout boost, default false. Not a light theme; see DESIGN_SYSTEM.md section 3 |
+
 ## Where each shape lives
 
 - **Room** (Android, authoritative): `app/src/main/kotlin/.../data/Entities.kt`

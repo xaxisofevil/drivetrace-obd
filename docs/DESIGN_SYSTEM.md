@@ -132,6 +132,28 @@ trouble". Every one of these is rendered with its glyph alongside it.
 Each also has a low-alpha fill (`StatusCautionFill` etc.) used for full-width bands, so an alert
 reads as tinted glass over the panel rather than a solid block of alarm colour.
 
+### Daylight variants: the same display, in direct sun
+
+A user setting, off by default. Explicitly **not a light theme.** The dark-first argument in
+section 2 is about night driving and does not stop being true because it is noon; direct sun is a
+different failure, and its fix is not inverting the display but spending more luminance on the
+one thing that has to survive a two-second glance. `Ink` stays the ground in both modes.
+
+| Standard | Daylight | Hex |
+|---|---|---|
+| `Chalk` (= `AccentMotion`) | `DaylightChalk` | `#FFFFFF` |
+| `AccentMixture` | `DaylightMixture` | `#7DF5E8` |
+| `AccentAirpath` | `DaylightAirpath` | `#C0B4FF` |
+| `AccentThermal` | `DaylightThermal` | `#A8E4FF` |
+| `AccentIgnition` | `DaylightIgnition` | `#FFA8DC` |
+| `Ash` (= `AccentHousekeeping`) | `Mist` | `#9AA9BA` |
+| `Slate` (hero with no value, and the hero caption) | `Ash` | `#7C8B9E` |
+
+Every daylight value is its standard twin lifted toward white, not a fresh pick: rule 4's category
+contract has to survive the mode change, or the pre-attentive hue channel breaks the moment a
+user flips the switch. Pure white appears here and nowhere else, and only on a 64sp numeral; the
+OLED smear that rules `#000000` out as a *surface* has no bearing on foreground text.
+
 ## 4. Typography
 
 Defined in `ui/theme/Type.kt`. No font file is bundled; Roboto is the platform font and its
@@ -214,6 +236,18 @@ is a design-system change and belongs in this document.
 Glyphs are drawn with `Canvas` rather than pulled from `material-icons`. Six shapes do not
 justify an extra dependency and a few hundred KB of vector assets.
 
+**How the daylight boost reaches the hero without touching any screen.** `ReadoutPalette`
+(`ui/theme/Color.kt`) is a map from a standard token to its daylight twin plus the two greys the
+hero's label and caption use, provided as `LocalReadoutPalette` next to the existing
+`LocalReadoutType`. `DriveTraceTheme(highContrast = …)` swaps which instance is provided;
+`HeroReadout` is the only composable that reads it, running its `accent` through
+`palette.hero(accent)`. No screen has an `if (highContrast)` in it, and an unregistered colour
+passes through unchanged rather than failing, so a future accent that forgets a daylight twin
+renders at normal luminance instead of rendering as something unrelated. The toggle's own value
+lives in `ui/DisplaySettings.kt`, a process-wide `StateFlow` over SharedPreferences, mirroring
+`service/LoggingStatus`; the theme takes it as a parameter so `ui.theme` keeps no dependency back
+on the screens above it.
+
 **Exactly one animation exists in the app:** `StatusDot`'s slow alpha pulse, roughly one cycle a
 second, when data is arriving. Motion is the strongest pre-attentive cue there is, so it only
 stays meaningful if it is the only thing moving.
@@ -222,8 +256,13 @@ stays meaningful if it is the only thing moving.
 
 ### SetupScreen — pre-flight
 
-Two decisions and one action, so it is two labelled config sections over a pinned action bar,
-not a scrolling column of controls. Bonded devices are `SelectableRow` panels where the whole
+Two decisions, one setting and one action, so it is three labelled config sections over a pinned
+action bar, not a scrolling column of controls. The **Display** section holds the single daylight
+toggle: a `ToggleRow`, same panel-is-the-target treatment as `SelectableRow` with `Role.Switch`
+and a square check mark rather than the round single-choice mark, deliberately not a Material
+`Switch` (a 52x32dp sliding pill is the one shape this system rules out everywhere else). It sits
+on the pre-flight screen rather than behind a settings screen because the question it answers is
+"is it sunny right now", asked while sitting in the car about to press Start. Bonded devices are `SelectableRow` panels where the whole
 panel is the target rather than a 20dp `RadioButton` circle, selection is carried by accent bar +
 border + fill simultaneously, the MAC address is monospaced (it is an identifier to compare
 character by character, not prose), and adapters matching the name heuristic are marked `LIKELY`.
@@ -300,6 +339,9 @@ pipeline did.
 8. Primary actions are 56dp and live in a pinned `ActionBar`, never at the end of a scroll.
 9. Only `StatusDot` animates.
 10. No `TopAppBar`, no hamburger, no bottom nav. Three screens do not need a navigation framework.
+11. A colour a hero readout can carry registers a daylight twin in `DaylightReadoutPalette`. The
+    map is the whole daylight mode; a token missing from it silently renders at night luminance
+    in direct sun.
 
 ---
 
@@ -394,9 +436,14 @@ things to charge for since nothing functional sits behind the paywall.
   in the driver's head. **Local and CSV only:** `CsvExporter`'s `metadata.json` picks the note up
   for free, but the server's `/sessions/{id}/end` endpoint takes no `notes` field, so the DuckDB
   copy's `notes` column stays null until someone changes the server.
-- **A daylight-readable high-contrast mode.** Distinct from a light theme: same dark ground, but
-  boosted luminance on hero readouts for direct sun. This is what the dark-first decision should
-  be paired with, rather than a conventional light mode.
+- ~~**A daylight-readable high-contrast mode.**~~ **Built,** and see section 3's daylight table
+  for the tokens and section 6 for the mechanism. Still not a light theme: `Ink` stays the ground
+  in both modes and only `HeroReadout` reads the boosted palette. Toggle lives on SetupScreen
+  under a **Display** section, persisted as `high_contrast_daylight` in the existing
+  `drivetrace_prefs` store. **Deliberately hero-only for now:** `MetricTile`, `DataRow` and the
+  status chips are unchanged, so the second-order band is still `Mist`/`Ash` in direct sun. The
+  mechanism extends to them for free (read `LocalReadoutPalette` in those composables too) if
+  real use says the hero alone isn't enough.
 - **DTC display.** DTCs are already read once at session start and stored as events, but the UI
   never surfaces them. A check-engine light with a code and its plain-English meaning on the
   setup screen is high perceived value for effort that is nearly zero.

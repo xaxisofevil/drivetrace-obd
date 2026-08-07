@@ -63,8 +63,14 @@ private val DriveTraceColorScheme = darkColorScheme(
     scrim = Ink,
 )
 
+/**
+ * [highContrast] selects the daylight readout boost (see [DaylightReadoutPalette]). It is a
+ * parameter rather than a preference this function reads for itself, so the theme stays a pure
+ * function of its inputs and ui.theme keeps no dependency back on the screens above it; the
+ * caller (MainActivity) collects the value from `ui.DisplaySettings`.
+ */
 @Composable
-fun DriveTraceTheme(content: @Composable () -> Unit) {
+fun DriveTraceTheme(highContrast: Boolean = false, content: @Composable () -> Unit) {
     val view = LocalView.current
     if (!view.isInEditMode) {
         SideEffect {
@@ -79,7 +85,11 @@ fun DriveTraceTheme(content: @Composable () -> Unit) {
         }
     }
 
-    CompositionLocalProvider(LocalReadoutType provides ReadoutTypography()) {
+    CompositionLocalProvider(
+        LocalReadoutType provides ReadoutTypography(),
+        LocalReadoutPalette provides
+            if (highContrast) DaylightReadoutPalette else StandardReadoutPalette,
+    ) {
         MaterialTheme(
             colorScheme = DriveTraceColorScheme,
             typography = DriveTraceTypography,
