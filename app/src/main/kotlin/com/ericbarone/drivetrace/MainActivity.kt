@@ -33,8 +33,9 @@ class MainActivity : ComponentActivity() {
         DisplaySettings.load(applicationContext)
 
         setContent {
+            val skinId by DisplaySettings.skin.collectAsState()
             val highContrast by DisplaySettings.highContrast.collectAsState()
-            DriveTraceTheme(highContrast = highContrast) {
+            DriveTraceTheme(skinId = skinId, highContrast = highContrast) {
                 val status by LoggingStatus.state.collectAsState()
                 // rememberSaveable, not remember: this screen used to warp back to Setup on
                 // rotation (see KNOWN_ISSUES.md) because plain remember state doesn't survive

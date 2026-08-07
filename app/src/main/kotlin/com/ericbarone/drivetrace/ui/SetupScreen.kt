@@ -68,6 +68,7 @@ import com.ericbarone.drivetrace.ui.theme.Ink
 import com.ericbarone.drivetrace.ui.theme.LocalReadoutType
 import com.ericbarone.drivetrace.ui.theme.Mist
 import com.ericbarone.drivetrace.ui.theme.PanelActive
+import com.ericbarone.drivetrace.ui.theme.SkinId
 import com.ericbarone.drivetrace.ui.theme.Slate
 import com.ericbarone.drivetrace.ui.theme.Space
 
@@ -126,6 +127,7 @@ fun SetupScreen(onStartLogging: (String, VehicleProfile) -> Unit, onShowHistory:
         val saved = savedName?.let { name -> VehicleProfile.entries.find { it.name == name } }
         mutableStateOf(saved ?: VehicleProfile.entries.first())
     }
+    val skinId by DisplaySettings.skin.collectAsState()
     val highContrast by DisplaySettings.highContrast.collectAsState()
 
     val permissionLauncher = rememberLauncherForActivityResult(
@@ -218,6 +220,23 @@ fun SetupScreen(onStartLogging: (String, VehicleProfile) -> Unit, onShowHistory:
 
             Spacer(Modifier.height(Space.xs))
             SectionLabel("Display")
+
+            // Same plain loop and the same SelectableRow the vehicle picker above uses, for the
+            // same reason: a closed set of two or three named options, whole panel as the target,
+            // selection carried by accent bar + border + fill at once. Adding a skin is one entry
+            // in SkinId and nothing here.
+            //
+            // Above the daylight toggle rather than below it because it is the outer of the two
+            // settings: the skin decides what the palette is, the toggle decides how much
+            // luminance the hero spends out of it.
+            for (skin in SkinId.entries) {
+                SelectableRow(
+                    selected = skin == skinId,
+                    onSelect = { DisplaySettings.setSkin(context, skin) },
+                    title = skin.displayName,
+                    detail = skin.description,
+                )
+            }
 
             // One row, and it belongs here rather than behind a settings screen: the choice is
             // "is it sunny right now", which is answered while sitting in the car about to press
