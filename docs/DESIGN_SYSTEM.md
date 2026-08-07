@@ -425,7 +425,15 @@ seventies-cluster theme, a high-contrast daylight theme, an OEM-alike per vehicl
 swap rather than a rewrite. Low effort, and cosmetic packs are among the least objectionable
 things to charge for since nothing functional sits behind the paywall.
 
+The daylight variant named above has since been built (section 3) and is a useful proof of the
+claim, with one correction to it: it needed a `CompositionLocal` carrying a token *mapping*, not
+just a second set of token values, because the screens name colours by their standard token. A
+full skin would work the same way, and `ReadoutPalette` is the seam to widen.
+
 ## 9. Smaller things noticed while working
+
+All four are built. Kept here rather than deleted, since what each one turned out to require, and
+what got deliberately left out of it, is the useful part.
 
 - ~~**Adapter health from data already collected.**~~ **Built.** `computeAdapterHealth`
   (`data/SessionDiagnostics.kt`) counts `PID_NO_DATA` / `PID_COOLDOWN` events for one session and
