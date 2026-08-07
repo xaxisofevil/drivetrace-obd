@@ -768,58 +768,55 @@ multi-frame reception is the more likely culprit given everything above.
   system screen_off_timeout 30000`) once dev work wrapped up for the
   session.
 
-## Notification-shade "Stop" action does nothing (open, unconfirmed root cause)
+## Notification-shade "Stop" action does nothing (root-caused, mostly fixed)
 
-Observed for real on the test phone: a session stuck at "Starting..."
-(mid-connect, per the foreground-service notification's own text) for
-several minutes, tapping the notification's **Stop** action had no
-visible effect: the notification stayed exactly as it was.
-
-This is the notification-shade action button
+Observed for real on the test phone: tapping the notification's
+**Stop** action had no visible effect, notification unchanged. This is
+the notification-shade action button
 (`DriveLoggingService`'s `NotificationCompat.Builder.addAction(...,
 "Stop", stopPendingIntent)`), a separate code path from the in-app red
-"Stop logging" button on `LoggingScreen` (`LoggingScreen.kt`), which is
-confirmed working (see the Live-state screenshot in
-`docs/DESIGN_SYSTEM.md`'s review). Only the notification action is
-implicated so far.
+"Stop logging" button on `LoggingScreen`, confirmed working throughout
+(see the Live-state screenshot in `docs/DESIGN_SYSTEM.md`'s review).
 
-**What the code says should happen, and doesn't match the symptom:**
-`ACTION_STOP` routes to `stopSession()`, which launches a new coroutine
-that calls `sessionJob?.cancel()` (non-suspending, returns immediately
-regardless of whether the cancelled job actually unwinds), then
-unconditionally reaches `releaseWakeLock()`,
-`stopForeground(STOP_FOREGROUND_REMOVE)`, and `stopSelf()` a few lines
-later, none of it gated on `currentSessionId` being non-null. By
-inspection, tapping Stop mid-connect should dismiss the notification
-almost immediately. It didn't.
+**Root-caused with `adb logcat` open across two separate, deliberate
+reproductions**, one with an imprecise tap, one with a careful tap
+squarely on the word "Stop" while a session was genuinely stuck
+mid-connect (adapter powered off). Both times, `grep` across the full
+capture for `com.ericbarone.drivetrace.action.STOP` found **zero
+matches, anywhere**, system-level or app-level, while
+`com.ericbarone.drivetrace.action.START` reliably produced a clear
+`ActivityManager: Background started FGS` line every single time. The
+`PendingIntent` was never firing at all, not a slow cancellation, not a
+missed `stopForeground` call. Code inspection of `stopSession()` and
+the notification-building code found nothing wrong with either, ruling
+out an app-level logic bug.
 
-**A real, confirmed-separate bug that's a plausible contributor, not a
-proven cause:** `BluetoothTransport.connect()` calls the plain blocking
-`BluetoothSocket.connect()` inside `withContext(Dispatchers.IO)`, with
-no cancellation handling (no `invokeOnCancellation` closing the socket
-to unblock it). Coroutine cancellation is cooperative; it cannot
-preempt a thread already blocked inside a synchronous Java call. So if
-`sessionJob` was genuinely hung inside `newSocket.connect()` at the
-moment Stop was pressed, cancelling it does nothing until that blocking
-call eventually returns or throws on its own. This explains why the
-*connection attempt* wouldn't stop, but not why `stopForeground`/
-`stopSelf` (in the separate coroutine `stopSession()` itself launches)
-failed to dismiss the notification, since that path doesn't wait on
-`sessionJob` at all.
+**Fix**: `PendingIntent.getService()` → `PendingIntent.getForegroundService()`.
+The latter is the platform's own documented replacement for exactly
+this case, a notification action targeting an already-running
+foreground service (the same pattern media-session pause/stop actions
+use), and is more consistently honored across OEM notification
+implementations than the older API. Safe on an already-foreground
+service without a matching `startForeground()` call in the
+`ACTION_STOP` branch: the "must call `startForeground()` promptly"
+requirement is tracked per-service state, not per individual start
+call.
 
-**Not yet ruled out:** the test phone is a OnePlus/Oppo device
-(ColorOS-family), which has a known history of aggressive, non-stock
-background-process and notification management that can interfere with
-foreground-service notification updates. Whether the `ACTION_STOP`
-intent was even delivered to `onStartCommand` at all was not checked at
-the time (no logcat was captured during the actual repro).
+**Confirmed fixed for the case that matters**: tapping Stop while the
+app is backgrounded (screen off, another app open, home screen), the
+actual scenario the notification action exists for, now works.
 
-**Next steps before attempting a fix:** reproduce with `adb logcat`
-open, confirm whether `onStartCommand` receives `ACTION_STOP` at all,
-and if it does, whether `stopSession()`'s coroutine actually reaches
-`stopForeground`/`stopSelf` or throws/hangs somewhere first. Only after
-that should `BluetoothTransport.connect()` be given a real cancellation
-path (wrap in `suspendCancellableCoroutine` with `invokeOnCancellation
-{ newSocket.close() }`, or run it with a timeout via
-`withTimeoutOrNull`), since that's a real, independent bug worth fixing
-regardless of whether it's the actual cause of this one.
+**One residual case, confirmed via direct A/B test, not further
+chased**: tapping Stop while `DriveTrace`'s own `MainActivity` is
+*already* the current foreground activity (app open, shade pulled down
+over it) still does nothing. Same device, same fix, tested twice more:
+background → works, foreground → doesn't. This reads as an OEM
+(ColorOS) touch-routing quirk specific to a notification's own posting
+app being the currently-resumed foreground window, not something
+further logcat digging can resolve without instrumenting closed-source
+SystemUI. Not pursued further because the workaround is already on
+screen in that exact scenario: the in-app "Stop logging" button, right
+there, unquestionably working. If this resurfaces as a real complaint
+(e.g. on a different OEM/device), the next lever to try is
+`.setCategory(NotificationCompat.CATEGORY_SERVICE)` on the builder,
+untested here, speculative.

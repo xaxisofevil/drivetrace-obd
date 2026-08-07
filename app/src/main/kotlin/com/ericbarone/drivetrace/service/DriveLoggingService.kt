@@ -389,7 +389,18 @@ class DriveLoggingService : Service() {
             this, 0, Intent(this, MainActivity::class.java),
             PendingIntent.FLAG_IMMUTABLE,
         )
-        val stopPendingIntent = PendingIntent.getService(
+        // getForegroundService(), not getService(): confirmed for real, twice, with logcat
+        // open both times, that a plain getService() PendingIntent tapped from this
+        // notification's action never reached onStartCommand at all (ACTION_START logs a
+        // clear ActivityManager line every time; ACTION_STOP left zero trace anywhere,
+        // system-level or app-level, on this OEM's ColorOS build). getForegroundService()
+        // is the platform's own recommended replacement for exactly this case, a notification
+        // action targeting an already-foreground service, and is the pattern media-session
+        // pause/stop actions use for the same reason. Safe to call again on an
+        // already-foreground service: the "must call startForeground() promptly" requirement
+        // is tracked per-service, not per start call, so this doesn't need a matching
+        // startForeground() in the ACTION_STOP branch. See KNOWN_ISSUES.md.
+        val stopPendingIntent = PendingIntent.getForegroundService(
             this, 0, stopIntent(this),
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
         )
