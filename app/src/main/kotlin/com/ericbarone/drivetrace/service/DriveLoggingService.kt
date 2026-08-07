@@ -267,6 +267,15 @@ class DriveLoggingService : Service() {
                                     measurementCount = current.measurementCount + 1,
                                     lastSampleAtMs = System.currentTimeMillis(),
                                     engineDetected = engineDetected,
+                                    // The live gauge cluster's whole data source, updated at
+                                    // exactly the point this same sample is committed to Room, so
+                                    // the screen can never show a value that was never recorded.
+                                    // Last write wins per canonicalName; the map holds one entry
+                                    // per PID in the catalog, roughly thirty, so copying it per
+                                    // poll costs far less than the Room insert immediately above
+                                    // it, and a StateFlow needs a fresh instance to emit at all.
+                                    latestValues = current.latestValues +
+                                        (sample.canonicalName to sample),
                                 )
                             },
                             onEvent = { event ->

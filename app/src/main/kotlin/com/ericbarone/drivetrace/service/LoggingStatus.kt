@@ -1,5 +1,6 @@
 package com.ericbarone.drivetrace.service
 
+import com.ericbarone.drivetrace.obd.MeasurementSample
 import com.ericbarone.drivetrace.streaming.AnalysisSummary
 import kotlinx.coroutines.flow.MutableStateFlow
 
@@ -33,6 +34,25 @@ data class LoggingUiState(
     val reconnectCount: Int = 0,
     val statusMessage: String = "",
     val engineDetected: TriState = TriState.PENDING,
+    /**
+     * The most recent sample from every PID that has answered this session, keyed on
+     * `canonicalName` (the real strings, see docs/DATA_SCHEMA.md). This is what makes a live
+     * gauge cluster possible at all: before it, this object carried session bookkeeping only and
+     * the Logging screen could not show RPM, speed or trim while driving no matter how it was
+     * styled.
+     *
+     * Deliberately [MeasurementSample], the scheduler's own poll-result type, rather than a
+     * parallel UI shape. It already carries everything a live readout needs, value, unit,
+     * `qualityFlag` and `wallTimeUtc` for staleness, and reusing it means the number on screen is
+     * literally the row that went into Room rather than a re-derived copy that can drift from it.
+     *
+     * A PID that has never answered is simply absent, not present with a null value: the UI's
+     * rule is that a gauge which has nothing to say does not occupy a slot. Note the map holds
+     * the latest sample whatever its quality, including `IMPLAUSIBLE` ones, so the UI can say
+     * "this reading is currently garbage" rather than quietly showing the last good number as if
+     * it were current.
+     */
+    val latestValues: Map<String, MeasurementSample> = emptyMap(),
     /** Set once the post-Stop backfill (see StreamingClient.backfillSession) finishes. */
     val backfillStatus: TriState = TriState.PENDING,
     val backfillMessage: String = "",
