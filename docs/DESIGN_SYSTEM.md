@@ -535,3 +535,54 @@ single-user case, per `ANALYSIS_STARTING_POINTS.md` item 2, extended across user
 across one user's own sessions). That last part means this idea and the single-user cross-drive
 comparison gap aren't two features, they're the same bucketing infrastructure built once and
 then pointed at two different populations.
+
+## 12. Automatic drive-end detection (designed, not built)
+
+Right now every session ends by a human tapping Stop, in-app or (as of the notification fix)
+from the shade. The ask: detect the drive is actually over and end the session automatically,
+in a way that survives a stick-shift car with no "Park" gear at all.
+
+**Gear position is the wrong signal, full stop.** A generic Mode 01 gear-position PID barely
+exists across real vehicles even on automatics, and a manual transmission has no Park state to
+detect in the first place, neutral-plus-parking-brake isn't reliably exposed either. Any design
+built around reading the gearbox is dead on arrival for exactly the vehicles this feature most
+needs to work on.
+
+**Engine RPM sustained at zero is the actual answer.** It's the one signal that means the same
+thing regardless of transmission type, make, or model: the engine stopped running. No new PID,
+no per-vehicle special-casing, Tier A already samples it fast.
+
+**The real design problem is the threshold, not the signal.** A short debounce falsely ends the
+session at the first red light on any car with idle stop-start (RPM genuinely drops to 0 for
+the duration of the stop, by design, and modern US-market cars increasingly have this even where
+past model years didn't). A multi-minute sustained-zero requirement avoids this almost entirely,
+stop-start cycles resume in well under a minute; something on the order of 5 minutes continuous
+is conservative enough to essentially never misfire on a stoplight while still ending a session
+reasonably promptly after a real parking event. Speed reading zero for the same window is a
+cheap, redundant sanity check against a stray RPM sensor glitch, not the primary signal.
+
+**A secondary, corroborating signal worth wiring in alongside RPM:** many cheap ELM327 clones
+draw power straight from the OBD port and lose power the instant the ignition circuit feeding
+that port is cut, so "engine off" can also show up as the adapter dropping off Bluetooth
+entirely rather than answering "0." The existing reconnect/backoff logic already handles a
+transient drop; a reconnect attempt that's been failing continuously for several minutes,
+clearly past the range of a normal signal hiccup, is itself evidence the drive is over on a
+vehicle whose OBD port is switched with ignition (common) rather than always-hot.
+
+**UX stance, matching how this app already treats uncertain calls elsewhere:** flag and act
+conservatively, don't require the user to be watching. Nobody's looking at their phone the
+moment they turn the engine off and get out, so a "tap to confirm" prompt with any real timeout
+is pointless, by the time anyone would see it the moment's passed. Auto-stopping after the
+threshold and labeling the resulting trip report as auto-ended (so the user isn't confused about
+why a session closed without them tapping anything) is the right default, the same
+flag-don't-silently-decide instinct behind how `IMPLAUSIBLE` measurements and the demoted DTC
+mode-echo bytes are handled: never hide that a judgment call was made, just don't block on a
+human confirming it in real time. Should be a toggle (default on, since this is what was asked
+for) with a configurable minutes threshold, following the same `SharedPreferences` pattern
+already used for the daylight-contrast toggle.
+
+**Where it hooks in:** `DriveLoggingService`'s own sample-processing path (wherever it already
+sees each Tier A RPM reading) tracking a running "RPM has read ~zero continuously since" 
+timestamp, reset on any reading meaningfully above idle. On threshold, call the same internal
+stop path `ACTION_STOP` already uses, `stopSession()`, directly, no need to round-trip through
+Android's intent system for a self-triggered stop. Not yet built.
