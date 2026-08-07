@@ -175,6 +175,45 @@ enum class SkinId(val displayName: String, val description: String, val skin: Sk
             daylightIgnition = Color(0xFFFFA8DC),
         ),
     ),
+
+    /**
+     * A seventies cluster: warm near-black ground, amber-phosphor primaries, and a hue budget
+     * re-derived for a warm ground rather than the cool one recoloured.
+     *
+     * The reasoning per token is in docs/DESIGN_SYSTEM.md section 3.5. The short version: the
+     * warmth is spent on the ground, the chrome and the achromatic MOTION readout, which is where
+     * a real amber cluster puts it, and the four diagnostic hues then sit in the half of the hue
+     * circle that ground leaves open. Every one of section 3's contrast floors is met or beaten,
+     * and the six categories separate further from each other here than they do in Instrument.
+     */
+    AMBER(
+        displayName = "Amber",
+        description = "Seventies cluster. Warm ground, amber phosphor primaries",
+        skin = Skin(
+            ink = Color(0xFF0A0805),
+            panel = Color(0xFF15100A),
+            panelRaised = Color(0xFF1F1810),
+            panelActive = Color(0xFF2A2015),
+            hairline = Color(0xFF3A2C1B),
+            hairlineBright = Color(0xFF5C4629),
+            chalk = Color(0xFFFFF3E0),
+            mist = Color(0xFFC7AC84),
+            ash = Color(0xFFA08A65),
+            slate = Color(0xFF63543B),
+            accentMixture = Color(0xFF1FD8CC),
+            accentAirpath = Color(0xFFA78BFF),
+            accentThermal = Color(0xFF5CB8FF),
+            accentIgnition = Color(0xFFFF70C0),
+            statusLive = Color(0xFF34C765),
+            statusCaution = Color(0xFFFFA51F),
+            statusFault = Color(0xFFFF5340),
+            daylightChalk = Color(0xFFFFFFFF),
+            daylightMixture = Color(0xFF79F2E9),
+            daylightAirpath = Color(0xFFCDBFFF),
+            daylightThermal = Color(0xFFAEDCFF),
+            daylightIgnition = Color(0xFFFFB2DA),
+        ),
+    ),
 }
 
 /**
