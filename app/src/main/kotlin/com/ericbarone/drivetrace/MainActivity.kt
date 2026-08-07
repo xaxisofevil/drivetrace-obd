@@ -6,7 +6,7 @@ import androidx.activity.compose.setContent
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.core.content.ContextCompat
 import com.ericbarone.drivetrace.obd.VehicleProfile
@@ -36,7 +36,14 @@ class MainActivity : ComponentActivity() {
             val highContrast by DisplaySettings.highContrast.collectAsState()
             DriveTraceTheme(highContrast = highContrast) {
                 val status by LoggingStatus.state.collectAsState()
-                var showHistory by remember { mutableStateOf(false) }
+                // rememberSaveable, not remember: this screen used to warp back to Setup on
+                // rotation (see KNOWN_ISSUES.md) because plain remember state doesn't survive
+                // Activity recreation. android:screenOrientation="portrait" in the manifest now
+                // stops rotation from causing that recreation at all, but this stays
+                // rememberSaveable anyway as defense-in-depth against the same class of loss from
+                // process death under memory pressure while the drive-logging foreground service
+                // keeps running in the background through a long drive.
+                var showHistory by rememberSaveable { mutableStateOf(false) }
                 when {
                     status.sessionId != null -> LoggingScreen(
                         status = status,

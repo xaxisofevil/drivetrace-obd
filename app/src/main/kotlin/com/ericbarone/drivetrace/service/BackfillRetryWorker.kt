@@ -52,7 +52,18 @@ class BackfillRetryWorker(
             val session = dao.getSession(targetId) ?: return Result.success()
             if (session.backfillStatus == "SUCCESS") {
                 val outcome = runAnalysisOnly(dao, streamingClient, targetId)
-                return if (outcome.status != "DONE" && outcome.worthRetrying) Result.retry() else Result.success()
+                // Result.failure(), never Result.retry(), for a single targeted session: this is
+                // a user tapping a button once, not the opportunistic sweep. Result.retry() means
+                // "queue again with exponential backoff", and a WorkInfo sitting in that queue
+                // reads as !isFinished exactly like a genuinely running attempt does, so the
+                // logbook's spinner (see workInFlight() in HistoryScreen.kt, which watches this
+                // exact unique work name) would spin for as long as WorkManager's backoff window
+                // lasts, hours, on an unresponsive server, rather than for the ~10s the single
+                // real attempt actually took. Confirmed for real: the server died on a PC reboot
+                // mid-session and "Retry upload" spun indefinitely. worthRetrying still records
+                // *why* it failed (network-unreachable vs. server-rejected) in the persisted
+                // outcome; it no longer decides whether this worker re-queues itself.
+                return if (outcome.status == "DONE") Result.success() else Result.failure()
             }
             // The server does not have the data to analyze after all (the row changed between the
             // button rendering and this running). Fall through and do the full job.
@@ -70,9 +81,14 @@ class BackfillRetryWorker(
             val outcome = runBackfillAndAnalysis(dao, streamingClient, session.sessionId)
             if (!outcome.backfillSucceeded) anyStillFailing = true
         }
-        // Let WorkManager's own exponential backoff handle re-scheduling rather than looping or
-        // sleeping in here: a genuinely offline phone should back off, not hammer retries.
-        return if (anyStillFailing) Result.retry() else Result.success()
+        if (!anyStillFailing) return Result.success()
+        // A single targeted retry (see the analysis-only branch above for the full reasoning)
+        // fails outright rather than re-queuing with backoff, so its own WorkInfo reaches a
+        // finished state promptly and the logbook's busy-spinner actually stops. The opportunistic
+        // sweep (targetId == null) still backs off and keeps trying quietly instead: a genuinely
+        // offline phone should back off, not hammer retries, and nothing is watching this specific
+        // WorkInfo for a spinner to turn off.
+        return if (targetId != null) Result.failure() else Result.retry()
     }
 
     companion object {

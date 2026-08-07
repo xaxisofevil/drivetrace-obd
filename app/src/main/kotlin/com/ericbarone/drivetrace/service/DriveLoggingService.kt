@@ -32,12 +32,14 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeout
 import java.util.concurrent.atomic.AtomicLong
 
 private const val CHANNEL_ID = "drive_logging"
 private const val NOTIFICATION_ID = 1
 private const val INITIAL_BACKOFF_MS = 1_000L
 private const val MAX_BACKOFF_MS = 15_000L
+private const val SETUP_TIMEOUT_MS = 30_000L
 
 // Some cheap ELM327 clones fabricate plausible-looking zero data instead of a clean error when
 // the ECU is asleep, so "a response arrived" isn't proof of a live vehicle. RPM > this is a cheap
@@ -191,78 +193,96 @@ class DriveLoggingService : Service() {
         try {
             while (currentCoroutineIsActive()) {
                 try {
-                    LoggingStatus.state.value = LoggingStatus.state.value.copy(
-                        connectionState = ConnectionState.CONNECTING,
-                        statusMessage = "Connecting to adapter...",
-                    )
-                    transport.connect(deviceAddress)
-
-                    LoggingStatus.state.value = LoggingStatus.state.value.copy(
-                        connectionState = ConnectionState.INITIALIZING,
-                        statusMessage = "Initializing ELM327...",
-                    )
-                    val input = transport.inputStream ?: error("No input stream")
-                    val output = transport.outputStream ?: error("No output stream")
-                    val elmSession = ElmSession(input, output)
-                    val initResult = elmSession.initialize()
-                    dao.updateSession(session.copy(sessionId = sessionId, protocol = initResult.protocol))
-
-                    val scheduler = PidScheduler(
-                        elmSession = elmSession,
-                        startElapsedNs = startElapsedNs,
-                        catalog = vehicleProfile.catalog,
-                        onMeasurement = { sample ->
-                            dao.insertMeasurement(
-                                MeasurementEntity(
-                                    sessionId = sessionId,
-                                    sequence = sample.sequence,
-                                    wallTimeUtc = sample.wallTimeUtc,
-                                    elapsedNs = sample.elapsedNs,
-                                    pidTag = sample.pidTag,
-                                    canonicalName = sample.canonicalName,
-                                    valueNumeric = sample.valueNumeric,
-                                    valueText = sample.valueText,
-                                    unit = sample.unit,
-                                    latencyMs = sample.latencyMs,
-                                    qualityFlag = sample.qualityFlag,
-                                    rawResponse = sample.rawResponse,
-                                ),
-                            )
-                            streamingClient.postMeasurement(sessionId, sample)
-
-                            var engineDetected = LoggingStatus.state.value.engineDetected
-                            if (sample.canonicalName == "Engine RPM") {
-                                rpmSamplesSeen++
-                                if ((sample.valueNumeric ?: 0.0) > PLAUSIBLE_RPM_FLOOR) {
-                                    plausibleRpmSeen = true
-                                }
-                                engineDetected = when {
-                                    plausibleRpmSeen -> TriState.YES
-                                    rpmSamplesSeen >= RPM_SAMPLES_BEFORE_CONCLUDING_ENGINE_OFF -> TriState.NO
-                                    else -> TriState.PENDING
-                                }
-                            }
-
-                            val current = LoggingStatus.state.value
-                            LoggingStatus.state.value = current.copy(
-                                connectionState = ConnectionState.LOGGING,
-                                measurementCount = current.measurementCount + 1,
-                                lastSampleAtMs = System.currentTimeMillis(),
-                                engineDetected = engineDetected,
-                            )
-                        },
-                        onEvent = { event ->
-                            recordEvent(event.elapsedNs, event.eventType, event.severity, event.message)
-                        },
-                        sequence = sharedSequence,
-                    )
-
-                    val oneTimeResults = scheduler.runOneTimeReads()
-                    for ((key, result) in oneTimeResults) {
-                        recordEvent(
-                            System.nanoTime() - startElapsedNs, "ONE_TIME_READ", "INFO",
-                            "$key=${result.value} | raw=${result.rawResponse}",
+                    // Connect through the one-time reads, all bounded by one timeout. Every step
+                    // here is a plain blocking call (BluetoothSocket.connect(), then raw
+                    // InputStream/OutputStream reads and writes for the AT handshake and the
+                    // one-time PID reads) with no timeout of its own anywhere in this chain, and
+                    // coroutine cancellation cannot preempt a thread already blocked inside one of
+                    // them, it can only stop new code from starting. Confirmed for real: a session
+                    // sat at connectionState=INITIALIZING, measurementCount=0 for 34 minutes with
+                    // no recovery, see KNOWN_ISSUES.md. withTimeout() turns a silent, permanent
+                    // hang into a TimeoutCancellationException the existing catch block below
+                    // already treats like any other failed attempt: log a RECONNECT event, back
+                    // off, try again. 30s is generous for a real handshake plus a handful of
+                    // one-time reads on a working adapter, and short next to "forever" on a dead
+                    // one. Does not cover scheduler.run() below, which is meant to run for the
+                    // whole drive; a hang inside one specific ongoing PID poll, as opposed to
+                    // setup, is a real, different gap this does not close, see KNOWN_ISSUES.md.
+                    val scheduler = withTimeout(SETUP_TIMEOUT_MS) {
+                        LoggingStatus.state.value = LoggingStatus.state.value.copy(
+                            connectionState = ConnectionState.CONNECTING,
+                            statusMessage = "Connecting to adapter...",
                         )
+                        transport.connect(deviceAddress)
+
+                        LoggingStatus.state.value = LoggingStatus.state.value.copy(
+                            connectionState = ConnectionState.INITIALIZING,
+                            statusMessage = "Initializing ELM327...",
+                        )
+                        val input = transport.inputStream ?: error("No input stream")
+                        val output = transport.outputStream ?: error("No output stream")
+                        val elmSession = ElmSession(input, output)
+                        val initResult = elmSession.initialize()
+                        dao.updateSession(session.copy(sessionId = sessionId, protocol = initResult.protocol))
+
+                        val scheduler = PidScheduler(
+                            elmSession = elmSession,
+                            startElapsedNs = startElapsedNs,
+                            catalog = vehicleProfile.catalog,
+                            onMeasurement = { sample ->
+                                dao.insertMeasurement(
+                                    MeasurementEntity(
+                                        sessionId = sessionId,
+                                        sequence = sample.sequence,
+                                        wallTimeUtc = sample.wallTimeUtc,
+                                        elapsedNs = sample.elapsedNs,
+                                        pidTag = sample.pidTag,
+                                        canonicalName = sample.canonicalName,
+                                        valueNumeric = sample.valueNumeric,
+                                        valueText = sample.valueText,
+                                        unit = sample.unit,
+                                        latencyMs = sample.latencyMs,
+                                        qualityFlag = sample.qualityFlag,
+                                        rawResponse = sample.rawResponse,
+                                    ),
+                                )
+                                streamingClient.postMeasurement(sessionId, sample)
+
+                                var engineDetected = LoggingStatus.state.value.engineDetected
+                                if (sample.canonicalName == "Engine RPM") {
+                                    rpmSamplesSeen++
+                                    if ((sample.valueNumeric ?: 0.0) > PLAUSIBLE_RPM_FLOOR) {
+                                        plausibleRpmSeen = true
+                                    }
+                                    engineDetected = when {
+                                        plausibleRpmSeen -> TriState.YES
+                                        rpmSamplesSeen >= RPM_SAMPLES_BEFORE_CONCLUDING_ENGINE_OFF -> TriState.NO
+                                        else -> TriState.PENDING
+                                    }
+                                }
+
+                                val current = LoggingStatus.state.value
+                                LoggingStatus.state.value = current.copy(
+                                    connectionState = ConnectionState.LOGGING,
+                                    measurementCount = current.measurementCount + 1,
+                                    lastSampleAtMs = System.currentTimeMillis(),
+                                    engineDetected = engineDetected,
+                                )
+                            },
+                            onEvent = { event ->
+                                recordEvent(event.elapsedNs, event.eventType, event.severity, event.message)
+                            },
+                            sequence = sharedSequence,
+                        )
+
+                        val oneTimeResults = scheduler.runOneTimeReads()
+                        for ((key, result) in oneTimeResults) {
+                            recordEvent(
+                                System.nanoTime() - startElapsedNs, "ONE_TIME_READ", "INFO",
+                                "$key=${result.value} | raw=${result.rawResponse}",
+                            )
+                        }
+                        scheduler
                     }
 
                     backoffMs = INITIAL_BACKOFF_MS // reset after a successful (re)connect

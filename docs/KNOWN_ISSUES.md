@@ -820,3 +820,92 @@ there, unquestionably working. If this resurfaces as a real complaint
 (e.g. on a different OEM/device), the next lever to try is
 `.setCategory(NotificationCompat.CATEGORY_SERVICE)` on the builder,
 untested here, speculative.
+
+## Four bugs found on a real drive, three fixed, one partially
+
+Reported together after a real session: the PC this app's server runs
+on rebooted mid-drive, killing the server, which exposed all four.
+
+**1. "Retry upload" spun forever against an unresponsive server
+(fixed).** `BackfillRetryWorker.doWork()` returned `Result.retry()` on
+any failure, including for a single user-targeted retry
+(`enqueueRetryNow`/`enqueueAnalysisRetryNow`), not just the
+opportunistic sweep. `Result.retry()` re-queues the work with
+exponential backoff, and a `WorkInfo` sitting in backoff reads as
+`!isFinished` exactly like one still actively running, so the
+logbook's busy-spinner (`HistoryScreen.kt`'s `workInFlight()`, which
+watches `!it.state.isFinished` on that specific unique work name)
+spun for as long as WorkManager's backoff window lasted, hours,
+against a server that would never answer, rather than for the ~10s
+one real attempt actually took. Fixed: a single targeted retry
+(`targetId != null`) now returns `Result.failure()` on failure instead,
+finishing that `WorkInfo` promptly. The opportunistic sweep
+(`targetId == null`) is unchanged, still backs off and keeps trying
+quietly, nothing is watching its `WorkInfo` for a spinner to turn off.
+
+**2. Rotating the phone while on the Logbook warped back to Setup
+(fixed).** `MainActivity`'s `showHistory` was a plain
+`remember { mutableStateOf(false) }`. Android recreates the Activity
+on a configuration change like rotation by default, and plain
+`remember` state does not survive that, only `rememberSaveable` does,
+so the whole screen silently reset to its `else` branch (Setup) on
+every rotation. Fixed two ways: `android:screenOrientation="portrait"`
+on `MainActivity` in the manifest (this is a phone-mount dashboard
+app, landscape was never a real use case, and this stops the
+Activity-recreation trigger entirely), plus `showHistory` itself
+switched to `rememberSaveable` as defense-in-depth against the same
+class of loss from plain process death under memory pressure while
+the foreground logging service keeps running through a long drive,
+independent of rotation.
+
+**3. Logbook cards showed "--" MPG for drives that had a real number
+(fixed).** `HistoryScreen.kt`'s `SessionCard` read only
+`session.analysisSummaryJson` (the *server*-computed analysis result).
+The Session Complete report screen has always had a "prefer the server
+figure, fall back to the on-device estimate" chain for exactly the
+case where analysis never completed; the logbook card never inherited
+that fallback. Confirmed for real: two completed Subaru drives showed
+real MPG on the report screen (on-device estimate, since the server
+had died mid-session and analysis never ran) and a bare "--" on the
+same drives' logbook cards. Fixed: `SessionCard` now computes the same
+on-device `TripSummary` (`export/TripSummary.kt`, the identical
+function the report screen already calls) as a fallback, only when
+`analysisSummaryJson` doesn't already have a real figure, so a card
+with a genuine server-side result never pays for the extra query.
+
+**4. A session can hang at `INITIALIZING`, zero samples, forever
+(partially fixed).** Confirmed for real: a session sat at
+`connectionState = INITIALIZING`, `measurementCount = 0` for 34
+minutes straight with no recovery, notification frozen the whole time.
+Root cause: every step from `BluetoothSocket.connect()` through the
+AT-command handshake (`ElmSession.initialize()`) to the one-time PID
+reads is a plain blocking call on the raw input/output streams with no
+timeout anywhere in that chain, same underlying class of bug as the
+notification Stop-action investigation above
+(`BluetoothTransport.connect()`'s already-documented lack of
+cancellation handling). Coroutine cancellation is cooperative and
+cannot preempt a thread already blocked inside one of these calls, so
+if a response never arrives, or arrives malformed and the code sits
+waiting for more bytes that never come, nothing times out and nothing
+recovers.
+
+Fixed for the setup phase: `runSession()`'s connect-through-one-time-
+reads sequence is now wrapped in `withTimeout(30_000L)`
+(`DriveLoggingService.kt`). A hang there now surfaces as a
+`TimeoutCancellationException`, which the existing `catch (e:
+Exception)` block already treats like any other failed attempt: log a
+`RECONNECT` event, back off, try again, same recovery path that
+already existed for a clean connection failure.
+
+**Not fixed, a real remaining gap:** this timeout does not cover
+`scheduler.run { ... }`, the ongoing polling loop that runs for the
+whole drive, since that call is supposed to block for a long time by
+design and a blanket timeout around it would defeat the point. A hang
+inside one specific ongoing PID poll mid-drive, as opposed to during
+setup, is not covered by this fix and would still freeze the session
+with no recovery. Given "34 minutes, zero samples" means nothing ever
+got past setup in that specific incident, the setup-phase fix is the
+right first cut, but the deeper fix (a per-command read timeout inside
+`ElmSession`/`PidScheduler`'s actual I/O, so a hang on the fifth PID
+of a drive recovers the same way a hang on the first one now does) is
+still open.

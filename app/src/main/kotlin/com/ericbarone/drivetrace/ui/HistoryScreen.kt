@@ -22,6 +22,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
@@ -35,6 +36,8 @@ import androidx.compose.ui.unit.dp
 import androidx.work.WorkManager
 import com.ericbarone.drivetrace.data.AppDatabase
 import com.ericbarone.drivetrace.data.SessionEntity
+import com.ericbarone.drivetrace.export.TripSummary
+import com.ericbarone.drivetrace.export.computeTripSummary
 import com.ericbarone.drivetrace.obd.VehicleProfile
 import com.ericbarone.drivetrace.service.BackfillRetryWorker
 import com.ericbarone.drivetrace.streaming.analysisSummaryFromJson
@@ -252,12 +255,25 @@ private fun SessionCard(
     onRetryFinished: () -> Unit,
     onNoteSaved: () -> Unit,
 ) {
+    val context = LocalContext.current
     val type = LocalReadoutType.current
     var editingNote by remember(session.sessionId) { mutableStateOf(false) }
     val dateFmt = remember { SimpleDateFormat("MMM d, yyyy h:mm a", Locale.US) }
     val summary = remember(session.analysisSummaryJson) {
         session.analysisSummaryJson?.let { analysisSummaryFromJson(it) }
     }
+    // Falls back to the same on-device estimate the trip report itself shows when the server
+    // never finished analysing this drive (never reached it at all, or died mid-session, both
+    // confirmed real: the analysis JSON stays null forever in that case, not just "pending"). The
+    // report already has an honest "server preferred, on-device as fallback" chain for exactly
+    // this; the logbook card had never inherited it, so a drive with a perfectly good real number
+    // sitting in Room showed a bare "--" here even after the report itself displayed it
+    // correctly. Only computed when actually needed: a card with a real server MPG already never
+    // touches Room again for this.
+    val deviceFallback by produceState<TripSummary?>(initialValue = null, session.sessionId, summary) {
+        value = if (summary?.overallMpg == null) computeTripSummary(context, session.sessionId) else null
+    }
+    val displayMpg = summary?.overallMpg ?: deviceFallback?.overallMpg
 
     val uploadTone = when (session.backfillStatus) {
         "SUCCESS" -> Tone.LIVE
@@ -305,9 +321,14 @@ private fun SessionCard(
             // MPG in a fixed right-hand column: this is the value the list exists to compare.
             Column(horizontalAlignment = Alignment.End) {
                 Text(
-                    summary?.overallMpg?.let { "%.1f".format(it) } ?: "--",
+                    displayMpg?.let { "%.1f".format(it) } ?: "--",
                     style = type.medium,
-                    color = if (summary?.overallMpg != null) AccentMixture else Slate,
+                    // Same colour whether the figure came from the server or the on-device
+                    // fallback: a stronger tint on one over the other would read as "trust this
+                    // number more", which isn't true, they're just two sources for the same
+                    // question. The report screen's caption text is where that distinction
+                    // belongs, not colour on a scannable list.
+                    color = if (displayMpg != null) AccentMixture else Slate,
                     maxLines = 1,
                 )
                 Text("MPG", style = type.label, color = Ash)
