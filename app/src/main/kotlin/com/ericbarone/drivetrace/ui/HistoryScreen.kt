@@ -213,9 +213,12 @@ private fun SessionCard(session: SessionEntity, onRetry: () -> Unit) {
             analysisChip?.let { (text, tone) -> StatusChip(text = text, tone = tone) }
         }
 
-        if (session.backfillStatus == "FAILED" && !session.backfillMessage.isNullOrBlank()) {
+        // Never session.backfillMessage. On the failure path that field holds the raw transport
+        // exception, which names the server's hostname, public IP and port; the row keeps it for
+        // diagnosis but no screen renders it. See ui/PipelineMessages.kt.
+        if (session.backfillStatus == "FAILED") {
             Spacer(Modifier.height(Space.sm))
-            ConsoleLine(session.backfillMessage!!, color = Tone.FAULT.color)
+            ConsoleLine(UPLOAD_FAILED_MESSAGE, color = Tone.FAULT.color)
         }
 
         if (summary != null && summary.flags.isNotEmpty()) {

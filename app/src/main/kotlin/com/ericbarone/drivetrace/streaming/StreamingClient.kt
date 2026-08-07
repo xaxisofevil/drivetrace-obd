@@ -396,7 +396,15 @@ class StreamingClient(private val baseUrl: String, private val token: String) {
                     }
                 }
             } catch (e: Exception) {
-                AnalysisPollResult.Failed(e.message ?: e::class.simpleName ?: "unknown")
+                // Not `e.message`. A poll that dies mid-flight produces the same OkHttp string
+                // the backfill path does, naming the server's host, public IP and port, and
+                // AnalysisPollResult.Failed's text is rendered straight onto the trip report.
+                // Unlike backfillMessage there is nowhere durable this one gets persisted, so the
+                // raw goes to logcat here rather than being carried up as a display string. The
+                // server-authored "failed" errors above are untouched: those are the useful ones
+                // and they come from the server, not from this phone's view of the network.
+                Log.w(TAG, "pollAnalysis failed: ${e.message}")
+                AnalysisPollResult.Failed("The connection to the server dropped while waiting for the analysis.")
             }
         }
 }

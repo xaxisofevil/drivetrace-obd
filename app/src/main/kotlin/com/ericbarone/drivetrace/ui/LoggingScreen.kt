@@ -443,7 +443,17 @@ private fun ColumnScope.CompleteBody(
                 label = "Server upload (verified complete)",
                 state = triStateWord(status.backfillStatus, pending = "uploading"),
                 tone = toneOf(status.backfillStatus),
-                detail = status.backfillMessage.takeIf { it.isNotBlank() },
+                // Never the raw status.backfillMessage: on the failure path it is the transport
+                // exception, naming the server's hostname, public IP and port. See
+                // ui/PipelineMessages.kt for why this is a whitelist rather than a scrubber.
+                detail = uploadDetail(
+                    uploaded = when (status.backfillStatus) {
+                        TriState.YES -> true
+                        TriState.NO -> false
+                        TriState.PENDING -> null
+                    },
+                    rawMessage = status.backfillMessage,
+                ),
                 pulsing = status.backfillStatus == TriState.PENDING,
             )
             if (status.backfillStatus == TriState.YES) {
