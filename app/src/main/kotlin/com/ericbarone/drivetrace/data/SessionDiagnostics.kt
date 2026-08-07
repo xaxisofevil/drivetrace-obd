@@ -60,6 +60,77 @@ suspend fun computeAdapterHealth(context: Context, sessionId: Long): AdapterHeal
         )
     }
 
+// ---------------------------------------------------------------------------
+// Diagnostic trouble codes
+// ---------------------------------------------------------------------------
+
+private const val EVENT_ONE_TIME_READ = "ONE_TIME_READ"
+
+// kotlin-obd-api's own command tags, read off the library's compiled TroubleCodes classes rather
+// than assumed. Note these are NOT the CURRENT_DTCS / PENDING_DTCS / PERMANENT_DTCS names
+// docs/DATA_SCHEMA.md used to imply; the tags on the wire have always been these.
+private const val TAG_CURRENT_DTCS = "TROUBLE_CODES"
+private const val TAG_PENDING_DTCS = "PENDING_TROUBLE_CODES"
+private const val TAG_PERMANENT_DTCS = "PERMANENT_TROUBLE_CODES"
+
+/**
+ * The three DTC sets read once at session start, recovered from the `ONE_TIME_READ` events they
+ * were logged as. Nothing new is read from the vehicle here; this data has been captured every
+ * session since the app was written and has never been shown to anyone.
+ *
+ * [read] separates "the ECU reported no stored codes" from "the DTC read never succeeded", which
+ * matter very differently to a user and would otherwise both look like an empty list.
+ */
+data class DtcReport(
+    /** Confirmed faults; the ones that turn the check-engine light on. */
+    val current: List<String>,
+    /** Seen once, not yet confirmed across enough drive cycles to light the lamp. */
+    val pending: List<String>,
+    /** Cleared from memory but retained until the ECU's own monitors pass. Not erasable with a
+     *  scan tool, which is the whole point of the category. */
+    val permanent: List<String>,
+    /** Whether any of the three reads actually came back. */
+    val read: Boolean,
+) {
+    val isEmpty: Boolean get() = current.isEmpty() && pending.isEmpty() && permanent.isEmpty()
+    val total: Int get() = current.size + pending.size + permanent.size
+}
+
+suspend fun readSessionDtcs(context: Context, sessionId: Long): DtcReport =
+    withContext(Dispatchers.IO) {
+        val events = AppDatabase.getInstance(context).sessionDao()
+            .getEventsOfTypes(sessionId, listOf(EVENT_ONE_TIME_READ))
+        DtcReport(
+            current = codesFor(events, TAG_CURRENT_DTCS),
+            pending = codesFor(events, TAG_PENDING_DTCS),
+            permanent = codesFor(events, TAG_PERMANENT_DTCS),
+            read = listOf(TAG_CURRENT_DTCS, TAG_PENDING_DTCS, TAG_PERMANENT_DTCS)
+                .any { tag -> events.any { it.message.startsWith("$tag=") } },
+        )
+    }
+
+/**
+ * ONE_TIME_READ's message is `"$tag=$value | raw=$verbatimElmText"` (DriveLoggingService), and
+ * the library joins a trouble-code list with commas, so the value is `"P0171,P0300"` or empty.
+ *
+ * Takes the *last* matching event on purpose: a Bluetooth reconnect re-runs the whole one-time
+ * read block, so a session with a dropped link has several of these and the newest is the one
+ * that reflects the vehicle now.
+ */
+private fun codesFor(events: List<EventEntity>, tag: String): List<String> {
+    val prefix = "$tag="
+    val event = events.lastOrNull { it.message.startsWith(prefix) } ?: return emptyList()
+    return event.message
+        .removePrefix(prefix)
+        .substringBefore(" | raw=")
+        .split(',')
+        .map { it.trim().uppercase() }
+        // P0000 is the standard's "no code here" padding, and the library already truncates at
+        // the first one; filtered again here because the raw value is not guaranteed to be clean.
+        .filter { it.isNotBlank() && it != "P0000" }
+        .distinct()
+}
+
 /**
  * PID_NO_DATA's message is `"${command.tag}: $exception"` (PidScheduler.pollOne), so the tag is
  * everything before the first colon. Parsed rather than stored in its own column because the

@@ -33,7 +33,11 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.core.content.FileProvider
 import com.ericbarone.drivetrace.data.AdapterHealth
+import com.ericbarone.drivetrace.data.DtcReport
 import com.ericbarone.drivetrace.data.computeAdapterHealth
+import com.ericbarone.drivetrace.data.describeDtc
+import com.ericbarone.drivetrace.data.isSuspectedFramingArtifact
+import com.ericbarone.drivetrace.data.readSessionDtcs
 import com.ericbarone.drivetrace.export.CsvExporter
 import com.ericbarone.drivetrace.export.TripSummary
 import com.ericbarone.drivetrace.export.computeTripSummary
@@ -55,6 +59,7 @@ import com.ericbarone.drivetrace.ui.components.PrimaryAction
 import com.ericbarone.drivetrace.ui.components.SecondaryAction
 import com.ericbarone.drivetrace.ui.components.SectionLabel
 import com.ericbarone.drivetrace.ui.components.StatusBand
+import com.ericbarone.drivetrace.ui.components.StatusChip
 import com.ericbarone.drivetrace.ui.components.StatusDot
 import com.ericbarone.drivetrace.ui.components.StatusRow
 import com.ericbarone.drivetrace.ui.components.Tone
@@ -92,6 +97,7 @@ fun LoggingScreen(status: LoggingUiState, onStop: (String) -> Unit, onNewSession
     var exporting by remember { mutableStateOf(false) }
     var tripSummary by remember { mutableStateOf<TripSummary?>(null) }
     var adapterHealth by remember { mutableStateOf<AdapterHealth?>(null) }
+    var dtcs by remember { mutableStateOf<DtcReport?>(null) }
 
     LaunchedEffect(Unit) {
         while (true) {
@@ -111,6 +117,7 @@ fun LoggingScreen(status: LoggingUiState, onStop: (String) -> Unit, onNewSession
             // unreachable. Adapter health first: it is the cheap one, and it is the figure that
             // explains a thin or missing MPG number if the drive went badly.
             adapterHealth = computeAdapterHealth(context, id)
+            dtcs = readSessionDtcs(context, id)
             tripSummary = computeTripSummary(context, id)
         }
     }
@@ -146,7 +153,7 @@ fun LoggingScreen(status: LoggingUiState, onStop: (String) -> Unit, onNewSession
         ) {
             Spacer(Modifier.height(Space.xs))
             if (sessionComplete) {
-                CompleteBody(status, tripSummary, adapterHealth)
+                CompleteBody(status, tripSummary, adapterHealth, dtcs)
             } else {
                 LiveBody(status, elapsedSeconds, lastSampleAgeSeconds)
             }
@@ -363,6 +370,7 @@ private fun ColumnScope.CompleteBody(
     status: LoggingUiState,
     tripSummary: TripSummary?,
     adapterHealth: AdapterHealth?,
+    dtcs: DtcReport?,
 ) {
     val analysis = status.analysisSummary
     val serverMpg = analysis?.overallMpg
@@ -419,6 +427,11 @@ private fun ColumnScope.CompleteBody(
                 }
             }
         }
+    }
+
+    // Above Pipeline on purpose: this is the vehicle talking, everything below is the app talking.
+    if (dtcs != null && dtcs.read) {
+        DiagnosticCodesSection(dtcs)
     }
 
     // Pipeline provenance. Grouped into one panel because "did this drive make it off the phone"
@@ -535,6 +548,107 @@ private fun ColumnScope.CompleteBody(
 
     if (status.statusMessage.isNotBlank()) {
         ConsoleLine(status.statusMessage, color = Ash)
+    }
+}
+
+/**
+ * Stored trouble codes, read once at session start and until now never shown anywhere. Each code
+ * gets its plain-English meaning from [describeDtc]; a code outside the generic table still gets
+ * a structural decode rather than a blank line, and says so.
+ *
+ * On the trip report rather than the Setup screen because a DTC is per-session data read from a
+ * session that does not exist yet when Setup is on screen. Setup would have to either show the
+ * *previous* drive's codes (misleading: the point of a code is that it is current) or start a
+ * connection of its own just to populate a panel.
+ */
+@Composable
+private fun ColumnScope.DiagnosticCodesSection(dtcs: DtcReport) {
+    Column(verticalArrangement = Arrangement.spacedBy(Space.md)) {
+        SectionLabel("Diagnostic codes")
+
+        if (dtcs.isEmpty) {
+            // Worth a row of its own. "The ECU reports nothing stored" is a real result, and it
+            // is only trustworthy because DtcReport.read confirms the read actually came back.
+            InstrumentPanel(modifier = Modifier.fillMaxWidth(), accent = Tone.LIVE.color) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(Space.md),
+                ) {
+                    GlyphMark(Tone.LIVE.glyph, Tone.LIVE.color, sizeDp = 14)
+                    Text(
+                        "No stored trouble codes",
+                        style = LocalReadoutType.current.unit,
+                        color = Tone.LIVE.color,
+                    )
+                }
+            }
+            return@Column
+        }
+
+        // Current codes are the lit check-engine lamp, so they are the only fault-toned group.
+        // Pending has not been confirmed across enough drive cycles to light anything, and
+        // permanent is a code already cleared that the ECU is holding until its own monitors
+        // pass; both are real information but neither is "stop driving".
+        DtcGroup("Current", dtcs.current, Tone.FAULT)
+        DtcGroup("Pending", dtcs.pending, Tone.CAUTION)
+        DtcGroup("Permanent", dtcs.permanent, Tone.CAUTION)
+
+        Caption(
+            "Meanings come from the generic SAE code table built into this app. Manufacturer-" +
+                "specific codes (P1xxx and some P3xxx) are decoded structurally only; check them " +
+                "against the vehicle's own service data before acting on one. This app reads " +
+                "codes and never clears them.",
+        )
+    }
+}
+
+@Composable
+private fun DtcGroup(groupLabel: String, codes: List<String>, tone: Tone) {
+    for (code in codes) {
+        val described = describeDtc(code)
+        // A code the library's unverified decode is known to fabricate gets demoted out of the
+        // fault channel entirely: showing "confirmed fault" next to a parser artifact is worse
+        // than showing nothing, and this app cannot yet tell the two apart. See KNOWN_ISSUES.md.
+        val suspect = isSuspectedFramingArtifact(described.code)
+        val codeTone = if (suspect) Tone.UNKNOWN else tone
+        InstrumentPanel(
+            modifier = Modifier.fillMaxWidth(),
+            accent = codeTone.color,
+            contentPadding = PaddingValues(horizontal = Space.lg, vertical = Space.md),
+        ) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(Space.md),
+            ) {
+                GlyphMark(codeTone.glyph, codeTone.color, sizeDp = 14)
+                // The code leads and the meaning follows, not the other way round: the code is
+                // what gets typed into a search, quoted to a mechanic, or matched against a
+                // service bulletin, and it stays the same string in every one of those places.
+                Text(
+                    described.code,
+                    style = LocalReadoutType.current.small,
+                    color = codeTone.color,
+                    modifier = Modifier.weight(1f),
+                )
+                StatusChip(text = groupLabel, tone = codeTone)
+            }
+            Spacer(Modifier.height(Space.xs))
+            if (suspect) {
+                Text(
+                    "Probably not a real code: this matches the response-framing artifact the " +
+                        "library's unverified DTC decode is known to produce for this request. " +
+                        "See KNOWN_ISSUES.md.",
+                    style = LocalReadoutType.current.unit,
+                    color = Ash,
+                )
+            } else {
+                Text(
+                    described.meaning,
+                    style = LocalReadoutType.current.unit,
+                    color = if (described.known) Mist else Ash,
+                )
+            }
+        }
     }
 }
 

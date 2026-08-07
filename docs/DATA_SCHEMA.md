@@ -114,12 +114,41 @@ single-device case uses (two devices don't share a monotonic clock).
 
 | event_type | Meaning |
 |---|---|
-| `ONE_TIME_READ` | A session-start read (VIN, DTCs, etc.) succeeded; message is `KEY=value \| raw=<verbatim ELM text>` |
+| `ONE_TIME_READ` | A session-start read (VIN, DTCs, etc.) succeeded; message is `KEY=value \| raw=<verbatim ELM text>`. `KEY` is the command's own `tag`, see the DTC note below |
 | `ONE_TIME_READ_FAILED` | Same, but threw; message is `KEY: <exception, including its raw response text>` |
 | `PID_NO_DATA` | A single poll attempt failed (any exception subclass); message includes the verbatim ELM response text for that attempt, logged every time, not just when cooldown triggers |
 | `PID_COOLDOWN` | A PID failed twice in a row and is pausing 30s before retrying (not a permanent drop) |
 | `IMPLAUSIBLE_VALUE` | A measurement was clamped; message includes the raw value and the range it violated |
 | `RECONNECT` | The Bluetooth link dropped and is retrying with exponential backoff |
+
+### DTC event keys, and how to read them back
+
+The three DTC one-time reads log under kotlin-obd-api's own command tags,
+confirmed by reading the library's compiled `TroubleCodes` classes rather
+than assumed:
+
+| `KEY` in the message | Set |
+|---|---|
+| `TROUBLE_CODES` | Current (confirmed) codes, Mode 03 |
+| `PENDING_TROUBLE_CODES` | Pending codes, Mode 07 |
+| `PERMANENT_TROUBLE_CODES` | Permanent codes, Mode 0A |
+
+The value is the library's comma-joined code list (`P0171,P0300`), empty
+when the ECU reports nothing stored, and the library truncates its own
+parse at the standard's `P0000` padding. `readSessionDtcs`
+(`data/SessionDiagnostics.kt`) parses these back out for the Session
+Complete report and takes the **last** matching event per key, since a
+Bluetooth reconnect re-runs the whole one-time-read block and a session
+with a dropped link has several.
+
+`data/DtcCatalog.kt` turns a code into plain English. **Its coverage is
+generic SAE J2012 `P0xxx` powertrain codes only** (roughly 100 of them,
+the ones every OBD-II vehicle shares). Manufacturer-specific `P1xxx` and
+OEM-reused `P3xxx` blocks are thousands of codes per manufacturer,
+licensed rather than published, and are deliberately not guessed at: an
+unlisted code falls back to decoding its own structure ("manufacturer-
+specific powertrain code, ignition system or misfire") and the UI says so
+rather than presenting the guess as a definition.
 
 ## Metadata (session-level)
 

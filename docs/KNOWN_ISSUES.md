@@ -226,6 +226,28 @@ codes; unverified against another tool as of this writing, and predates
 the raw-capture fix below so there's no raw text to re-check it against
 either.
 
+**Update, while building the DTC display:** those three session-7 values
+are almost certainly response framing leaking into the parse, not real
+faults. `C0300` (current), `C0700` (pending), `C0A00` (permanent) are
+exactly modes `03`, `07` and `0A`, one per request, and they came back as
+*chassis* codes on a vehicle whose chassis ECU this app never queries.
+Three requests, three codes, each encoding its own mode byte, is not a
+coincidence.
+
+`isSuspectedFramingArtifact` (`data/DtcCatalog.kt`) hardcodes those three
+strings. The trip report demotes a matching code out of the fault channel
+to `UNKNOWN` tone and says why, rather than filtering it: same posture as
+`IMPLAUSIBLE` measurements, surface the suspect value with its caveat and
+never silently drop it. A genuine `C0300` on some other vehicle would be
+mislabelled by this, which is the honest cost of not having verified the
+decode against a second scan tool yet.
+
+**Still the right next step:** read codes with a second tool on a vehicle
+that has a known stored code, and compare against the `raw=` text the
+`ONE_TIME_READ` event now carries (which session 7 predated). That settles
+both the artifact theory and whether the decode is correct for real codes,
+and neither can be settled from the app's own output alone.
+
 ## Raw ELM response capture (added, field-confirmed working)
 
 The blueprint originally called for a raw ELM response log; this never

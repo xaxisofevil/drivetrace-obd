@@ -301,6 +301,9 @@ rather than one column of rows that changes length.
 - **Pipeline** panel groups upload and analysis into one question with two stages, instead of two
   unrelated status lines. The nesting rule is unchanged: analysis only appears once backfill
   succeeded.
+- **Diagnostic codes** sit above Pipeline: that section is the vehicle talking, everything below
+  it is the app talking. One accent-barred panel per code, the code leading and its plain-English
+  meaning under it, the set it came from as a `StatusChip`.
 - **Adapter health** sits below Pipeline, because it describes the capture rig rather than the car
   or the drive. Accent-barred panel, tone from distinct dropped PIDs, per-PID counts as `DataRow`s
   and the "unsupported PID vs. bad adapter" caveat as a `Caption`.
@@ -444,9 +447,15 @@ things to charge for since nothing functional sits behind the paywall.
   status chips are unchanged, so the second-order band is still `Mist`/`Ash` in direct sun. The
   mechanism extends to them for free (read `LocalReadoutPalette` in those composables too) if
   real use says the hero alone isn't enough.
-- **DTC display.** DTCs are already read once at session start and stored as events, but the UI
-  never surfaces them. A check-engine light with a code and its plain-English meaning on the
-  setup screen is high perceived value for effort that is nearly zero.
+- ~~**DTC display.**~~ **Built,** on the trip report rather than the setup screen. A DTC is
+  per-session data read from a session that does not exist yet when Setup is on screen, so Setup
+  could only show the *previous* drive's codes (misleading, since the entire point of a code is
+  that it is current) or open a connection of its own to populate one panel. `readSessionDtcs`
+  parses the three `ONE_TIME_READ` events back out and `data/DtcCatalog.kt` supplies the meaning;
+  see DATA_SCHEMA.md for the table's coverage limits and the structural fallback for codes
+  outside it. Current codes are fault-toned, pending and permanent are caution-toned, and "no
+  stored trouble codes" is stated explicitly rather than left as an absent section, because a
+  confirmed clean read is itself the answer someone opened the screen for.
 
 ## 10. Android Auto dashboard, instead of the phone screen
 
