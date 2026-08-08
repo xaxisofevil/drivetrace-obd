@@ -2,11 +2,13 @@ package com.ericbarone.drivetrace.export
 
 import com.ericbarone.drivetrace.data.AdapterHealth
 import com.ericbarone.drivetrace.data.DtcReport
+import com.ericbarone.drivetrace.data.SessionEntity
 import com.ericbarone.drivetrace.data.describeDtc
 import com.ericbarone.drivetrace.data.isSuspectedFramingArtifact
 import com.ericbarone.drivetrace.service.LoggingUiState
 import com.ericbarone.drivetrace.service.TriState
 import com.ericbarone.drivetrace.streaming.AnalysisSummary
+import com.ericbarone.drivetrace.streaming.analysisSummaryFromJson
 import com.ericbarone.drivetrace.ui.uploadDetail
 
 /**
@@ -29,9 +31,17 @@ import com.ericbarone.drivetrace.ui.uploadDetail
  * is a second copy with extra steps.
  *
  * **Nothing here derives anything from raw measurements.** [buildTripReport] takes exactly what
- * `CompleteBody` is already handed: the server's [AnalysisSummary] (via [LoggingUiState]), the
- * on-device [TripSummary], [AdapterHealth], [DtcReport] and the frozen session duration. Economy,
- * distance, idle fraction and warm-up are computed once, upstream, by the same code as before.
+ * `CompleteBody` is already handed: a [ReportSource], the on-device [TripSummary], [AdapterHealth],
+ * [DtcReport] and the session duration. Economy, distance, idle fraction and warm-up are computed
+ * once, upstream, by the same code as before.
+ *
+ * **There are two callers, and only one set of decisions.** The live status bus feeds one
+ * ([LoggingUiState.reportSource]) and a session row loaded back out of Room feeds the other
+ * ([SessionEntity.reportSource]), which is what makes the logbook able to reopen any drive ever
+ * logged rather than only the one that just ended. [ReportSource] exists precisely so neither
+ * caller has to pretend to be the other: the historical path does not fabricate a `LoggingUiState`
+ * for a service that stopped running days ago, and this file does not grow a second hero chain, a
+ * second verdict rule or a second capture block for it. Everything below runs once, for both.
  *
  * **Colours are named as categories and tones, not as `Color` values.** Design system rule 15
  * says a colour token is read from composable code and never stored outside it, and the semantic
@@ -176,14 +186,93 @@ sealed interface CaptureItem {
 }
 
 /**
+ * The pipeline's account of one drive, which is the only part of the report's input that used to
+ * come off [LoggingUiState] and is therefore the only part that stood between this model and a
+ * drive that ended days ago.
+ *
+ * Every field here is also a column on [SessionEntity], because the service writes them there as
+ * the drive ends and the retry worker keeps them current afterwards. So a historical report is not
+ * a reconstruction of a live session; it is the same six facts, read from the row instead of from
+ * the bus. Taking this rather than the whole `LoggingUiState` is what makes that honest: nothing
+ * else on that object (connection state, sample counts, live PID values) was ever read here, and
+ * inventing plausible values for them so a historical drive could impersonate a running one is how
+ * a second, subtly different report gets built by accident.
+ */
+data class ReportSource(
+    val analysisSummary: AnalysisSummary?,
+    val backfillStatus: TriState,
+    /** Raw, and it stays raw exactly this far: [buildTripReport] runs it through `uploadDetail`. */
+    val backfillMessage: String,
+    val analysisStatus: TriState,
+    val analysisMessage: String,
+    /** The service's own last line. Empty for a historical drive: nothing is talking. */
+    val statusMessage: String,
+    /**
+     * Whether the work these fields describe is still under way. It changes two words and one
+     * pulsing dot, and nothing else: a pending upload is "uploading" while a service is pushing it
+     * and just "pending" on a drive from last Tuesday, where an animated dot would claim work that
+     * is not happening (rule 9, and the status table's own reading of a pulse).
+     */
+    val live: Boolean,
+)
+
+/** The live path: the status bus as the report model sees it. */
+fun LoggingUiState.reportSource(): ReportSource = ReportSource(
+    analysisSummary = analysisSummary,
+    backfillStatus = backfillStatus,
+    backfillMessage = backfillMessage,
+    analysisStatus = analysisStatus,
+    analysisMessage = analysisMessage,
+    statusMessage = statusMessage,
+    live = true,
+)
+
+/**
+ * The historical path: one session row, exactly as the logbook already reads it.
+ *
+ * The two string columns carry the same three states the [TriState] does, under different names
+ * ("SUCCESS" against "DONE"), which is why this mapping is written out rather than folded into one
+ * helper: they are two independent vocabularies that happen to be the same size, and a shared
+ * `valueOf`-style shortcut would silently start lying the day either column gains a fourth value.
+ * Anything unrecognised reads as PENDING, the honest "no outcome recorded" state.
+ *
+ * [LoggingUiState.analysisMessage] has no column at all, so a historical failed analysis states the
+ * failure without the server's reason. That is a real loss and the alternative was worse: the field
+ * it would need is the one place a server-authored sentence could be persisted, and adding a column
+ * for a detail line is a schema migration this feature does not need to justify itself.
+ */
+fun SessionEntity.reportSource(): ReportSource = ReportSource(
+    analysisSummary = analysisSummaryJson?.let { analysisSummaryFromJson(it) },
+    backfillStatus = when (backfillStatus) {
+        "SUCCESS" -> TriState.YES
+        "FAILED" -> TriState.NO
+        else -> TriState.PENDING
+    },
+    backfillMessage = backfillMessage.orEmpty(),
+    analysisStatus = when (analysisStatus) {
+        "DONE" -> TriState.YES
+        "FAILED" -> TriState.NO
+        else -> TriState.PENDING
+    },
+    analysisMessage = "",
+    statusMessage = "",
+    live = false,
+)
+
+/** The session length as the row records it, or null for a drive that never wrote an end time. */
+fun SessionEntity.durationSeconds(): Long? =
+    endWallTimeUtc?.let { (it - startWallTimeUtc) / 1000 }?.takeIf { it >= 0 }
+
+/**
  * Assemble the report from exactly what the Session-Complete screen already holds.
  *
- * [durationSeconds] is the frozen session length (LoggingScreen captures it as the session crosses
- * into the complete state rather than ticking it off a clock), and a null [tripSummary] means the
- * on-device pass has not returned yet, which is the one honest "still working it out" state.
+ * [durationSeconds] is the session length, frozen rather than ticking: LoggingScreen captures it as
+ * the session crosses into the complete state, and the historical path reads it off the row's own
+ * end timestamp. A null [tripSummary] means the on-device pass has not returned yet, which is the
+ * one honest "still working it out" state.
  */
 fun buildTripReport(
-    status: LoggingUiState,
+    status: ReportSource,
     tripSummary: TripSummary?,
     adapterHealth: AdapterHealth?,
     dtcs: DtcReport?,
@@ -431,7 +520,7 @@ private fun driveProfileTiles(
  * to answer. So on a clean drive this is a handful of achromatic lines and no disclosure at all.
  */
 private fun captureItems(
-    status: LoggingUiState,
+    status: ReportSource,
     crossCheckMpg: Double?,
     health: AdapterHealth?,
     dtcs: DtcReport?,
@@ -451,7 +540,10 @@ private fun captureItems(
         CaptureItem.Stage(
             label = "Upload",
             state = when (status.backfillStatus) {
-                TriState.PENDING -> "uploading"
+                // "uploading" is a claim about right now, and it is only true while the service
+                // that made it is still running. Reopened from the logbook the same row means the
+                // upload never finished, which is "pending", and the sweep will pick it up.
+                TriState.PENDING -> if (status.live) "uploading" else "pending"
                 TriState.YES -> "complete"
                 TriState.NO -> "will retry"
             },
@@ -460,7 +552,7 @@ private fun captureItems(
             // ISA-101 exists to prevent.
             tone = if (uploaded == false) ReportTone.CAUTION else toneOf(status.backfillStatus),
             detail = uploadMessage.takeIf { uploaded == false },
-            pulsing = status.backfillStatus == TriState.PENDING,
+            pulsing = status.live && status.backfillStatus == TriState.PENDING,
         ),
     )
     // Nesting rule unchanged: analysis cannot have an outcome until the upload landed.
@@ -468,14 +560,17 @@ private fun captureItems(
         add(
             CaptureItem.Stage(
                 label = "PC analysis",
-                state = triStateWord(status.analysisStatus, pending = "running"),
+                state = triStateWord(
+                    status.analysisStatus,
+                    pending = if (status.live) "running" else "pending",
+                ),
                 tone = toneOf(status.analysisStatus),
                 // No pending detail: the state word RUNNING and the pulsing dot already say it,
                 // twice. A failed analysis keeps its server-authored message, because that is a
                 // real cause and the server is the only thing that knows it.
                 detail = status.analysisMessage
                     .takeIf { status.analysisStatus == TriState.NO && it.isNotBlank() },
-                pulsing = status.analysisStatus == TriState.PENDING,
+                pulsing = status.live && status.analysisStatus == TriState.PENDING,
             ),
         )
     }

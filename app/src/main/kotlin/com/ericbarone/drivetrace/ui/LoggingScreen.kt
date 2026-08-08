@@ -57,6 +57,7 @@ import com.ericbarone.drivetrace.export.TripSummary
 import com.ericbarone.drivetrace.export.buildTripReport
 import com.ericbarone.drivetrace.export.computeTripSummary
 import com.ericbarone.drivetrace.export.formatDuration
+import com.ericbarone.drivetrace.export.reportSource
 import com.ericbarone.drivetrace.obd.MeasurementSample
 import com.ericbarone.drivetrace.service.ConnectionState
 import com.ericbarone.drivetrace.service.LoggingUiState
@@ -171,7 +172,13 @@ fun LoggingScreen(status: LoggingUiState, onStop: (String) -> Unit, onNewSession
     // so a stable identity is worth the `remember`.
     val report = remember(status, tripSummary, adapterHealth, dtcs, completedDurationSeconds) {
         if (sessionComplete) {
-            buildTripReport(status, tripSummary, adapterHealth, dtcs, completedDurationSeconds)
+            buildTripReport(
+                status.reportSource(),
+                tripSummary,
+                adapterHealth,
+                dtcs,
+                completedDurationSeconds,
+            )
         } else {
             null
         }
@@ -741,9 +748,16 @@ private fun ConnectionPill(state: ConnectionState) {
  * What stays here is everything that genuinely is about *this* medium: the skin's colour tokens
  * (rule 15 keeps those inside composition), the component vocabulary, the tile wrapping widths,
  * the scroll, and the note editor, which is an editor here and a line of stored text in the export.
+ *
+ * **Two screens draw this body, for the same reason two media draw the model.** It renders the
+ * drive that just ended, below, and it renders any drive the logbook reopens (`TripReportScreen`).
+ * Neither owns the report's chrome: this function starts at the verdict band and ends at the
+ * console line, and the header, the scroll and the pinned `ActionBar` belong to whichever screen
+ * is hosting it. That is what lets a historical view offer Export CSV and Report PDF without
+ * offering Stop or New session, and it costs no branch inside the report itself.
  */
 @Composable
-private fun ColumnScope.CompleteBody(report: TripReport, sessionId: Long?) {
+internal fun ColumnScope.CompleteBody(report: TripReport, sessionId: Long?) {
     report.verdict?.let { band ->
         StatusBand(tone = band.tone.asTone, title = band.title, body = band.body)
     }
@@ -1056,7 +1070,7 @@ private val ReportTone.asTone: Tone
  * `exports/` directory the FileProvider already publishes, and the same chooser, so the CSV bundle
  * and the PDF differ only in their MIME type.
  */
-private fun share(context: Context, file: File, mimeType: String, title: String) {
+internal fun share(context: Context, file: File, mimeType: String, title: String) {
     val uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file)
     val intent = Intent(Intent.ACTION_SEND).apply {
         type = mimeType
