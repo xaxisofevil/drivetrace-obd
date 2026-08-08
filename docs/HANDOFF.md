@@ -45,8 +45,19 @@ has also died or gotten stuck on stale code repeatedly across sessions
 (manual kills for DuckDB single-writer-lock queries, or code changes that
 need a restart to take effect, see Gotchas below). **Check `curl
 http://localhost:8090/health` before assuming it's up and running the code
-you think it's running**; after editing `server/*.py`, restart it with
-`schtasks /End /TN "DriveTraceIngestServer"` then `/Run` again.
+you think it's running.**
+
+**`schtasks /End` does NOT reliably kill it**, confirmed directly: it stops
+the outer PowerShell wrapper but the `uvicorn.exe` → `python.exe` → (a
+second, anaconda) `python.exe` process chain it spawns survives as an
+orphan, still bound to port 8090. After editing `server/*.py`, actually stop
+it with:
+```
+powershell -Command "Get-CimInstance Win32_Process -Filter \"CommandLine LIKE '%uvicorn%'\" | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }"
+```
+then `schtasks /Run /TN "DriveTraceIngestServer"`. Verify with the
+`Get-CimInstance` line alone (no processes listed = actually stopped) before
+assuming a restart worked.
 
 **Recently built and verified working:** live gauge cluster, PDF trip-report
 export, drive-to-drive comparison, premium display skins, Settings screen
@@ -156,3 +167,29 @@ note.
   rather than just the happy-path check done this session. Otherwise pull
   from "Other genuinely open items" above or `docs/DESIGN_SYSTEM.md`'s
   unbuilt ideas.
+
+### 2026-08-08, later same day (Claude Code)
+
+- Eric reported Retry Analysis failing on both his Subaru drives.
+  Root-caused and fixed, see `docs/KNOWN_ISSUES.md`'s "Retry Analysis
+  failed forever" entry for the full account: the phone's one-shot,
+  never-retried `/sessions/{id}/start` call silently missed for both (the
+  server was cycling repeatedly while this session worked on unrelated
+  things), leaving no `sessions` row for either even though their full
+  measurement data backfilled and uploaded successfully. Recovered both
+  by hand from their own measurement timestamps, then fixed it
+  structurally: the bulk backfill endpoints now self-heal a missing
+  `sessions` row instead of depending on `/start` ever landing. Verified
+  against a synthetic orphan session ID before touching the real ones.
+  **Eric still needs to tap Retry Analysis once more on both Subaru
+  drives** from the app; the server-side fix doesn't reach back and
+  update what Room already has stored as FAILED.
+- Found and corrected a bug in my own prior write-up: `schtasks /End`
+  does not actually kill the uvicorn process tree it starts (verified by
+  watching the child processes survive it). Fixed the restart
+  instructions in this file's Gotchas section; the real command now
+  force-kills by matching the command line first.
+- Server restarted several times this session for debugging; confirmed
+  healthy and running current code as of the end of it.
+- No Android app changes this round, server-only. Nothing rebuilt or
+  reinstalled on the phone.

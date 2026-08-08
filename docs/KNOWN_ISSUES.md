@@ -995,3 +995,61 @@ plus the same-frame data argument, not by reproducing a blank hero,
 which the code cannot produce. Build passes; the scroll split is
 behavioural and wants one real drive to confirm the report opens on its
 hero.
+
+## Retry Analysis failed forever, for real drives with a full upload (found and fixed)
+
+Reported live: two Subaru Outback drives (46 min, 21 min, "Upload
+success" on both) stuck on "Analysis failed" no matter how many times
+Retry Analysis was tapped.
+
+**Root cause, confirmed directly against the server's own DuckDB
+file:** `POST /sessions/{id}/start` is fire-and-forget from the phone
+(`StreamingClient.startSession`, called exactly once, at the moment a
+drive starts, see `DriveLoggingService.kt`), with no retry of its own,
+ever. The server happened to be down at that exact instant for both
+drives (this session restarted it repeatedly while working on
+unrelated features), so neither session's row in the `sessions` table
+was ever created. Nothing else noticed: the bulk backfill endpoints
+have no foreign key to the `sessions` table, so measurements/
+locations/events all inserted cleanly and the phone correctly reported
+"Upload success". Only `/sessions/{id}/analyze` noticed, and only by
+crashing: `analysis_worker._analyze`'s `SELECT * FROM sessions WHERE
+session_id = ?` came back empty, `sess_row.iloc[0]` raised a bare
+`IndexError`, and every subsequent Retry Analysis repeated the
+identical crash, because retrying analysis only ever re-sends
+`/analyze`, never `/start`.
+
+Confirmed by direct query: `LEFT JOIN sessions ... WHERE
+sessions.session_id IS NULL` against `measurements` found exactly two
+orphaned session IDs, with 19170 and 8746 measurement rows each,
+matching the two stuck Subaru drives exactly.
+
+**Recovered the two existing sessions by hand:** reconstructed their
+`sessions` rows from data that was never actually lost (start/end
+times from `MIN`/`MAX(wall_time_utc_ms)` in their own measurement
+rows, `sessionId` itself as `start_wall_time_utc_ms` per
+`DriveLoggingService.kt`'s own convention, vehicle profile from the
+screenshot). Both then analyzed successfully on the first real attempt
+(22.4 and 24.4 MPG), confirming the missing row, not bad data, was the
+entire problem. The phone's local Room copy of `analysisStatus` still
+needs one more real Retry Analysis tap each to catch up to what the
+server now shows; this fix doesn't reach back and update the phone on
+its own.
+
+**Fixed structurally, not by making `/start` more reliable:** rather
+than chase every way that one fire-and-forget call could still miss,
+`ingest_server.py`'s three bulk endpoints (`measurements`, `locations`,
+`events`) each now call `_ensure_session_placeholder(session_id)`
+first, an `INSERT OR IGNORE INTO sessions (session_id,
+completion_status)`. A session invented this way is missing
+`vehicle_profile`/adapter info that only a real `/start` carries, but
+that's cosmetic for analysis: `analyze_drive.py` reads the
+measurements/locations/events rows, not those fields. Verified: a bulk
+call for a brand-new session ID with no prior `/start` at all now
+auto-creates its placeholder row, and a real `/start` racing in later
+still lands normally alongside it (`INSERT OR IGNORE`, not `REPLACE`,
+so it can't clobber real metadata that got there first).
+`analysis_worker._analyze` also now checks `sess_row.empty` and raises
+a named `ValueError` instead of falling through to the bare
+`sess_row.iloc[0]` `IndexError`, cheap insurance for whatever the next
+undiscovered way to reach a missing row turns out to be.

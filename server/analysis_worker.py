@@ -95,6 +95,14 @@ def _analyze(session_id: int, conn: duckdb.DuckDBPyConnection, db_lock: threadin
 
     if samples.empty:
         raise ValueError(f"No measurements found for session {session_id}")
+    # Should be structurally impossible now that every bulk endpoint calls
+    # _ensure_session_placeholder before touching measurements/locations/events (see
+    # ingest_server.py), but this used to fail here with a bare pandas IndexError on
+    # sess_row.iloc[0] when a session's /start silently never landed, an unreadable crash instead
+    # of an actionable one. Left as a named check, cheap insurance against whatever the next
+    # undiscovered way to reach this looks like.
+    if sess_row.empty:
+        raise ValueError(f"No sessions row for {session_id}: nothing to build report metadata from")
 
     sess = sess_row.iloc[0]
     metadata = {

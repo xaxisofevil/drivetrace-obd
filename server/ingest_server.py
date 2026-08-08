@@ -299,6 +299,35 @@ class BulkEvents(BaseModel):
     is_first_chunk: bool = True
 
 
+def _ensure_session_placeholder(session_id: int) -> None:
+    """CONFIRMED REAL BUG, fixed here: /sessions/{id}/start is fire-and-forget from the phone
+    (see StreamingClient.kt), sent exactly once, at the moment a drive starts, with no retry of
+    its own. If the server happened to be down or unreachable at that exact instant, the sessions
+    row for that drive never gets created, silently, and nothing else notices: the bulk endpoints
+    below have no foreign key to enforce, so backfill still succeeds and the phone correctly shows
+    "Upload success". Only /sessions/{id}/analyze notices, and only by crashing: analysis_worker's
+    `SELECT * FROM sessions WHERE session_id = ?` comes back empty, `sess_row.iloc[0]` raises
+    IndexError, and every future Retry Analysis repeats the identical crash forever, because
+    retrying analysis never re-sends /start.
+
+    Found for real: two Subaru sessions backfilled cleanly (19170 and 8746 measurement rows) and
+    then failed analysis permanently, with no sessions row on the server at all for either. Must
+    be called before analysis can ever succeed for a session whose /start silently didn't land.
+
+    INSERT OR IGNORE, not REPLACE: this only fills in a placeholder if nothing is there yet. A
+    session invented this way is missing vehicle_profile/adapter info that only /start carries,
+    but that's cosmetic for analysis purposes, what analyze_drive.py actually reads is the
+    measurements/locations/events rows, which this function is called alongside, not instead of.
+    A real /start racing in later (unusual, since bulk backfill only runs at Stop, after /start
+    already had its one chance) still wins nothing back retroactively, but does no harm either.
+    """
+    with _db_lock:
+        _conn.execute(
+            "INSERT OR IGNORE INTO sessions (session_id, completion_status) VALUES (?, 'COMPLETED')",
+            [session_id],
+        )
+
+
 @app.post("/sessions/{session_id}/measurements/bulk", dependencies=[Depends(_require_auth)])
 def bulk_measurements(session_id: int, body: BulkMeasurements):
     """Full-replace backfill, run once at Stop (across possibly several chunked calls): local
@@ -307,6 +336,7 @@ def bulk_measurements(session_id: int, body: BulkMeasurements):
     against whatever already streamed in, simpler and provably correct since this only runs
     after logging has already stopped (no concurrent live writes to race against). Delete only
     on the first chunk, see BulkMeasurements.is_first_chunk."""
+    _ensure_session_placeholder(session_id)
     now = _now_ms()
     with _db_lock:
         _conn.execute("BEGIN TRANSACTION")
@@ -328,6 +358,7 @@ def bulk_measurements(session_id: int, body: BulkMeasurements):
 
 @app.post("/sessions/{session_id}/locations/bulk", dependencies=[Depends(_require_auth)])
 def bulk_locations(session_id: int, body: BulkLocations):
+    _ensure_session_placeholder(session_id)
     now = _now_ms()
     with _db_lock:
         _conn.execute("BEGIN TRANSACTION")
@@ -349,6 +380,7 @@ def bulk_locations(session_id: int, body: BulkLocations):
 
 @app.post("/sessions/{session_id}/events/bulk", dependencies=[Depends(_require_auth)])
 def bulk_events(session_id: int, body: BulkEvents):
+    _ensure_session_placeholder(session_id)
     now = _now_ms()
     with _db_lock:
         _conn.execute("BEGIN TRANSACTION")
