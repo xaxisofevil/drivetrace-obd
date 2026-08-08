@@ -9,6 +9,14 @@
     <!-- GPS: foreground only, requested while a session is active -->
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
+    <!-- Declared, never requested in-app. A session started by AutomationReceiver (MacroDroid,
+         car Bluetooth) begins while the app is in the background, and since Android 11 such a
+         foreground service has its while-in-use permissions withheld, GPS included, unless the
+         user has set Location to "Allow all the time". Declaring it is what makes that option
+         exist in Settings at all; the runtime request stays out of SetupScreen's flow, where
+         asking for it alongside fine location would make the system reject the whole request.
+         See docs/AUTOMATION.md. -->
+    <uses-permission android:name="android.permission.ACCESS_BACKGROUND_LOCATION" />
 
     <!-- Foreground service so logging survives screen-off -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
@@ -50,6 +58,20 @@
             android:name=".service.DriveLoggingService"
             android:exported="false"
             android:foregroundServiceType="connectedDevice|location" />
+
+        <!-- The automation front door: MacroDroid/Tasker start and stop a drive through this.
+             exported="true" is the whole point (another app has to be able to reach it) and is
+             also why the receiver checks a locally-generated token before acting on anything;
+             see AutomationReceiver.kt and docs/AUTOMATION.md. Android 8+ does not deliver
+             implicit broadcasts to manifest receivers, so the sending macro must name the
+             package and class explicitly, not just the action. -->
+        <receiver
+            android:name=".service.AutomationReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="com.ericbarone.drivetrace.action.AUTOMATION" />
+            </intent-filter>
+        </receiver>
 
         <provider
             android:name="androidx.core.content.FileProvider"
