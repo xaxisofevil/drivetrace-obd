@@ -33,12 +33,20 @@ confirmed working (back-button navigation and Delete Trip both verified live
 on-device this session).
 
 **Server:** running locally on this machine (`localhost:8090` /
-`0.0.0.0:8090`), manually started, DuckDB at `server/drivetrace.duckdb`. It
-has died or gotten stuck on stale code repeatedly across sessions (machine
-reboots, manual kills for DuckDB single-writer-lock queries, or just code
-changes that need a restart to take effect, see Gotchas below). **Check
-`curl http://localhost:8090/health` before assuming it's up and running the
-code you think it's running.**
+`0.0.0.0:8090`) as the Windows Scheduled Task `DriveTraceIngestServer`
+(action: `server/run_server.ps1`), not as a child process of any particular
+terminal or AI session, so it survives this session/terminal closing. It
+does NOT survive a machine reboot: no `ONLOGON`/`ONSTART` trigger is
+registered (creating one was blocked, Access Denied, in the sandbox this
+session ran in; plain task creation and `/Run` both worked fine). If the
+server's down, run `schtasks /Run /TN "DriveTraceIngestServer"` rather than
+launching uvicorn by hand, so it stays off any session's process tree. It
+has also died or gotten stuck on stale code repeatedly across sessions
+(manual kills for DuckDB single-writer-lock queries, or code changes that
+need a restart to take effect, see Gotchas below). **Check `curl
+http://localhost:8090/health` before assuming it's up and running the code
+you think it's running**; after editing `server/*.py`, restart it with
+`schtasks /End /TN "DriveTraceIngestServer"` then `/Run` again.
 
 **Recently built and verified working:** live gauge cluster, PDF trip-report
 export, drive-to-drive comparison, premium display skins, Settings screen
@@ -82,14 +90,21 @@ note.
   PowerShell injected a UTF-8 BOM and mangled bytes mid-file. Use a
   POSIX-shell redirect instead (Bash tool, not PowerShell) combined with
   `adb exec-out` (not plain `adb shell`) for any binary pull off the phone.
-- **The ingest server does not auto-reload.** It's started as plain
-  `uvicorn server.ingest_server:app --host 0.0.0.0 --port 8090` (no
-  `--reload`), so editing `server/*.py` and expecting the running server to
-  pick it up is wrong, it'll keep serving the old code until killed and
-  restarted. Needs `DRIVETRACE_INGEST_TOKEN` set in the environment it
-  starts in (Eric has the value; it's also baked into the Android build via
-  `BuildConfig.INGEST_TOKEN`, check `local.properties` / the app's build
-  config rather than asking him to retype it).
+- **The ingest server does not auto-reload.** It runs via
+  `server/run_server.ps1` (no `--reload`), so editing `server/*.py` and
+  expecting the running server to pick it up is wrong, it'll keep serving
+  the old code until the scheduled task is ended and re-run (see Server,
+  above). The token is already in `run_server.ps1`, it's also baked into
+  the Android build via `BuildConfig.INGEST_TOKEN`; no need to ask Eric to
+  retype it.
+- **The server runs as a Scheduled Task, not a shell child process, on
+  purpose** (`schtasks /Query /TN "DriveTraceIngestServer"` to check it,
+  `/Run` to start, `/End` to stop). Eric asked for this explicitly: he
+  switches between AI assistants and closes terminals/sessions between
+  them, and a server started as a plain background shell command dies with
+  whatever session started it. Don't "simplify" this back to a bare
+  `uvicorn ...` invocation in a terminal, that reintroduces the exact
+  problem this setup exists to avoid.
 - **Room's schema is on `fallbackToDestructiveMigration(dropAllTables =
   true)`** (see `AppDatabase.kt`'s own comment). Bumping the DB version
   wipes every session on the phone with no migration path. If a real schema
@@ -127,6 +142,15 @@ note.
   Committed as `daeef77`. Had to manually restart the ingest server (it
   was running pre-Delete-Trip code) before this could be tested end to end.
 - Server confirmed healthy and running current code as of end of session.
+- Eric asked for the server to run independent of any particular AI
+  session, since he closes terminals between switching assistants. Moved
+  it off a plain background shell command and onto a Windows Scheduled
+  Task (`DriveTraceIngestServer`, action `server/run_server.ps1`),
+  confirmed its process tree's parent is Task Scheduler's own host
+  process, not this session's. Survives session/terminal close; does NOT
+  survive a reboot (ONLOGON/ONSTART trigger creation was Access Denied in
+  this sandbox, plain task creation and manual `/Run` were not). See
+  "Server" and the scheduled-task gotcha above for the restart command.
 - **Not started, next up if picked up here:** nothing specific queued.
   Eric may want the Delete Trip flow exercised on a real (throwaway) drive
   rather than just the happy-path check done this session. Otherwise pull
