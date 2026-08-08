@@ -15,8 +15,11 @@ app/                    Android app (Kotlin, Jetpack Compose)
   streaming/              Best-effort live stream + guaranteed backfill + analysis
                           request/poll client
   export/                 CSV bundle export, on-device rough trip-MPG estimate
-  ui/                     Setup screen (pick adapter), Logging screen (status +
-                          results), History screen (past sessions, retry upload)
+  ui/                     Setup screen (pick adapter), Logging screen (live
+                          cluster + the trip report for the drive that just
+                          ended), History screen (past sessions, retry upload),
+                          Trip report screen (any past drive's full report),
+                          Compare screen, Settings screen
   data/                   Room database (local, authoritative)
 
 pc_logger/              Python equivalent for a Windows laptop instead of a phone.
@@ -77,6 +80,19 @@ blueprint/              The original spec this project was built from.
    local Room, with upload/analysis status and a manual "Retry upload" for
    anything not yet confirmed. Works fully offline; the server is never
    queried directly for this list.
+6. **Any card in that list reopens its drive's full trip report**, which is
+   step 4's Session Complete screen rendered for a session that ended at
+   some point in the past rather than a second ago. The report model
+   (`export/TripReport.kt`) takes a `ReportSource`; the live path builds one
+   from `LoggingUiState` and the historical path builds one from the
+   `SessionEntity` row, since the six pipeline facts the model reads
+   (`analysisSummaryJson`, `backfillStatus`/`backfillMessage`,
+   `analysisStatus`, and the two message fields) are persisted on that row by
+   step 4 anyway. Everything else the report shows already derived from Room
+   per session ID: `computeTripSummary`, `computeAdapterHealth`,
+   `readSessionDtcs`. So this reads no new data, needs no server, and adds no
+   second copy of the report's own decisions. Same for the exports: CSV and
+   PDF only ever needed a session ID and work from either screen.
 
 ## Entry points into the app
 

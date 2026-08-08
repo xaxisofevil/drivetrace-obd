@@ -784,6 +784,50 @@ analysis". That one is fixed at the source rather than at the screen, because un
 server-authored analysis errors are untouched: those are the useful ones, and they describe the
 server's view rather than this phone's.
 
+#### The report is a body, and two screens host it
+
+COMPLETE was reachable for exactly one drive: the one that had just ended. The logbook was
+therefore a list of drives whose reports had all been unreachable since the moment the app moved
+on, which is backwards, because the report is the screen that answers everything a logbook card
+only summarises.
+
+It is reachable for every session ever logged now, and the way that happened is the move idea #2
+already made for the PDF. `buildTripReport` held every judgement the report makes; the only thing
+tying it to a running session was its parameter, a `LoggingUiState`. That narrowed to
+`ReportSource`, the six fields the model actually reads, and both callers build one: the status bus
+for the drive that just ended, and the `SessionEntity` row for any other. Those six are persisted
+columns on that row already, written as the drive ends and kept current by the retry worker, so the
+historical path reads the same facts off disk rather than reconstructing a session that stopped
+running days ago. `CompleteBody` is likewise unchanged and drawn by both screens. One hero chain,
+one verdict rule, one capture block; two renderers, and one of them now draws on two screens.
+
+**What the two hosts genuinely do not share is chrome, and that is the whole of the difference.**
+`CompleteBody` starts at the verdict band and ends at the console line, so the header, the scroll
+and the pinned `ActionBar` belong to whichever screen is hosting it.
+
+| | Just finished | Opened from the logbook |
+|---|---|---|
+| Header | "Session Complete", connection pill | Vehicle and date, back chevron |
+| Primary action | Export CSV | Export CSV |
+| Secondary actions | Report PDF, New session | Report PDF |
+| Way out | New session | The header's back chevron |
+
+Both exports carry over untouched, because neither ever needed anything only a live session had:
+the CSV bundle takes a session ID, the PDF takes a session ID and the built report, and both read
+Room. Stop logging is absent because there is nothing running to stop. **New session is absent for
+a subtler reason:** it resets the live status bus, which is a statement about the drive that just
+ended, and from the logbook it would be meaningless and also the wrong way out. The way out is the
+header's back chevron, which is how SettingsScreen, HistoryScreen and CompareScreen are all already
+left, so the bar does not grow the app's only Back button.
+
+**Two state words change between the hosts, and one animation stops.** A pending upload reads
+"uploading" beside a pulsing dot while a service is actually pushing it, and "pending" with no
+motion on a drive from last Tuesday; a pending analysis behaves the same way. Rule 9 is the reason.
+The pulse is the app's only animation and it means work is under way, so spending it on a job
+nobody is running would make the single moving thing on the screen the one thing on it that is not
+true. `ReportSource.live` is that flag, and it is the only branch in the model the historical path
+required at all.
+
 ### HistoryScreen: logbook
 
 One card per drive. MPG is right-aligned in a fixed column so the eye runs straight down the
@@ -855,6 +899,26 @@ behind a tap rather than always open, because the list's whole job is to be scan
 of MPG figures and a text field on every card would multiply every row's height for an interaction
 that happens once in twenty views. The logbook is where a drive from days ago gets looked at
 again, and it is where "that was the one with the new tyres" actually occurs to someone.
+
+**And the card is the way into that drive's full trip report.** Tapping anywhere on it opens the
+report above, for any session ever logged. This is `SelectableRow`'s own argument applied to a
+target that was already exactly the right size: the whole panel is the target, never a small icon
+nested inside it. The card carries a date, a vehicle, an MPG figure and two pipeline chips; the
+report carries the hero, the stored codes, the drive profile and the adapter's own account of
+itself, and until it took a session ID it existed for exactly one drive.
+
+Two interactions already lived on that card and both keep working:
+
+- **While the comparison mode is on, a tap still means "pick this drive to compare",** and it
+  cannot mean both. The card's click is the selection toggle while selecting and the report
+  otherwise, never a fallback from one to the other: opening a report part-way through choosing two
+  drives would drop both picks to answer a question nobody asked.
+- **The small controls the card keeps outside that mode** (Add note, Retry upload, Retry analysis)
+  sit inside the target and consume their own taps, which is ordinary nesting, a small labelled
+  thing on top of a large unlabelled one. **An open note editor is the exception,** and it takes the
+  card's click away entirely for as long as it is open. The field is most of the card's area and
+  its margins are not, so a thumb that misses by a few dp would otherwise navigate away from a
+  sentence being typed, and nothing else on this card is that easy to lose.
 
 ## 8. Rules for whoever touches this next
 
