@@ -315,7 +315,9 @@ showed 17 and 19 for the same two drives (user-reported, matches the
 agreement is excellent on both (0-0.6%), so this is not a distance/
 odometer issue, it's specifically the fuel side of the MPG calculation.
 
-Checked and ruled out as the explanation:
+Checked and ruled out as the explanation, **for these two short
+drives specifically** (see the update below, this stopped being true in
+general):
 - **Stoich-gating dropping non-stoichiometric samples to zero fuel**:
   only 0.5-3.7% of samples per drive fell outside the 0.9-1.1 equivalence
   ratio gate. Not enough volume to produce a 15-25% gap.
@@ -340,14 +342,61 @@ more trustworthy absolute MPG number, and DriveTrace's estimate as useful
 for relative comparisons across drives (same methodology every time) more
 than as a replacement for the dash reading.
 
-**Fixed while investigating**: `add_derived_columns`'s fuel-rate formula
-computed `fuel_g_s = maf_gs / STOICH_AFR_GASOLINE` for every sample inside
-the near-stoich gate, never actually multiplying by the real commanded
-equivalence ratio value. Per SAE J1979, actual AFR = stoich AFR /
-ce_ratio, so the correct formula is `fuel_g_s = maf_gs * ce_ratio /
-STOICH_AFR_GASOLINE`. Confirmed the fix's actual effect on two real
-drives before concluding it wasn't the answer to the bigger question
+**Fixed while investigating (first pass)**: `add_derived_columns`'s
+fuel-rate formula computed `fuel_g_s = maf_gs / STOICH_AFR_GASOLINE` for
+every sample inside the near-stoich gate, never actually multiplying by
+the real commanded equivalence ratio value. Per SAE J1979, actual AFR =
+stoich AFR / ce_ratio, so the correct formula is `fuel_g_s = maf_gs *
+ce_ratio / STOICH_AFR_GASOLINE`. Confirmed the fix's actual effect on two
+real drives before concluding it wasn't the answer to the bigger question
 above, rather than assuming.
+
+### Update: the "stoich-gating" theory above was wrong to rule out, it was just tested on the wrong drives
+
+Reported live: a 66-minute Subaru highway/backroad drive came back at
+**38.7 MPG**, driver-certain that's wrong (their own sense of the drive,
+and the on-device rough estimate shown right at Stop, both said roughly
+21).
+
+The masking gate ruled out above (`.where(ce_ratio.between(0.9, 1.1))`,
+dropping every sample outside it to **zero fuel burned** rather than
+"unknown") was tested against two short, mild drives where only 0.5-3.7%
+of samples fell outside the band, not enough volume to matter. This
+Subaru drive had a 23.8-minute cold-start warmup and real highway
+acceleration, putting **15.5%** of its samples outside the band. Directly
+confirmed those masked samples were not idle or noise: their mean MAF
+(38.6 g/s) was *higher* than the kept samples' mean (22.4 g/s), meaning
+the mask was silently zeroing out the drive's highest-consumption
+moments (WOT enrichment on acceleration, merges, passes) specifically
+because those are exactly when combustion moves away from stoichiometric,
+not despite it.
+
+This inverts the original reasoning entirely: Commanded Equivalence
+Ratio exists precisely to correct the MAF-derived fuel formula for
+non-stoichiometric operation, that correction is the entire reason to
+read `ce_ratio` at all rather than just assuming stoich everywhere. A
+"near-stoich only" trust window masks the formula's output exactly where
+the `ce_ratio` term does real work, and defaults to zero everywhere else.
+Removed the mask entirely in `add_derived_columns`; the formula is valid
+across `ce_ratio`'s full range, and the range itself is already sanity-
+clamped upstream on the phone (`PidScheduler.kt`'s `PLAUSIBLE_RANGES`:
+0.0-3.0), no second "trust window" was needed on top of that.
+
+**Confirmed effect directly, before and after, same underlying data:**
+- The disputed Subaru drive: 38.7 → 30.4 MPG. Large correction, this was
+  the drive with the high out-of-band fraction.
+- The two Subaru drives recovered earlier tonight (see "Retry Analysis
+  failed forever", above), both short, low out-of-band fraction: 22.4 →
+  22.2 and 24.4 → 24.1. Barely moved, as expected.
+
+30.4 is still above the driver's ~21 expectation and above the vehicle's
+own trip computer by the same general margin documented in the section
+above, that broader, still-open gap (MAF under-reporting vs. a more
+direct injector-pulse-width reference) is unaffected by this fix and
+remains the likely next lead. This fix corrects a real, separate,
+mechanical bug in how the existing MAF-based estimate summed its own
+numbers; it is not a claim that the MAF-based method itself is now
+accurate against the dash.
 
 ## Octane-driven timing retard (new lead, not yet checked)
 

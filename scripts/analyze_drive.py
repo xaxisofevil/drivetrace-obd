@@ -295,24 +295,44 @@ def add_derived_columns(snap: pd.DataFrame) -> pd.DataFrame:
     if "iat_c" in snap and "ambient_c" in snap:
         snap["iat_above_ambient_c"] = snap["iat_c"] - snap["ambient_c"]
 
-    # MAF-estimated fuel consumption: only trustworthy near stoichiometric operation.
-    # Commanded Equivalence Ratio (PID 44) is fuel/air relative to stoich (SAE J1979): actual
-    # AFR = stoich AFR / ce_ratio, so fuel_g_s = maf_gs / actual_AFR = maf_gs * ce_ratio / stoich
-    # AFR. Previously missing the "* ce_ratio" term entirely, silently assuming exactly
-    # stoichiometric combustion for every in-band sample instead of scaling by the real
-    # commanded value. Small effect in practice (ce_ratio stays close to 1.0 within the
-    # near-stoich gate by construction), confirmed directly on two real drives (MPG moved
-    # 20.5->20.8 and 24.7->25.1 with the fix), not the explanation for a much larger gap
-    # against the vehicle's own trip computer, but still the mathematically correct formula.
+    # MAF-estimated fuel consumption. Commanded Equivalence Ratio (PID 44) is fuel/air relative
+    # to stoich (SAE J1979): actual AFR = stoich AFR / ce_ratio, so
+    # fuel_g_s = maf_gs / actual_AFR = maf_gs * ce_ratio / stoich AFR. This formula is valid
+    # across ce_ratio's whole range, that's the entire reason to read ce_ratio at all rather than
+    # just assuming stoichiometric combustion everywhere.
+    #
+    # CONFIRMED REAL BUG, fixed here: this used to additionally mask the result to samples where
+    # ce_ratio sat within 0.9-1.1 ("near stoich"), on the reasoning that the estimate was "only
+    # trustworthy" there, treating everything outside that band as zero fuel burned rather than
+    # unknown. That's backwards: ce_ratio exists precisely to correct this formula for
+    # non-stoichiometric operation (WOT enrichment, cold-start enrichment, deceleration lean-out),
+    # so masking exactly there throws away the correction at the one moment it does real work,
+    # and defaults those seconds to zero instead. Worse, those seconds are not idle or
+    # low-load: confirmed on a real 66-minute Subaru drive that the masked samples' mean MAF
+    # (38.6 g/s) was HIGHER than the kept samples' mean (22.4 g/s), i.e. this was silently
+    # zeroing out the drive's highest-consumption moments (acceleration, merges, passes), not
+    # noise. That drive's overall_mpg came out 38.7 against a driver-reported ADR of ~21;
+    # removing the mask alone (naive stoich fill for the same samples, not even using their real
+    # ce_ratio) already pulled the estimate down to ~29.3, and using their real ce_ratio (this
+    # fix) pulls it further, since WOT enrichment means ce_ratio > 1.1 there, i.e. more fuel, not
+    # the stoich-assumed amount.
+    #
+    # Why the two short Mazda drives that first surfaced this formula (see KNOWN_ISSUES.md, "MPG
+    # estimate runs well above the vehicle's own trip computer") didn't expose the masking bug:
+    # only 0.5-3.7% of their samples fell outside the 0.9-1.1 band, not enough volume to move
+    # their MPG by more than a fraction. This Subaru drive had a much longer cold-start warmup
+    # (23.8 min) and more highway acceleration, putting 15.5% of samples outside the band, and
+    # concentrated in the highest-MAF moments, which is what made the same masking bug this
+    # visible. Both vehicles get the same fix; the ranges upstream that pre-plausibility-clamp
+    # ce_ratio itself (PidScheduler.kt's PLAUSIBLE_RANGES: 0.0-3.0) are what actually guards
+    # against a garbage sensor read, no separate "trust window" is needed here on top of that.
     if "maf_gs" in snap:
         if "ce_ratio" in snap:
-            near_stoich = snap["ce_ratio"].between(0.9, 1.1)
             fuel_g_s = (snap["maf_gs"] * snap["ce_ratio"]) / STOICH_AFR_GASOLINE
         else:
-            near_stoich = pd.Series(True, index=snap.index)
             fuel_g_s = snap["maf_gs"] / STOICH_AFR_GASOLINE
         fuel_gal_hr = (fuel_g_s * 3600) / (GASOLINE_DENSITY_G_PER_L * LITERS_PER_GALLON)
-        snap["est_fuel_gal_hr"] = fuel_gal_hr.where(near_stoich)
+        snap["est_fuel_gal_hr"] = fuel_gal_hr
 
         speed_kmh = snap.get("speed_kmh", snap.get("gps_speed_kmh"))
         if speed_kmh is not None:
