@@ -2,9 +2,12 @@ package com.ericbarone.drivetrace.ui
 
 import android.Manifest
 import android.bluetooth.BluetoothDevice
+import android.content.ClipData
+import android.content.ClipboardManager
 import android.content.Context
 import android.content.pm.PackageManager
 import android.os.Build
+import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Canvas
@@ -47,6 +50,7 @@ import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import com.ericbarone.drivetrace.obd.BluetoothTransport
 import com.ericbarone.drivetrace.obd.VehicleProfile
+import com.ericbarone.drivetrace.service.AutomationReceiver
 import com.ericbarone.drivetrace.ui.components.ActionBar
 import com.ericbarone.drivetrace.ui.components.Caption
 import com.ericbarone.drivetrace.ui.components.EmptyState
@@ -129,6 +133,9 @@ fun SetupScreen(onStartLogging: (String, VehicleProfile) -> Unit, onShowHistory:
     }
     val skinId by DisplaySettings.skin.collectAsState()
     val highContrast by DisplaySettings.highContrast.collectAsState()
+    // First read is also what generates it, which is why this screen is where it is shown: the
+    // token exists from the first time anyone could want to copy it, and never before.
+    val automationToken = remember { AutomationReceiver.token(context) }
 
     val permissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions(),
@@ -247,6 +254,13 @@ fun SetupScreen(onStartLogging: (String, VehicleProfile) -> Unit, onShowHistory:
                 title = "Daylight readout boost",
                 detail = "Brighter hero numerals for direct sun. Background stays dark.",
             )
+
+            Spacer(Modifier.height(Space.xs))
+            SectionLabel("Automation")
+
+            // Above the adapter list rather than below it, because the list owns weight(1f) and
+            // anything after it competes with the scroll area the Start button depends on.
+            AutomationTokenRow(token = automationToken)
 
             Spacer(Modifier.height(Space.xs))
             SectionLabel("Adapter")
@@ -388,6 +402,52 @@ private fun ToggleRow(
                 Text(detail, style = type.unit, color = Slate, maxLines = 2)
             }
         }
+    }
+}
+
+/**
+ * The shared secret an automation app has to send back (see
+ * `service/AutomationReceiver.kt` and docs/AUTOMATION.md), with a copy action, since the value
+ * exists to be pasted into a MacroDroid "Send Intent" action on this same phone.
+ *
+ * Shown in full rather than masked. It is an identifier to compare character by character against
+ * what landed in the macro, which is exactly what the `mono` style is for, and masking would only
+ * be theatre: anyone holding the unlocked phone can press Copy regardless.
+ *
+ * No new container. An [InstrumentPanel] with a value and a [SecondaryAction], the same shape the
+ * rest of this screen is built from.
+ */
+@Composable
+private fun AutomationTokenRow(token: String, modifier: Modifier = Modifier) {
+    val context = LocalContext.current
+    val type = LocalReadoutType.current
+    InstrumentPanel(
+        modifier = modifier.fillMaxWidth(),
+        contentPadding = PaddingValues(horizontal = Space.lg, vertical = Space.md),
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text("Automation token", style = type.small, color = Mist, maxLines = 1)
+                Text(token, style = type.mono, color = Slate, maxLines = 2)
+            }
+            Spacer(Modifier.width(Space.md))
+            SecondaryAction(
+                text = "Copy",
+                onClick = { copyAutomationToken(context, token) },
+                minHeight = Space.compactTarget,
+            )
+        }
+        Spacer(Modifier.height(Space.sm))
+        Caption("MacroDroid or Tasker can start and stop a drive with this. docs/AUTOMATION.md has the recipe.")
+    }
+}
+
+private fun copyAutomationToken(context: Context, token: String) {
+    val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+    clipboard.setPrimaryClip(ClipData.newPlainText("DriveTrace automation token", token))
+    // Android 13 shows its own copy confirmation, and a Toast on top of it is a duplicate.
+    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) {
+        Toast.makeText(context, "Automation token copied", Toast.LENGTH_SHORT).show()
     }
 }
 
