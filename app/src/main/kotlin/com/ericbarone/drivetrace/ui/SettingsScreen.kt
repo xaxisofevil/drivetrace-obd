@@ -29,7 +29,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import com.ericbarone.drivetrace.service.AutomationReceiver
@@ -282,7 +281,10 @@ private fun SetupField(label: String, value: String, copyable: Boolean = true, m
     ) {
         Column(modifier = Modifier.weight(1f)) {
             Text(label, style = type.label, color = Mist)
-            Text(value, style = type.mono, color = Chalk, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            // No line cap: every value here exists to be verified by eye as well as copied, and
+            // the longest of them (the receiver class) is exactly the kind of string a silent
+            // truncation would make impossible to check against what actually got pasted.
+            Text(value, style = type.mono, color = Chalk)
         }
         if (copyable) {
             Spacer(Modifier.width(Space.sm))
