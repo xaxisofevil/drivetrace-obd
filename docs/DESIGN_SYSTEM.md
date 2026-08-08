@@ -896,13 +896,62 @@ and is what Torque Pro's paid tier substantially is. The table in `ui/PidDisplay
 that would widen for it: slot assignment is currently code in `LiveBody` reading a fixed table,
 and a preset is that table plus a stored per-vehicle override.
 
-## 2. Exportable trip report as PDF
+## 2. ~~Exportable trip report as PDF~~ — built
 
-`CsvExporter` already produces the bundle and the server already computes the full analysis. A
-rendered one-page report — headline MPG, drive profile, anomaly flags, the coolant and trim
-traces — is a small step from data the app already holds, and it is the artifact you actually
-hand to a mechanic or attach to a forum post. *Monetisation:* clean free/paid line; unbranded or
-custom-branded export is a standard paid tier for shop use.
+**Built.** `export/PdfTripReportExporter.kt` draws the Session-Complete report onto a US Letter
+page with the platform's `android.graphics.pdf.PdfDocument`, and `Report PDF` sits beside
+`New session` in the report's `ActionBar`. No third-party PDF library: one page of text and
+hairlines is a `Canvas`, and every string on it stays real selectable text rather than pixels, so
+it can be searched, copied into a service ticket, and printed at any size.
+
+Three things building it turned out to require, which are the parts worth keeping.
+
+**A screenshot was never the feature.** The obvious cheap version of this idea is a bitmap of the
+report, and it fails at every job the idea was for: it is a dark-mode phone screen, cropped to
+whatever was on screen at the time, unreadable when printed and enormous when emailed.
+
+**The palette inverts and nothing else does.** Section 2's dark-first argument is entirely about
+the medium: a bright panel destroys dark adaptation at night and reflects off the windscreen, and
+that is why clusters and glass cockpits are light-on-dark. Not one of those reasons survives the
+trip to a printed page, which is read stationary at a desk, and where a dark ground means an
+ink-flooded sheet most printers render as a grey smear. So the export is light. Everything else in
+this document carries over unchanged, because none of it was about polarity: the category contract
+holds absolutely (mixture teal, thermal blue, MOTION achromatic, darkened only far enough to clear
+4.5:1 on white instead of on `Ink`), status stays separate from category and still never travels
+without its glyph — which matters *more* here, because this page gets photocopied and colour is
+the first thing that channel loses — normal stays achromatic, figures stay tabular (`Paint`'s own
+`fontFeatureSettings = "tnum"`), and the unit stays a separate draw call positioned off the
+numeral's measured width.
+
+**The real work was `export/TripReport.kt`, not the drawing.** The report is a stack of judgement
+calls with prose attached: which figure earns the hero, whether the drive gets a band and what it
+says, which tile the hero already claimed, which capture lines are verdicts and which are counts.
+A second renderer re-deciding those would be a second opinion about the same drive, which is
+exactly what this export must not be. So those decisions moved into one model that both renderers
+draw, and `CompleteBody` became a renderer too — the screen and the page now draw the same object,
+not the same data.
+
+That refactor is the entry's real finding, and it was learned the expensive way. A first attempt
+at this model was written against the report as it stood before the reorganisation above and was
+never wired to the screen; by the time it was picked up again it described a capture block that no
+longer existed, with a red `FAILED` upload, every count inline, a green tick on a clean adapter,
+and `calculating...` rows the hero already says at 64sp. **A model only one renderer reads is a
+second copy with extra steps,** and it starts rotting immediately.
+
+Two judgement calls the two media genuinely do not share:
+
+- **The disclosure prints.** Rule 15 collapses the capture counts behind a tap, and the PDF prints
+  them inline, indented under the verdict they explain. The rule is about the resting state of a
+  screen someone opens after every drive; a page has no resting state and no tap. It is generated
+  deliberately, once, and the reason anyone generates one is to hand the drive to somebody else.
+  The block only exists at all when a read actually dropped, so this costs nothing on a good drive
+  and is exactly the page the mechanic wanted on a bad one.
+- **One page is the design, two is the fallback.** The writer breaks rather than clips, because a
+  session with stored codes, several anomaly flags and a dropped-PID breakdown genuinely does not
+  fit, and that is precisely the drive whose evidence must not be silently dropped off the bottom.
+
+*Monetisation, still open:* unbranded or custom-branded export is a standard paid tier for shop
+use, and the seam for it is one header function.
 
 ## 3. Drive-to-drive comparison
 
