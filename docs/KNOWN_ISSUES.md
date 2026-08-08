@@ -874,41 +874,51 @@ function the report screen already calls) as a fallback, only when
 with a genuine server-side result never pays for the extra query.
 
 **4. A session can hang at `INITIALIZING`, zero samples, forever
-(partially fixed).** Confirmed for real: a session sat at
+(fixed, took two attempts).** Confirmed for real: a session sat at
 `connectionState = INITIALIZING`, `measurementCount = 0` for 34
 minutes straight with no recovery, notification frozen the whole time.
 Root cause: every step from `BluetoothSocket.connect()` through the
-AT-command handshake (`ElmSession.initialize()`) to the one-time PID
-reads is a plain blocking call on the raw input/output streams with no
+AT-command handshake (`ElmSession.initialize()`, which wraps a
+third-party library's `ObdDeviceConnection`) to the one-time PID reads
+is a plain blocking call on the raw input/output streams with no
 timeout anywhere in that chain, same underlying class of bug as the
-notification Stop-action investigation above
-(`BluetoothTransport.connect()`'s already-documented lack of
-cancellation handling). Coroutine cancellation is cooperative and
-cannot preempt a thread already blocked inside one of these calls, so
-if a response never arrives, or arrives malformed and the code sits
-waiting for more bytes that never come, nothing times out and nothing
-recovers.
+notification Stop-action investigation above.
 
-Fixed for the setup phase: `runSession()`'s connect-through-one-time-
-reads sequence is now wrapped in `withTimeout(30_000L)`
-(`DriveLoggingService.kt`). A hang there now surfaces as a
-`TimeoutCancellationException`, which the existing `catch (e:
-Exception)` block already treats like any other failed attempt: log a
-`RECONNECT` event, back off, try again, same recovery path that
-already existed for a clean connection failure.
+**First attempt, wrong:** wrapped the whole setup sequence in
+`withTimeout(30_000L)`. Caught by review before it shipped to a second
+real hang: coroutine cancellation is cooperative, it only throws at a
+suspension point, and a thread genuinely parked inside a blocking
+`InputStream.read()` (or `BluetoothSocket.connect()`) has no
+suspension point to be caught at. `withTimeout`'s deadline elapsing
+does not preempt that thread, it only arranges to throw once the
+blocking call already returns on its own, i.e. it would not have
+actually fired for the exact hang it was written to catch. Worth
+recording precisely because it's a genuinely easy mistake: the fix
+compiled, read correctly, and would have looked identical to a real
+fix in every session that happened not to hit a true stalled read
+during testing.
 
-**Not fixed, a real remaining gap:** this timeout does not cover
-`scheduler.run { ... }`, the ongoing polling loop that runs for the
-whole drive, since that call is supposed to block for a long time by
-design and a blanket timeout around it would defeat the point. A hang
-inside one specific ongoing PID poll mid-drive, as opposed to during
-setup, is not covered by this fix and would still freeze the session
-with no recovery. Given "34 minutes, zero samples" means nothing ever
-got past setup in that specific incident, the setup-phase fix is the
-right first cut, but the deeper fix (a per-command read timeout inside
-`ElmSession`/`PidScheduler`'s actual I/O, so a hang on the fifth PID
-of a drive recovers the same way a hang on the first one now does) is
-still open.
+**Second attempt, the real fix:** a watchdog coroutine launched
+alongside the setup sequence (`serviceScope.launch { delay(30_000L);
+transport.close() }`, disarmed via `.cancel()` in a `finally` the
+moment setup finishes, success or failure). Closing a Java socket from
+a different thread makes any read already blocked on it throw
+`IOException` immediately, that's a real interrupt delivered by the
+OS/runtime, not a cancellation request the blocked thread has no
+chance to notice. The resulting exception unwinds into the same
+`catch (e: Exception)` block that already handles an ordinary
+connection failure: log a `RECONNECT` event, back off, try again.
+
+**Still a real, deliberately unclosed gap:** the watchdog only guards
+the setup phase, not `scheduler.run { ... }`, the ongoing polling loop
+for the whole drive, since that call is supposed to block for a long
+time by design. A hang inside one specific ongoing PID poll mid-drive
+is not covered and would still freeze the session with no recovery.
+Given "34 minutes, zero samples" means nothing ever got past setup in
+the incident that motivated this fix, closing the setup-phase gap is
+the right first cut, but the same watchdog-closes-the-socket pattern
+applied per-command inside `PidScheduler`'s polling loop is the
+correct shape for the deeper fix, not yet built.
 
 ## Trip report's hero readout looked blank (root-caused, not the bug it looked like)
 

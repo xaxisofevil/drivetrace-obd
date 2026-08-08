@@ -32,7 +32,6 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withTimeout
 import java.util.concurrent.atomic.AtomicLong
 
 private const val CHANNEL_ID = "drive_logging"
@@ -193,22 +192,31 @@ class DriveLoggingService : Service() {
         try {
             while (currentCoroutineIsActive()) {
                 try {
-                    // Connect through the one-time reads, all bounded by one timeout. Every step
-                    // here is a plain blocking call (BluetoothSocket.connect(), then raw
-                    // InputStream/OutputStream reads and writes for the AT handshake and the
-                    // one-time PID reads) with no timeout of its own anywhere in this chain, and
-                    // coroutine cancellation cannot preempt a thread already blocked inside one of
-                    // them, it can only stop new code from starting. Confirmed for real: a session
-                    // sat at connectionState=INITIALIZING, measurementCount=0 for 34 minutes with
-                    // no recovery, see KNOWN_ISSUES.md. withTimeout() turns a silent, permanent
-                    // hang into a TimeoutCancellationException the existing catch block below
-                    // already treats like any other failed attempt: log a RECONNECT event, back
-                    // off, try again. 30s is generous for a real handshake plus a handful of
-                    // one-time reads on a working adapter, and short next to "forever" on a dead
-                    // one. Does not cover scheduler.run() below, which is meant to run for the
-                    // whole drive; a hang inside one specific ongoing PID poll, as opposed to
-                    // setup, is a real, different gap this does not close, see KNOWN_ISSUES.md.
-                    val scheduler = withTimeout(SETUP_TIMEOUT_MS) {
+                    // Connect through the one-time reads, guarded by a watchdog rather than
+                    // withTimeout. First attempt used withTimeout(SETUP_TIMEOUT_MS) alone and a
+                    // review caught that it doesn't actually work here: every step in this chain
+                    // (BluetoothSocket.connect(), then raw InputStream/OutputStream reads for the
+                    // AT handshake and one-time PID reads, inside the third-party
+                    // ObdDeviceConnection this session's ElmSession wraps) is a plain blocking
+                    // call with no suspension point of its own. Coroutine cancellation is
+                    // cooperative: it can only throw at a suspension point, and a thread parked
+                    // inside a blocking read has none to be caught at, so withTimeout's deadline
+                    // would not actually fire until the blocked call already returned on its own,
+                    // i.e. never, for the exact hang it was meant to catch. Confirmed for real
+                    // before either fix: a session sat at connectionState=INITIALIZING,
+                    // measurementCount=0 for 34 minutes with no recovery, see KNOWN_ISSUES.md.
+                    //
+                    // A watchdog on the side fixes this for real: closing a Java socket from a
+                    // different thread makes any read already blocked on it throw IOException
+                    // immediately, a genuine interrupt rather than a cancellation request the
+                    // blocked thread has no chance to notice. That exception unwinds normally
+                    // into the catch block below, the same recovery path an ordinary connection
+                    // failure already takes: log a RECONNECT event, back off, try again.
+                    val setupWatchdog = serviceScope.launch {
+                        delay(SETUP_TIMEOUT_MS)
+                        transport.close()
+                    }
+                    val scheduler = try {
                         LoggingStatus.state.value = LoggingStatus.state.value.copy(
                             connectionState = ConnectionState.CONNECTING,
                             statusMessage = "Connecting to adapter...",
@@ -292,6 +300,11 @@ class DriveLoggingService : Service() {
                             )
                         }
                         scheduler
+                    } finally {
+                        // Disarm on any exit, success or failure: a watchdog left armed after
+                        // setup genuinely finished would close the transport out from under a
+                        // healthy, actively-polling connection SETUP_TIMEOUT_MS later.
+                        setupWatchdog.cancel()
                     }
 
                     backoffMs = INITIAL_BACKOFF_MS // reset after a successful (re)connect
