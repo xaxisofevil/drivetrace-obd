@@ -1175,3 +1175,31 @@ sees each Tier A RPM reading) tracking a running "RPM has read ~zero continuousl
 timestamp, reset on any reading meaningfully above idle. On threshold, call the same internal
 stop path `ACTION_STOP` already uses, `stopSession()`, directly, no need to round-trip through
 Android's intent system for a self-triggered stop. Not yet built.
+
+## 13. A real Settings screen (Setup is outgrowing its own brief)
+
+`SetupScreen` was scoped in section 7 as "two decisions and one action": which vehicle, which
+adapter, Start. That was true when it shipped. It is no longer true: tonight alone added a
+Display section (daylight-contrast toggle, then the skin picker), and the MacroDroid/Tasker
+automation work landed a token the user needs to see and copy once, then never again. None of
+these are pre-flight decisions made before a drive, they're standing configuration, checked once
+in a while, and Setup is accumulating them because it's the only screen that currently has a
+place to put anything that isn't a live gauge or a trip report.
+
+The tell: a user opening the app to actually start a drive now scrolls past a growing pile of
+settings to reach the one button they came for. That's the same problem the trip-report
+redesign existed to fix on a different screen, applied to this one before it gets bad enough to
+need the same rescue.
+
+**Split, not just relabel:** Setup keeps exactly the two pre-flight decisions and the pinned
+Start action, nothing else. Everything else, moves to a new Settings destination: display
+(daylight contrast, skin picker), automation (the MacroDroid token and its copy action), and
+whatever idea #12's auto-stop toggle and idea #5's per-vehicle preferences eventually need too
+— a fourth thing has already outgrown the guess of "just these three." A gear icon or similar in
+`HeaderBar`'s trailing slot, next to the existing Logbook button, is the obvious entry point,
+following the nav pattern `MainActivity.kt` already uses for Logbook rather than introducing a
+bottom nav bar (rule 10 still holds: three-going-on-four screens don't need a navigation
+framework, they need one more `when` branch).
+
+Not yet built. Worth doing before a fifth setting shows up and the decision gets made by
+inertia instead of on purpose.
