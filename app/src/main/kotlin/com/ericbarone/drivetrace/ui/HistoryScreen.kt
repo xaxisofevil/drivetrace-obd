@@ -16,6 +16,7 @@ import androidx.compose.foundation.layout.systemBarsPadding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.selection.selectable
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -31,31 +32,38 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.work.WorkManager
 import com.ericbarone.drivetrace.data.AppDatabase
 import com.ericbarone.drivetrace.data.SessionEntity
+import com.ericbarone.drivetrace.data.vehicleDisplayName
 import com.ericbarone.drivetrace.export.TripSummary
 import com.ericbarone.drivetrace.export.computeTripSummary
 import com.ericbarone.drivetrace.obd.VehicleProfile
 import com.ericbarone.drivetrace.service.BackfillRetryWorker
 import com.ericbarone.drivetrace.streaming.analysisSummaryFromJson
+import com.ericbarone.drivetrace.ui.components.ActionBar
 import com.ericbarone.drivetrace.ui.components.Caption
 import com.ericbarone.drivetrace.ui.components.ChoiceChip
 import com.ericbarone.drivetrace.ui.components.ConsoleLine
 import com.ericbarone.drivetrace.ui.components.EmptyState
 import com.ericbarone.drivetrace.ui.components.HeaderBar
 import com.ericbarone.drivetrace.ui.components.InstrumentPanel
+import com.ericbarone.drivetrace.ui.components.PrimaryAction
 import com.ericbarone.drivetrace.ui.components.SecondaryAction
 import com.ericbarone.drivetrace.ui.components.StatusChip
 import com.ericbarone.drivetrace.ui.components.Tone
 import com.ericbarone.drivetrace.ui.theme.AccentMixture
 import com.ericbarone.drivetrace.ui.theme.Ash
 import com.ericbarone.drivetrace.ui.theme.Chalk
+import com.ericbarone.drivetrace.ui.theme.Hairline
 import com.ericbarone.drivetrace.ui.theme.Ink
 import com.ericbarone.drivetrace.ui.theme.LocalReadoutType
 import com.ericbarone.drivetrace.ui.theme.Mist
+import com.ericbarone.drivetrace.ui.theme.Panel
+import com.ericbarone.drivetrace.ui.theme.PanelActive
 import com.ericbarone.drivetrace.ui.theme.Slate
 import com.ericbarone.drivetrace.ui.theme.Space
 import com.ericbarone.drivetrace.ui.theme.StatusCaution
@@ -83,9 +91,15 @@ import java.util.Locale
  * scanned that way. Each card names its vehicle, and the list filters down to one vehicle once
  * more than one has logged a drive, because a column of MPG figures from two different cars is
  * not a column that can be compared. See docs/DESIGN_SYSTEM.md.
+ *
+ * **Compare is a mode this list enters, not a second screen full of the same cards.** Picking two
+ * drives out of a list is a question about the list, and this is the only screen in the app that
+ * already renders a drive well enough to choose between two of them. So the header grows a Compare
+ * control, the cards become selectable while it is on, and [onCompare] hands the two session IDs
+ * up to whoever owns navigation. See CompareScreen.
  */
 @Composable
-fun HistoryScreen(onBack: () -> Unit) {
+fun HistoryScreen(onBack: () -> Unit, onCompare: (Long, Long) -> Unit) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     var sessions by remember { mutableStateOf<List<SessionEntity>>(emptyList()) }
@@ -93,6 +107,28 @@ fun HistoryScreen(onBack: () -> Unit) {
     // The stored VehicleProfile name, or null for "All". Saveable so a rotation or a trip through
     // the note editor's IME doesn't quietly widen the list back out under the user.
     var vehicleFilter by rememberSaveable { mutableStateOf<String?>(null) }
+    // Selection mode and the two picks. Two nullable IDs rather than a list, because two is the
+    // whole capacity: comparing three drives is a different feature with a different screen, and a
+    // list would let this one pretend otherwise.
+    var selecting by rememberSaveable { mutableStateOf(false) }
+    var pickA by rememberSaveable { mutableStateOf<Long?>(null) }
+    var pickB by rememberSaveable { mutableStateOf<Long?>(null) }
+
+    // Tapping a third card drops the older pick rather than doing nothing. A dead tap on a list
+    // where every row is tappable reads as a broken screen, and "swap the one I picked first" is
+    // what someone comparing drives wants next anyway. Which of the two is earlier is settled by
+    // start time inside compareDrives, never by tap order.
+    fun togglePick(sessionId: Long) {
+        when (sessionId) {
+            pickA -> pickA = null
+            pickB -> pickB = null
+            else -> when {
+                pickA == null -> pickA = sessionId
+                pickB == null -> pickB = sessionId
+                else -> { pickA = pickB; pickB = sessionId }
+            }
+        }
+    }
 
     suspend fun reload() {
         sessions = AppDatabase.getInstance(context).sessionDao().getAllSessions()
@@ -132,14 +168,39 @@ fun HistoryScreen(onBack: () -> Unit) {
             title = "Logbook",
             // Counts what is on screen, not what is in the database. With a filter applied the
             // subtitle describing the whole database would be answering a question nobody asked.
+            // In selection mode it says what the mode wants instead, which is the only instruction
+            // this screen ever needs to give and it costs no row of its own.
             subtitle = when {
                 loading -> null
                 visibleSessions.isEmpty() -> null
+                selecting -> when {
+                    pickA == null && pickB == null -> "Pick two drives to compare"
+                    pickA == null || pickB == null -> "Pick one more"
+                    else -> "Two drives selected"
+                }
                 pendingUploads > 0 -> "${visibleSessions.size} drives, $pendingUploads not uploaded"
                 else -> "${visibleSessions.size} drives, all uploaded"
             },
             onBack = onBack,
             modifier = Modifier.padding(horizontal = Space.gutter),
+            // Offered only once there are two drives to choose between. A control that can never
+            // reach its own goal is the same dead control the vehicle filter refuses to be.
+            trailing = if (!loading && visibleSessions.size >= 2) {
+                {
+                    SecondaryAction(
+                        text = if (selecting) "Cancel" else "Compare",
+                        onClick = {
+                            selecting = !selecting
+                            pickA = null
+                            pickB = null
+                        },
+                        contentColor = if (selecting) Mist else Ash,
+                        minHeight = Space.compactTarget,
+                    )
+                }
+            } else {
+                null
+            },
         )
 
         // Pinned above the scroll rather than riding in it: a filter you have to scroll back up
@@ -153,16 +214,18 @@ fun HistoryScreen(onBack: () -> Unit) {
                     .padding(horizontal = Space.gutter, vertical = Space.md),
                 horizontalArrangement = Arrangement.spacedBy(Space.sm),
             ) {
+                // Changing the filter clears the picks. A selected drive the filter has just
+                // hidden would leave the Compare action enabled with an invisible participant.
                 ChoiceChip(
                     text = "All",
                     selected = vehicleFilter == null,
-                    onSelect = { vehicleFilter = null },
+                    onSelect = { vehicleFilter = null; pickA = null; pickB = null },
                 )
                 for (name in loggedVehicles) {
                     ChoiceChip(
                         text = vehicleLabel(name),
                         selected = vehicleFilter == name,
-                        onSelect = { vehicleFilter = name },
+                        onSelect = { vehicleFilter = name; pickA = null; pickB = null },
                     )
                 }
             }
@@ -174,8 +237,10 @@ fun HistoryScreen(onBack: () -> Unit) {
                 title = "No trips logged yet",
                 body = "Start a drive from the setup screen and it will appear here.",
             )
+            // weight rather than fillMaxSize, so the Compare action bar below can pin to the
+            // bottom instead of riding the end of the scroll (rule 8).
             else -> LazyColumn(
-                modifier = Modifier.fillMaxSize(),
+                modifier = Modifier.weight(1f),
                 contentPadding = PaddingValues(
                     start = Space.gutter,
                     end = Space.gutter,
@@ -187,6 +252,9 @@ fun HistoryScreen(onBack: () -> Unit) {
                 items(visibleSessions, key = { it.sessionId }) { session ->
                     SessionCard(
                         session = session,
+                        selectable = selecting,
+                        selected = session.sessionId == pickA || session.sessionId == pickB,
+                        onToggleSelect = { togglePick(session.sessionId) },
                         // No reload() here. The old version reloaded the instant the button was
                         // tapped, which read the row back before WorkManager had even started the
                         // job, so nothing on screen changed and the button was indistinguishable
@@ -202,6 +270,20 @@ fun HistoryScreen(onBack: () -> Unit) {
                 }
             }
         }
+
+        // Pinned, and only while the mode is on. The action stays visible and disabled rather than
+        // appearing on the second tap, so the mode says up front what it is waiting for.
+        if (selecting && !loading) {
+            ActionBar {
+                val a = pickA
+                val b = pickB
+                PrimaryAction(
+                    text = "Compare drives",
+                    enabled = a != null && b != null,
+                    onClick = { if (a != null && b != null) onCompare(a, b) },
+                )
+            }
+        }
     }
 }
 
@@ -210,9 +292,12 @@ fun HistoryScreen(onBack: () -> Unit) {
  * rather than to nothing if the enum no longer has that entry, since the row's own value is then
  * the only record left of which vehicle the drive belongs to and losing it silently is worse than
  * printing an enum name.
+ *
+ * Delegates rather than reimplements: the comparison screen names vehicles too, and two copies of
+ * this rule is one copy too many for a fallback whose whole point is that it never silently
+ * changes shape.
  */
-private fun vehicleLabel(storedName: String): String =
-    VehicleProfile.entries.find { it.name == storedName }?.displayName ?: storedName
+private fun vehicleLabel(storedName: String): String = vehicleDisplayName(storedName)
 
 /**
  * True while the unique work queued under [uniqueWorkName] is enqueued or running, straight from
@@ -247,9 +332,26 @@ private fun workInFlight(uniqueWorkName: String, onFinished: () -> Unit): Boolea
     return inFlight
 }
 
+/**
+ * One drive.
+ *
+ * [selectable] turns the whole card into the target while the logbook is in compare mode, on the
+ * same reasoning as SetupScreen's adapter rows: a card is a big, easy thing to hit in a moving
+ * vehicle and a 20dp checkbox is not. Selection is carried by fill and border together rather than
+ * by hue alone, matching `ChoiceChip`. **The left accent bar keeps carrying upload state,** because
+ * it is the card's own contract and losing it would mean the one scan the logbook exists for stops
+ * working the moment compare mode is on.
+ *
+ * The per-card controls (note editing, the retry actions) are suppressed while selecting. A button
+ * nested inside a tap target that means something else is a coin flip about which one fired, and
+ * neither of those actions is part of choosing two drives.
+ */
 @Composable
 private fun SessionCard(
     session: SessionEntity,
+    selectable: Boolean,
+    selected: Boolean,
+    onToggleSelect: () -> Unit,
     onRetry: () -> Unit,
     onRetryAnalysis: () -> Unit,
     onRetryFinished: () -> Unit,
@@ -283,10 +385,18 @@ private fun SessionCard(
     val durationMin = session.endWallTimeUtc?.let { (it - session.startWallTimeUtc) / 60000.0 }
 
     InstrumentPanel(
-        modifier = Modifier.fillMaxWidth(),
+        modifier = if (selectable) {
+            Modifier
+                .fillMaxWidth()
+                .selectable(selected = selected, role = Role.Checkbox, onClick = onToggleSelect)
+        } else {
+            Modifier.fillMaxWidth()
+        },
         // The left bar carries upload state for the whole card, so a scroll down the list shows
         // at a glance which drives still owe an upload without reading a single word.
         accent = uploadTone.color,
+        fill = if (selected) PanelActive else Panel,
+        border = if (selected) AccentMixture.copy(alpha = 0.45f) else Hairline,
     ) {
         Row(verticalAlignment = Alignment.Top) {
             Column(modifier = Modifier.weight(1f)) {
@@ -346,36 +456,51 @@ private fun SessionCard(
         // to be scanned down a column of MPG figures, and a text field on every card would
         // triple every row's height for an interaction that happens once in twenty views.
         val note = session.notes?.takeIf { it.isNotBlank() }
-        Spacer(Modifier.height(Space.sm))
-        if (editingNote) {
-            DriveNoteEditor(
-                sessionId = session.sessionId,
-                initialNote = session.notes.orEmpty(),
-                onSaved = { editingNote = false; onNoteSaved() },
-            )
-        } else {
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(Space.sm),
-            ) {
-                if (note != null) {
-                    Text(
-                        note,
-                        style = type.unit,
-                        color = Mist,
-                        maxLines = 2,
-                        overflow = TextOverflow.Ellipsis,
-                        modifier = Modifier.weight(1f),
-                    )
-                } else {
-                    Spacer(Modifier.weight(1f))
-                }
-                SecondaryAction(
-                    text = if (note != null) "Edit note" else "Add note",
-                    onClick = { editingNote = true },
-                    contentColor = Ash,
-                    minHeight = Space.compactTarget,
+        if (selectable) {
+            // Still shown, still not editable: "that was the one with the new tyres" is exactly
+            // the line that decides which two drives are worth comparing.
+            if (note != null) {
+                Spacer(Modifier.height(Space.sm))
+                Text(
+                    note,
+                    style = type.unit,
+                    color = Mist,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
                 )
+            }
+        } else {
+            Spacer(Modifier.height(Space.sm))
+            if (editingNote) {
+                DriveNoteEditor(
+                    sessionId = session.sessionId,
+                    initialNote = session.notes.orEmpty(),
+                    onSaved = { editingNote = false; onNoteSaved() },
+                )
+            } else {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(Space.sm),
+                ) {
+                    if (note != null) {
+                        Text(
+                            note,
+                            style = type.unit,
+                            color = Mist,
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.weight(1f),
+                        )
+                    } else {
+                        Spacer(Modifier.weight(1f))
+                    }
+                    SecondaryAction(
+                        text = if (note != null) "Edit note" else "Add note",
+                        onClick = { editingNote = true },
+                        contentColor = Ash,
+                        minHeight = Space.compactTarget,
+                    )
+                }
             }
         }
 
@@ -417,7 +542,11 @@ private fun SessionCard(
         // never landed become the outstanding item. So the analysis control replaces the upload
         // one in that slot rather than sitting beside it, and the card's height does not change
         // between the two.
-        if (session.backfillStatus != "SUCCESS") {
+        if (selectable) {
+            // Nothing further. A retry button inside a card that is itself a selection target is a
+            // coin flip about which one the tap meant, and neither retry is part of picking two
+            // drives to compare.
+        } else if (session.backfillStatus != "SUCCESS") {
             val retrying = workInFlight(
                 BackfillRetryWorker.retryWorkName(session.sessionId),
                 onFinished = onRetryFinished,
