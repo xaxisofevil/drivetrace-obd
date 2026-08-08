@@ -904,13 +904,48 @@ traces — is a small step from data the app already holds, and it is the artifa
 hand to a mechanic or attach to a forum post. *Monetisation:* clean free/paid line; unbranded or
 custom-branded export is a standard paid tier for shop use.
 
-## 3. Drive-to-drive comparison
+## 3. ~~Drive-to-drive comparison~~ **Built.**
 
-The logbook now puts MPG in a scannable column, which immediately makes the missing feature
-obvious: select two drives and diff them. Same route, different result is the entire question
-this project exists to answer, and right now answering it means exporting two CSVs and running a
-script. *Monetisation:* a natural premium feature, and the one with the clearest link to the
-product's actual purpose.
+Select two drives from the logbook and diff them by speed bin. See section 7 for the screen and
+`docs/ANALYSIS_STARTING_POINTS.md` item 2 for the method, which is that document's own
+`compare_drives.py` sketch built on the phone instead of on the PC. Code is
+`data/DriveComparison.kt` (computation) and `ui/CompareScreen.kt` (screen).
+
+The entry's premise held: the logbook's MPG column is what makes the missing feature obvious, and
+the logbook is where the feature belongs. Four things it did not anticipate, which are the parts
+worth keeping:
+
+**Where the computation runs was the real decision, and it is on the phone.** The server already
+holds both drives whenever backfill succeeded, and DuckDB would do this bucketing in one SQL
+statement, so a new endpoint was the obviously cheaper implementation. It is still the wrong one:
+Room is authoritative and the server is best-effort everywhere else in this app (ARCHITECTURE.md),
+`computeTripSummary` / `computeAdapterHealth` / `readSessionDtcs` all derive from Room and all keep
+working with the home PC off, and the drive most worth comparing is often the one just finished in
+a car park with no signal. A server-side comparison would have been the first screen in the app to
+go blank for a reason the user cannot see. It also needed no new API surface at all: no endpoint,
+no DuckDB schema note, no polling state machine, no second failure mode to render.
+
+**The MPG delta is not the headline, and that was not obvious.** MPG is two numbers the logbook
+already prints in a scannable column; putting the difference between them at 64sp would spend the
+whole screen restating the list that opened it. The hero is the load delta at matched speed, which
+is the thing the logbook cannot say, and it falls back down a chain (load, airflow, trim, MPG)
+rather than ever printing a dash, per rule 13.
+
+**Comparison is a mode the logbook enters, not a second screen listing the same cards.** A picker
+would have meant a second rendering of a drive, three weeks later drifting from the first. The
+cards become selectable in place, the whole card is the target (SetupScreen's adapter-row argument,
+which applies harder here because the card is already the right size), and the per-card note and
+retry controls are suppressed while selecting, because a button nested inside a tap target that
+means something else is a coin flip about which one fired.
+
+**Sign is not a tone.** A higher load at matched speed is the lead this whole project is chasing
+and it is still not a fault the app is in a position to declare, so the status channel stays out of
+it entirely and the `+`/`-` carries the direction alone. The category contract is untouched: load
+is MOTION and therefore achromatic, airflow, trim and economy are MIXTURE.
+
+*Monetisation, unchanged:* a natural premium feature, and the one with the clearest link to the
+product's actual purpose. Idea #11's cross-vehicle comparison is the same bucketing pointed at a
+different population, and it now has an implementation to point.
 
 ## 4. Shareable drive summary card
 
