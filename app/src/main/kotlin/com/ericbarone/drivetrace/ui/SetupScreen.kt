@@ -2,78 +2,48 @@ package com.ericbarone.drivetrace.ui
 
 import android.Manifest
 import android.bluetooth.BluetoothDevice
-import android.content.ClipData
-import android.content.ClipboardManager
 import android.content.Context
 import android.content.pm.PackageManager
 import android.os.Build
-import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
-import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.systemBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.selection.selectable
-import androidx.compose.foundation.selection.toggleable
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
-import androidx.compose.material3.Text
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
-import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.semantics.Role
-import androidx.compose.ui.text.style.TextOverflow
-import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import com.ericbarone.drivetrace.obd.BluetoothTransport
 import com.ericbarone.drivetrace.obd.VehicleProfile
-import com.ericbarone.drivetrace.service.AutomationReceiver
 import com.ericbarone.drivetrace.ui.components.ActionBar
 import com.ericbarone.drivetrace.ui.components.Caption
 import com.ericbarone.drivetrace.ui.components.EmptyState
 import com.ericbarone.drivetrace.ui.components.Glyph
-import com.ericbarone.drivetrace.ui.components.GlyphMark
 import com.ericbarone.drivetrace.ui.components.HeaderBar
-import com.ericbarone.drivetrace.ui.components.InstrumentPanel
+import com.ericbarone.drivetrace.ui.components.IconAction
 import com.ericbarone.drivetrace.ui.components.PrimaryAction
 import com.ericbarone.drivetrace.ui.components.SecondaryAction
 import com.ericbarone.drivetrace.ui.components.SectionLabel
 import com.ericbarone.drivetrace.ui.components.StatusBand
 import com.ericbarone.drivetrace.ui.components.Tone
-import com.ericbarone.drivetrace.ui.theme.AccentMixture
 import com.ericbarone.drivetrace.ui.theme.Ash
-import com.ericbarone.drivetrace.ui.theme.Chalk
-import com.ericbarone.drivetrace.ui.theme.DriveTraceShapes
-import com.ericbarone.drivetrace.ui.theme.Hairline
 import com.ericbarone.drivetrace.ui.theme.Ink
-import com.ericbarone.drivetrace.ui.theme.LocalReadoutType
-import com.ericbarone.drivetrace.ui.theme.Mist
-import com.ericbarone.drivetrace.ui.theme.PanelActive
-import com.ericbarone.drivetrace.ui.theme.SkinId
-import com.ericbarone.drivetrace.ui.theme.Slate
 import com.ericbarone.drivetrace.ui.theme.Space
 
 // PREFS_NAME / PREF_LAST_DEVICE / PREF_VEHICLE_PROFILE / PREF_HIGH_CONTRAST live in
@@ -115,12 +85,23 @@ private fun sortWithLikelyObdFirst(devices: List<BluetoothDevice>): List<Bluetoo
     devices.sortedByDescending { looksLikeObdAdapter(it) }
 
 /**
- * Pre-flight. Two decisions (which car, which adapter) and one action, so the screen is laid out
- * as two labelled config sections over a pinned action bar rather than as a scrolling column of
- * controls. See docs/DESIGN_SYSTEM.md.
+ * Pre-flight, and nothing else. Two decisions (which car, which adapter) and one action, so the
+ * screen is laid out as two labelled config sections over a pinned action bar rather than as a
+ * scrolling column of controls.
+ *
+ * It briefly stopped being that. A Display section and an Automation section accumulated here
+ * because this was the only screen with anywhere to put standing configuration, and a user
+ * opening the app to start a drive was scrolling past settings to reach the one button they came
+ * for. Both moved to [SettingsScreen], reached by the header's gear; see idea #13 and section 7
+ * in docs/DESIGN_SYSTEM.md. Anything that is not answered in the car with the engine off, about
+ * to press Start, belongs there rather than here.
  */
 @Composable
-fun SetupScreen(onStartLogging: (String, VehicleProfile) -> Unit, onShowHistory: () -> Unit) {
+fun SetupScreen(
+    onStartLogging: (String, VehicleProfile) -> Unit,
+    onShowHistory: () -> Unit,
+    onShowSettings: () -> Unit,
+) {
     val context = LocalContext.current
     val prefs = remember { context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE) }
     var permissionsGranted by remember { mutableStateOf(hasAllPermissions(context)) }
@@ -131,11 +112,6 @@ fun SetupScreen(onStartLogging: (String, VehicleProfile) -> Unit, onShowHistory:
         val saved = savedName?.let { name -> VehicleProfile.entries.find { it.name == name } }
         mutableStateOf(saved ?: VehicleProfile.entries.first())
     }
-    val skinId by DisplaySettings.skin.collectAsState()
-    val highContrast by DisplaySettings.highContrast.collectAsState()
-    // First read is also what generates it, which is why this screen is where it is shown: the
-    // token exists from the first time anyone could want to copy it, and never before.
-    val automationToken = remember { AutomationReceiver.token(context) }
 
     val permissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions(),
@@ -164,7 +140,14 @@ fun SetupScreen(onStartLogging: (String, VehicleProfile) -> Unit, onShowHistory:
             title = "DriveTrace",
             subtitle = "OBD-II drive logger",
             modifier = Modifier.padding(horizontal = Space.gutter),
+            // Two actions in the one trailing slot, which is a RowScope lambda and always was, so
+            // this needed no second header component and no overflow menu. The gear is a bare
+            // glyph rather than a second outlined button because two word-buttons side by side in
+            // a 44dp-tall header is most of the header, and Settings is the rarer of the two
+            // destinations: it earns an icon, Logbook keeps its label.
             trailing = {
+                IconAction(Glyph.GEAR, label = "Settings", onClick = onShowSettings, sizeDp = 20)
+                Spacer(Modifier.width(Space.xs))
                 SecondaryAction(
                     text = "Logbook",
                     onClick = onShowHistory,
@@ -226,43 +209,6 @@ fun SetupScreen(onStartLogging: (String, VehicleProfile) -> Unit, onShowHistory:
             }
 
             Spacer(Modifier.height(Space.xs))
-            SectionLabel("Display")
-
-            // Same plain loop and the same SelectableRow the vehicle picker above uses, for the
-            // same reason: a closed set of two or three named options, whole panel as the target,
-            // selection carried by accent bar + border + fill at once. Adding a skin is one entry
-            // in SkinId and nothing here.
-            //
-            // Above the daylight toggle rather than below it because it is the outer of the two
-            // settings: the skin decides what the palette is, the toggle decides how much
-            // luminance the hero spends out of it.
-            for (skin in SkinId.entries) {
-                SelectableRow(
-                    selected = skin == skinId,
-                    onSelect = { DisplaySettings.setSkin(context, skin) },
-                    title = skin.displayName,
-                    detail = skin.description,
-                )
-            }
-
-            // One row, and it belongs here rather than behind a settings screen: the choice is
-            // "is it sunny right now", which is answered while sitting in the car about to press
-            // Start, not once during onboarding.
-            ToggleRow(
-                checked = highContrast,
-                onToggle = { DisplaySettings.setHighContrast(context, it) },
-                title = "Daylight readout boost",
-                detail = "Brighter hero numerals for direct sun. Background stays dark.",
-            )
-
-            Spacer(Modifier.height(Space.xs))
-            SectionLabel("Automation")
-
-            // Above the adapter list rather than below it, because the list owns weight(1f) and
-            // anything after it competes with the scroll area the Start button depends on.
-            AutomationTokenRow(token = automationToken)
-
-            Spacer(Modifier.height(Space.xs))
             SectionLabel("Adapter")
 
             if (devices.isEmpty()) {
@@ -308,178 +254,6 @@ fun SetupScreen(onStartLogging: (String, VehicleProfile) -> Unit, onShowHistory:
                 },
                 enabled = selectedAddress != null,
             )
-        }
-    }
-}
-
-/**
- * One choice in a config section. Replaces the stock RadioButton row: the whole panel is the
- * target (not a 20dp circle), selection is carried by three signals at once (accent bar, border,
- * fill) so it survives a glance, and `role = Role.RadioButton` keeps the single-choice semantics
- * TalkBack needs now that the RadioButton widget itself is gone.
- */
-@Composable
-private fun SelectableRow(
-    selected: Boolean,
-    onSelect: () -> Unit,
-    title: String,
-    detail: String,
-    modifier: Modifier = Modifier,
-    detailIsMachine: Boolean = false,
-    flagged: Boolean = false,
-) {
-    val type = LocalReadoutType.current
-    InstrumentPanel(
-        modifier = modifier
-            .fillMaxWidth()
-            .selectable(selected = selected, role = Role.RadioButton, onClick = onSelect),
-        accent = if (selected) AccentMixture else null,
-        fill = if (selected) PanelActive else com.ericbarone.drivetrace.ui.theme.Panel,
-        border = if (selected) AccentMixture.copy(alpha = 0.45f) else Hairline,
-        contentPadding = PaddingValues(horizontal = Space.lg, vertical = Space.md),
-    ) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            SelectionMark(selected)
-            Spacer(Modifier.width(Space.md))
-            Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    title,
-                    style = type.small,
-                    color = if (selected) Chalk else Mist,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-                Text(
-                    detail,
-                    style = if (detailIsMachine) type.mono else type.unit,
-                    color = Slate,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-            }
-            if (flagged && !selected) {
-                Text("LIKELY", style = type.label, color = Ash)
-            }
-        }
-    }
-}
-
-/**
- * A binary setting. Same panel-is-the-target treatment as [SelectableRow] and the same three
- * redundant selection signals, with `Role.Switch` instead of `Role.RadioButton` so TalkBack
- * announces it as a toggle. Deliberately not a Material `Switch`: an M3 switch is a 52x32dp pill
- * with a sliding thumb, which is the one shape this design system has ruled out everywhere else.
- */
-@Composable
-private fun ToggleRow(
-    checked: Boolean,
-    onToggle: (Boolean) -> Unit,
-    title: String,
-    detail: String,
-    modifier: Modifier = Modifier,
-) {
-    val type = LocalReadoutType.current
-    InstrumentPanel(
-        modifier = modifier
-            .fillMaxWidth()
-            .toggleable(value = checked, role = Role.Switch, onValueChange = onToggle),
-        accent = if (checked) AccentMixture else null,
-        fill = if (checked) PanelActive else com.ericbarone.drivetrace.ui.theme.Panel,
-        border = if (checked) AccentMixture.copy(alpha = 0.45f) else Hairline,
-        contentPadding = PaddingValues(horizontal = Space.lg, vertical = Space.md),
-    ) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            CheckMark(checked)
-            Spacer(Modifier.width(Space.md))
-            Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    title,
-                    style = type.small,
-                    color = if (checked) Chalk else Mist,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-                Text(detail, style = type.unit, color = Slate, maxLines = 2)
-            }
-        }
-    }
-}
-
-/**
- * The shared secret an automation app has to send back (see
- * `service/AutomationReceiver.kt` and docs/AUTOMATION.md), with a copy action, since the value
- * exists to be pasted into a MacroDroid "Send Intent" action on this same phone.
- *
- * Shown in full rather than masked. It is an identifier to compare character by character against
- * what landed in the macro, which is exactly what the `mono` style is for, and masking would only
- * be theatre: anyone holding the unlocked phone can press Copy regardless.
- *
- * No new container. An [InstrumentPanel] with a value and a [SecondaryAction], the same shape the
- * rest of this screen is built from.
- */
-@Composable
-private fun AutomationTokenRow(token: String, modifier: Modifier = Modifier) {
-    val context = LocalContext.current
-    val type = LocalReadoutType.current
-    InstrumentPanel(
-        modifier = modifier.fillMaxWidth(),
-        contentPadding = PaddingValues(horizontal = Space.lg, vertical = Space.md),
-    ) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Column(modifier = Modifier.weight(1f)) {
-                Text("Automation token", style = type.small, color = Mist, maxLines = 1)
-                Text(token, style = type.mono, color = Slate, maxLines = 2)
-            }
-            Spacer(Modifier.width(Space.md))
-            SecondaryAction(
-                text = "Copy",
-                onClick = { copyAutomationToken(context, token) },
-                minHeight = Space.compactTarget,
-            )
-        }
-        Spacer(Modifier.height(Space.sm))
-        Caption("MacroDroid or Tasker can start and stop a drive with this. docs/AUTOMATION.md has the recipe.")
-    }
-}
-
-private fun copyAutomationToken(context: Context, token: String) {
-    val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-    clipboard.setPrimaryClip(ClipData.newPlainText("DriveTrace automation token", token))
-    // Android 13 shows its own copy confirmation, and a Toast on top of it is a duplicate.
-    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) {
-        Toast.makeText(context, "Automation token copied", Toast.LENGTH_SHORT).show()
-    }
-}
-
-/** On/off indicator. Square with the chip radius, so it can never be confused with the round
- *  single-choice [SelectionMark] two rows above it. */
-@Composable
-private fun CheckMark(checked: Boolean, modifier: Modifier = Modifier) {
-    Box(
-        modifier = modifier
-            .size(18.dp)
-            .clip(DriveTraceShapes.chip)
-            .background(if (checked) AccentMixture else Color.Transparent)
-            .border(1.5.dp, if (checked) AccentMixture else Hairline, DriveTraceShapes.chip),
-        contentAlignment = Alignment.Center,
-    ) {
-        if (checked) GlyphMark(Glyph.TICK, Ink, sizeDp = 12)
-    }
-}
-
-/** Selection indicator, drawn rather than borrowed from Material, so its ring weight matches the
- *  1dp hairline language the panels use. */
-@Composable
-private fun SelectionMark(selected: Boolean, modifier: Modifier = Modifier) {
-    val ring: Color = if (selected) AccentMixture else Hairline
-    val core: Color = if (selected) AccentMixture else Color.Transparent
-    Box(modifier = modifier.size(18.dp), contentAlignment = Alignment.Center) {
-        Canvas(Modifier.size(18.dp)) {
-            val c = Offset(size.width / 2f, size.height / 2f)
-            drawCircle(ring, radius = size.minDimension / 2f - 1f, center = c, style = androidx.compose.ui.graphics.drawscope.Stroke(width = 1.5.dp.toPx()))
-            if (core != Color.Transparent) {
-                drawCircle(core, radius = size.minDimension * 0.22f, center = c)
-            }
         }
     }
 }

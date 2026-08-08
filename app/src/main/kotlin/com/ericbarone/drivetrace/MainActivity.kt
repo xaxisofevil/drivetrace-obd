@@ -17,6 +17,7 @@ import com.ericbarone.drivetrace.service.LoggingUiState
 import com.ericbarone.drivetrace.ui.DisplaySettings
 import com.ericbarone.drivetrace.ui.HistoryScreen
 import com.ericbarone.drivetrace.ui.LoggingScreen
+import com.ericbarone.drivetrace.ui.SettingsScreen
 import com.ericbarone.drivetrace.ui.SetupScreen
 import com.ericbarone.drivetrace.ui.theme.DriveTraceTheme
 
@@ -45,6 +46,8 @@ class MainActivity : ComponentActivity() {
                 // process death under memory pressure while the drive-logging foreground service
                 // keeps running in the background through a long drive.
                 var showHistory by rememberSaveable { mutableStateOf(false) }
+                // Same pattern, same reason, for the Settings destination the header's gear opens.
+                var showSettings by rememberSaveable { mutableStateOf(false) }
                 when {
                     status.sessionId != null -> LoggingScreen(
                         status = status,
@@ -52,6 +55,7 @@ class MainActivity : ComponentActivity() {
                         onNewSession = { LoggingStatus.state.value = LoggingUiState() },
                     )
                     showHistory -> HistoryScreen(onBack = { showHistory = false })
+                    showSettings -> SettingsScreen(onBack = { showSettings = false })
                     else -> SetupScreen(
                         onStartLogging = { address, vehicleProfile ->
                             ContextCompat.startForegroundService(
@@ -59,6 +63,7 @@ class MainActivity : ComponentActivity() {
                             )
                         },
                         onShowHistory = { showHistory = true },
+                        onShowSettings = { showSettings = true },
                     )
                 }
             }

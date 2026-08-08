@@ -140,7 +140,7 @@ data class Skin(
  *
  * An enum rather than a sealed hierarchy because the set is closed, small, and has to round-trip
  * through SharedPreferences as a string; `entries` is also what drives the picker, so adding a
- * skin is one entry here and nothing on SetupScreen.
+ * skin is one entry here and nothing on SettingsScreen.
  */
 enum class SkinId(val displayName: String, val description: String, val skin: Skin) {
     /**

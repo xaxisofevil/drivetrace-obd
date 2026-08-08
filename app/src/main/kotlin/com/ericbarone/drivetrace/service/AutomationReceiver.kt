@@ -21,7 +21,7 @@ import java.security.SecureRandom
 private const val TAG = "DriveTraceAutomation"
 
 /** 10 bytes of SecureRandom as lowercase hex. Long enough that no app on the phone guesses it,
- *  short enough to read off the Setup screen and check character by character against what got
+ *  short enough to read off the Settings screen and check character by character against what got
  *  pasted into MacroDroid. Not a credential for anything outside this device. */
 private const val TOKEN_BYTES = 10
 
@@ -59,7 +59,7 @@ class AutomationReceiver : BroadcastReceiver() {
          * the same `drivetrace_prefs` store as the adapter and vehicle choices rather than a
          * private file of its own.
          *
-         * Synchronized because the Setup screen (main thread, to display it) and this receiver (a
+         * Synchronized because the Settings screen (main thread, to display it) and this receiver (a
          * broadcast thread, to check it) can both be the first caller; two threads generating two
          * tokens would leave the one on screen unable to authenticate anything.
          */
@@ -75,7 +75,7 @@ class AutomationReceiver : BroadcastReceiver() {
             // token into a macro, and a token that loses a race with process death would leave a
             // recipe authenticating against a value the app has since regenerated.
             prefs.edit().putString(PREF_AUTOMATION_TOKEN, fresh).commit()
-            Log.i(TAG, "Generated a new automation token (see the Setup screen to copy it)")
+            Log.i(TAG, "Generated a new automation token (see the Settings screen to copy it)")
             return fresh
         }
     }
@@ -92,11 +92,11 @@ class AutomationReceiver : BroadcastReceiver() {
         // Neither token is ever logged, including the wrong one: a mistyped token is usually a
         // correct token with one character off, and logcat is readable by adb from a desk.
         if (supplied.isNullOrEmpty()) {
-            Log.w(TAG, "Rejected \"$command\": no '$EXTRA_TOKEN' extra. Add it to the macro; the value is on DriveTrace's Setup screen.")
+            Log.w(TAG, "Rejected \"$command\": no '$EXTRA_TOKEN' extra. Add it to the macro; the value is on DriveTrace's Settings screen.")
             return
         }
         if (!tokensMatch(supplied, token(context))) {
-            Log.w(TAG, "Rejected \"$command\": '$EXTRA_TOKEN' does not match this device's token (Setup screen has the current one; clearing app data regenerates it).")
+            Log.w(TAG, "Rejected \"$command\": '$EXTRA_TOKEN' does not match this device's token (Settings screen has the current one; clearing app data regenerates it).")
             return
         }
 

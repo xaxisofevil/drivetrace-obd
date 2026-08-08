@@ -29,7 +29,7 @@ const val PREF_SKIN = "instrument_skin"
 
 /**
  * Display preferences, held as process-wide StateFlows for the same reason [
- * com.ericbarone.drivetrace.service.LoggingStatus] is one: the controls live on SetupScreen but
+ * com.ericbarone.drivetrace.service.LoggingStatus] is one: the controls live on SettingsScreen but
  * the values are consumed at the theme root above every screen, and threading callback pairs down
  * through three composables to move two settings back up is more machinery than this deserves.
  *
