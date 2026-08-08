@@ -2,6 +2,7 @@ package com.ericbarone.drivetrace.ui
 
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -98,9 +99,25 @@ import java.util.Locale
  * already renders a drive well enough to choose between two of them. So the header grows a Compare
  * control, the cards become selectable while it is on, and [onCompare] hands the two session IDs
  * up to whoever owns navigation. See CompareScreen.
+ *
+ * **A card is also a way in.** Tapping one opens that drive's full trip report ([onOpenSession],
+ * rendered by TripReportScreen), which is the screen that already answers everything the card only
+ * summarises: the hero figure, the stored codes, the drive profile, the adapter's own account of
+ * itself. It used to exist for exactly one drive, the one that had just ended, and the whole
+ * logbook is a list of drives whose reports were unreachable the moment the app moved on.
+ *
+ * **A tap means one thing at a time.** While the compare mode is on, the tap already means "pick
+ * this drive" and keeps meaning that; opening a report in the middle of choosing two drives to
+ * compare would lose the picks and answer a question nobody asked. So the card's click is the
+ * selection toggle while selecting and the report otherwise, never both, and never two targets on
+ * one card competing for the same thumb.
  */
 @Composable
-fun HistoryScreen(onBack: () -> Unit, onCompare: (Long, Long) -> Unit) {
+fun HistoryScreen(
+    onBack: () -> Unit,
+    onCompare: (Long, Long) -> Unit,
+    onOpenSession: (Long) -> Unit,
+) {
     // This app deliberately has no navigation library (rule 10: a handful of screens don't need
     // one), which means the system back gesture/button is never told about any of them and falls
     // through to Android's own default: finish the Activity. Every non-root screen wires its own
@@ -262,6 +279,7 @@ fun HistoryScreen(onBack: () -> Unit, onCompare: (Long, Long) -> Unit) {
                         selectable = selecting,
                         selected = session.sessionId == pickA || session.sessionId == pickB,
                         onToggleSelect = { togglePick(session.sessionId) },
+                        onOpen = { onOpenSession(session.sessionId) },
                         // No reload() here. The old version reloaded the instant the button was
                         // tapped, which read the row back before WorkManager had even started the
                         // job, so nothing on screen changed and the button was indistinguishable
@@ -352,6 +370,17 @@ private fun workInFlight(uniqueWorkName: String, onFinished: () -> Unit): Boolea
  * The per-card controls (note editing, the retry actions) are suppressed while selecting. A button
  * nested inside a tap target that means something else is a coin flip about which one fired, and
  * neither of those actions is part of choosing two drives.
+ *
+ * **Outside that mode the whole card opens the drive's trip report** ([onOpen]), on the same
+ * argument, applied to a target that is already exactly the right size. Two exceptions, both of
+ * them about a tap that already means something:
+ *
+ *  - The controls the card keeps (Add note, Retry upload, Retry analysis) sit inside the target and
+ *    consume their own taps, which is ordinary nesting: each is a small, labelled thing on top of a
+ *    large, unlabelled one.
+ *  - **While the note editor is open the card stops being clickable at all.** An editor is most of
+ *    the card's area and its margins are not, so a thumb that misses the field by a few dp would
+ *    otherwise navigate away from a note being typed. Nothing else on the card is that easy to lose.
  */
 @Composable
 private fun SessionCard(
@@ -359,6 +388,7 @@ private fun SessionCard(
     selectable: Boolean,
     selected: Boolean,
     onToggleSelect: () -> Unit,
+    onOpen: () -> Unit,
     onRetry: () -> Unit,
     onRetryAnalysis: () -> Unit,
     onRetryFinished: () -> Unit,
@@ -392,12 +422,18 @@ private fun SessionCard(
     val durationMin = session.endWallTimeUtc?.let { (it - session.startWallTimeUtc) / 60000.0 }
 
     InstrumentPanel(
-        modifier = if (selectable) {
-            Modifier
+        modifier = when {
+            selectable -> Modifier
                 .fillMaxWidth()
                 .selectable(selected = selected, role = Role.Checkbox, onClick = onToggleSelect)
-        } else {
-            Modifier.fillMaxWidth()
+            // A tap landing beside the open note field would navigate away from a note being
+            // typed, so the card gives up its own click for as long as the editor is open.
+            editingNote -> Modifier.fillMaxWidth()
+            else -> Modifier
+                .fillMaxWidth()
+                // The label is what TalkBack reads for the card, which otherwise announces a stack
+                // of unrelated text with no statement of what happens when it is activated.
+                .clickable(onClickLabel = "Open trip report", role = Role.Button, onClick = onOpen)
         },
         // The left bar carries upload state for the whole card, so a scroll down the list shows
         // at a glance which drives still owe an upload without reading a single word.

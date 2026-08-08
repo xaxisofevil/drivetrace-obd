@@ -20,6 +20,7 @@ import com.ericbarone.drivetrace.ui.HistoryScreen
 import com.ericbarone.drivetrace.ui.LoggingScreen
 import com.ericbarone.drivetrace.ui.SettingsScreen
 import com.ericbarone.drivetrace.ui.SetupScreen
+import com.ericbarone.drivetrace.ui.TripReportScreen
 import com.ericbarone.drivetrace.ui.theme.DriveTraceTheme
 
 class MainActivity : ComponentActivity() {
@@ -55,6 +56,9 @@ class MainActivity : ComponentActivity() {
                 var compareA by rememberSaveable { mutableStateOf<Long?>(null) }
                 var compareB by rememberSaveable { mutableStateOf<Long?>(null) }
                 val comparing = compareA != null && compareB != null
+                // The drive the logbook wants read in full, or null for "not reading one". One
+                // Long, same reasoning as the two above: a session ID is the whole route.
+                var reportSessionId by rememberSaveable { mutableStateOf<Long?>(null) }
                 when {
                     status.sessionId != null -> LoggingScreen(
                         status = status,
@@ -68,9 +72,17 @@ class MainActivity : ComponentActivity() {
                         sessionIdB = compareB!!,
                         onBack = { compareA = null; compareB = null },
                     )
+                    // Same placement and the same reason as the comparison above: ahead of the
+                    // logbook branch with `showHistory` still true underneath, so Back off the
+                    // report lands on the list that opened it rather than on Setup.
+                    reportSessionId != null -> TripReportScreen(
+                        sessionId = reportSessionId!!,
+                        onBack = { reportSessionId = null },
+                    )
                     showHistory -> HistoryScreen(
                         onBack = { showHistory = false },
                         onCompare = { a, b -> compareA = a; compareB = b },
+                        onOpenSession = { reportSessionId = it },
                     )
                     showSettings -> SettingsScreen(onBack = { showSettings = false })
                     else -> SetupScreen(
