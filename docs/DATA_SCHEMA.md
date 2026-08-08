@@ -14,7 +14,7 @@ gauge cluster on the Logging screen; see `latestValues` below.
 | `wall_time_utc_ms` | `wallTimeUtc` | epoch ms | |
 | `elapsed_ns` | `elapsedNs` | ns since session start | Monotonic clock, not wall clock |
 | `pid` | `pidTag` | string | e.g. `"0C"`, or the library's internal tag for some commands |
-| `canonical_name` | `canonicalName` | string | **See confirmed PID table below** — these are the real strings, not assumptions |
+| `canonical_name` | `canonicalName` | string | **See confirmed PID table below**: these are the real strings, not assumptions |
 | `value_numeric` | `valueNumeric` | double, nullable | Null if unparseable or flagged implausible |
 | `value_text` | `valueText` | string, nullable | Set when `value_numeric` is null: either the raw string, or the same value when flagged implausible (never silently discarded) |
 | `unit` | `unit` | string | |
@@ -82,8 +82,8 @@ nobody's asked to change that side, and it has no UI to clutter.
 
 ### quality_flag values
 
-- `OK` — parsed successfully and within the plausible range for that PID
-- `IMPLAUSIBLE` — parsed to a number outside a physically sane range for
+- `OK`: parsed successfully and within the plausible range for that PID
+- `IMPLAUSIBLE`: parsed to a number outside a physically sane range for
   that PID (see `PLAUSIBLE_RANGES` in `PidScheduler.kt` / `analyze_drive.py`).
   `value_numeric` is null in this case; `value_text` holds the raw
   (nonsensical) value for forensics. Never silently dropped.
@@ -216,7 +216,7 @@ any existing value alone rather than blanking it.
 session that can change long after the drive ended, and neither existing
 endpoint could carry that: `/start` fires before a note typed at Stop
 exists, and `/end` has no such field. **Re-posting `/start` is specifically
-not the fix** — it is `INSERT OR REPLACE` over a fixed column list with
+not the fix:** it is `INSERT OR REPLACE` over a fixed column list with
 neither `end_wall_time_utc_ms` nor `completion_status` in it, so calling it
 again on a finished session silently resets both to null and `IN_PROGRESS`.
 The PATCH touches one column. It 404s when the server has no row for that

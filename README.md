@@ -10,8 +10,8 @@ It logs OBD-II data (RPM, speed, load, MAF, fuel trims, coolant temp, and
 more, see [docs/DATA_SCHEMA.md](docs/DATA_SCHEMA.md)) from a Bluetooth
 ELM327 adapter plus GPS, via **two interchangeable loggers**:
 
-- **Android app** (`app/`) — phone-based, Bluetooth to the car, GPS built in
-- **PC logger** (`pc_logger/`) — Windows laptop in the car, Bluetooth to the
+- **Android app** (`app/`): phone-based, Bluetooth to the car, GPS built in
+- **PC logger** (`pc_logger/`): Windows laptop in the car, Bluetooth to the
   car directly, GPS from a phone running a separate app (GPSLogger)
 
 Both write the identical CSV/DuckDB schema, so

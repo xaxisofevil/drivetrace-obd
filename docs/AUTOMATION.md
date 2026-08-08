@@ -96,10 +96,10 @@ and the `command` value.
 
 ### Macro 1: start logging on car Bluetooth connect
 
-**Trigger** — Connectivity > Bluetooth > *Device Connected*, and pick the car's
+**Trigger:** Connectivity > Bluetooth > *Device Connected*, and pick the car's
 Bluetooth from the list.
 
-**Action** — Applications > **Send Intent**:
+**Action:** Applications > **Send Intent**:
 
 | MacroDroid field | What to enter |
 |---|---|
@@ -118,9 +118,9 @@ Leave the extras as plain strings; do not mark them as integers or booleans.
 
 ### Macro 2: stop logging on car Bluetooth disconnect
 
-**Trigger** — Connectivity > Bluetooth > *Device Disconnected*, same device.
+**Trigger:** Connectivity > Bluetooth > *Device Disconnected*, same device.
 
-**Action** — the identical Send Intent action, with **Extra 1 value** set to
+**Action:** the identical Send Intent action, with **Extra 1 value** set to
 `stop` instead of `start`. Everything else, including the token, is the same.
 
 A worked example of the two, end to end:

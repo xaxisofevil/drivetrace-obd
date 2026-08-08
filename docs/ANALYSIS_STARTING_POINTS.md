@@ -45,7 +45,7 @@ Everything in `analyze_drive.py`, run either manually or automatically via
   `age_s_<key>` column showing how stale each value was when carried
   forward (a PID sampled every 20s will show up to ~20s of staleness; don't
   mistake that for the value having "not changed")
-- `add_derived_columns` — combined trim (STFT+LTFT), plus bank-2 combined
+- `add_derived_columns`: combined trim (STFT+LTFT), plus bank-2 combined
   trim and bank-to-bank asymmetry on a real multi-bank vehicle (e.g. the
   Subaru's boxer engine; not applicable to the Mazda's single-bank
   inline-4), boost pressure (MAP - Barometric, turbo health: a boost leak
@@ -63,14 +63,14 @@ Everything in `analyze_drive.py`, run either manually or automatically via
   `compute_trip_distance` (GPS vs OBD, compared), `compute_overall_mpg`
   (total distance / total fuel burned, not an average of the
   speed-suppressed instantaneous values)
-- `find_cruise_windows` — stable-speed, low-acceleration, already-warmed
+- `find_cruise_windows`: stable-speed, low-acceleration, already-warmed
   segments: the best apples-to-apples comparison points *within* one drive
-- `phase_breakdown` — mean load/MAF/trim/RPM grouped into highway
+- `phase_breakdown`: mean load/MAF/trim/RPM grouped into highway
   (>90 km/h) / backroad (30-90) / city (<30) bands
-- `pid_coverage_report` — sample counts and latency per PID, useful for
+- `pid_coverage_report`: sample counts and latency per PID, useful for
   spotting a PID that's mostly `IMPLAUSIBLE` or barely sampled at all
   before trusting derived numbers built from it
-- `classify_phases` / `find_braking_waste_events` — per-second driving
+- `classify_phases` / `find_braking_waste_events`: per-second driving
   phase (idle/accelerating/cruising/coasting/decelerating/braking) and,
   for each braking event, an estimated fuel-equivalent cost of the
   kinetic energy dissipated as brake heat, plus whether a coast phase

@@ -1,7 +1,7 @@
 # DriveTrace ingest server
 
 Best-effort live stream target for the Android app. **Not the authoritative
-data path** — local Room + CSV export on the phone stays authoritative per
+data path:** local Room + CSV export on the phone stays authoritative per
 the blueprint's reliability rules; this is for live visibility during a
 drive and to skip the manual file-transfer step when the network's up.
 Cellular in a car drops out; treat anything arriving here as a bonus, not

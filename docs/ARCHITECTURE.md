@@ -49,7 +49,7 @@ blueprint/              The original spec this project was built from.
    sequence, reads DTCs/fuel type/supported-PIDs once, then polls the
    selected vehicle's tiered `PidCatalog` continuously.
 3. Every measurement/location/event:
-   - writes to **local Room** first, synchronously — this is the
+   - writes to **local Room** first, synchronously; this is the
      authoritative copy, always complete regardless of network
    - a **best-effort, fire-and-forget** HTTP POST also streams it live to
      the home server, with a circuit breaker that backs off after 5
@@ -88,7 +88,7 @@ indistinguishable from a hand-started one once it is running.
 | Front door | Exported | Starts | Stops |
 |---|---|---|---|
 | `MainActivity` → `SetupScreen`/`LoggingScreen` | yes (LAUNCHER) | Start logging button | Stop dialog, with a note |
-| The foreground-service notification | no | — | Stop action (`PendingIntent.getForegroundService`, see KNOWN_ISSUES.md) |
+| The foreground-service notification | no | n/a | Stop action (`PendingIntent.getForegroundService`, see KNOWN_ISSUES.md) |
 | `service/AutomationReceiver` | **yes** | `command=start` | `command=stop` |
 
 `AutomationReceiver` is the only exported component that acts on the vehicle,
