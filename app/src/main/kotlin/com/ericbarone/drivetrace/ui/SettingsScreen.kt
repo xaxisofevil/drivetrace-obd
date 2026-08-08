@@ -23,16 +23,24 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import com.ericbarone.drivetrace.service.AutomationReceiver
 import com.ericbarone.drivetrace.ui.components.Caption
 import com.ericbarone.drivetrace.ui.components.HeaderBar
 import com.ericbarone.drivetrace.ui.components.InstrumentPanel
 import com.ericbarone.drivetrace.ui.components.SecondaryAction
 import com.ericbarone.drivetrace.ui.components.SectionLabel
+import com.ericbarone.drivetrace.ui.theme.AccentMixture
+import com.ericbarone.drivetrace.ui.theme.Chalk
+import com.ericbarone.drivetrace.ui.theme.Hairline
 import com.ericbarone.drivetrace.ui.theme.Ink
 import com.ericbarone.drivetrace.ui.theme.LocalReadoutType
 import com.ericbarone.drivetrace.ui.theme.Mist
@@ -138,6 +146,7 @@ fun SettingsScreen(onBack: () -> Unit) {
 private fun AutomationTokenRow(token: String, modifier: Modifier = Modifier) {
     val context = LocalContext.current
     val type = LocalReadoutType.current
+    var showSetup by remember { mutableStateOf(false) }
     InstrumentPanel(
         modifier = modifier.fillMaxWidth(),
         contentPadding = PaddingValues(horizontal = Space.lg, vertical = Space.md),
@@ -155,8 +164,143 @@ private fun AutomationTokenRow(token: String, modifier: Modifier = Modifier) {
             )
         }
         Spacer(Modifier.height(Space.sm))
-        Caption("MacroDroid or Tasker can start and stop a drive with this. docs/AUTOMATION.md has the recipe.")
+        Caption("MacroDroid or Tasker can start and stop a drive with this.")
+        Spacer(Modifier.height(Space.sm))
+        SecondaryAction(
+            text = "How to set this up in MacroDroid",
+            onClick = { showSetup = true },
+            modifier = Modifier.fillMaxWidth(),
+        )
     }
+    if (showSetup) {
+        MacroDroidSetupDialog(token = token, onDismiss = { showSetup = false })
+    }
+}
+
+/**
+ * The docs/AUTOMATION.md recipe, in-app, structured to match MacroDroid's own "Send Intent"
+ * dialog field for field (Target, Action, Package, Class, Extra 1, Extra 2, in that exact order)
+ * rather than prose, so it can be followed with the two screens open side by side. Confirmed
+ * against real screenshots of that dialog, not the general docs, since a mismatched field name
+ * (MacroDroid's own labels do not match Android's `Intent` terminology one for one) is exactly
+ * the kind of gap that makes a first attempt fail silently.
+ *
+ * Target/Action/Package/Class are identical for both directions; only Extra 1's *value* changes
+ * (`start` vs `stop`), so those four render once and the two commands render as two small blocks
+ * underneath rather than repeating six fields twice for one real difference.
+ */
+@Composable
+private fun MacroDroidSetupDialog(token: String, onDismiss: () -> Unit) {
+    Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(Ink)
+                .padding(Space.gutter)
+                .verticalScroll(rememberScrollState()),
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text("MacroDroid setup", style = LocalReadoutType.current.screenTitle, color = Chalk)
+                    Text(
+                        "One macro to start a drive, one to stop it",
+                        style = LocalReadoutType.current.unit,
+                        color = Mist,
+                    )
+                }
+                SecondaryAction(text = "Close", onClick = onDismiss, minHeight = Space.compactTarget)
+            }
+            Spacer(Modifier.height(Space.section))
+
+            SectionLabel("1. Add a trigger")
+            Spacer(Modifier.height(Space.sm))
+            Caption(
+                "In MacroDroid, create a macro and add a Trigger: Connectivity > Bluetooth > " +
+                    "Device Connected, and pick the car's Bluetooth. Make a second macro the same " +
+                    "way with Device Disconnected for the stop side.",
+            )
+            Spacer(Modifier.height(Space.section))
+
+            SectionLabel("2. Add the action: Applications → Send Intent")
+            Spacer(Modifier.height(Space.sm))
+            Caption("These four fields are the same on both macros.")
+            Spacer(Modifier.height(Space.md))
+            SetupField(label = "Target", value = "Broadcast", copyable = false)
+            SetupField(label = "Action", value = AutomationReceiver.ACTION_AUTOMATION)
+            SetupField(label = "Package", value = "com.ericbarone.drivetrace")
+            SetupField(label = "Class", value = "com.ericbarone.drivetrace.service.AutomationReceiver")
+            Spacer(Modifier.height(Space.sm))
+            Caption("Leave Data and MIME type blank.")
+            Spacer(Modifier.height(Space.section))
+
+            SectionLabel("3. The two Extras")
+            Spacer(Modifier.height(Space.sm))
+            Caption("Every macro needs both Extra 1 and Extra 2. Only Extra 1's value differs.")
+            Spacer(Modifier.height(Space.md))
+
+            CommandBlock(title = "Start-drive macro", command = AutomationReceiver.COMMAND_START, token = token)
+            Spacer(Modifier.height(Space.md))
+            CommandBlock(title = "Stop-drive macro", command = AutomationReceiver.COMMAND_STOP, token = token)
+
+            Spacer(Modifier.height(Space.section))
+            Caption(
+                "The token is this phone's shared secret: MacroDroid has to send it back exactly, " +
+                    "or DriveTrace ignores the command. Full reference: docs/AUTOMATION.md.",
+            )
+            Spacer(Modifier.height(Space.section))
+        }
+    }
+}
+
+@Composable
+private fun CommandBlock(title: String, command: String, token: String, modifier: Modifier = Modifier) {
+    InstrumentPanel(
+        modifier = modifier.fillMaxWidth(),
+        accent = AccentMixture,
+        contentPadding = PaddingValues(horizontal = Space.lg, vertical = Space.md),
+    ) {
+        Text(title, style = LocalReadoutType.current.small, color = Chalk)
+        Spacer(Modifier.height(Space.sm))
+        SetupField(label = "Extra 1 name", value = AutomationReceiver.EXTRA_COMMAND)
+        SetupField(label = "Extra 1 value", value = command)
+        SetupField(label = "Extra 2 name", value = AutomationReceiver.EXTRA_TOKEN)
+        SetupField(label = "Extra 2 value", value = token)
+    }
+}
+
+/** One MacroDroid field, labelled exactly as that dialog labels it, with its own copy button so
+ * each value can be pasted in without retyping or, worse, transcribing the token by eye. */
+@Composable
+private fun SetupField(label: String, value: String, copyable: Boolean = true, modifier: Modifier = Modifier) {
+    val context = LocalContext.current
+    val type = LocalReadoutType.current
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = modifier
+            .fillMaxWidth()
+            .padding(vertical = Space.xs),
+    ) {
+        Column(modifier = Modifier.weight(1f)) {
+            Text(label, style = type.label, color = Mist)
+            Text(value, style = type.mono, color = Chalk, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        }
+        if (copyable) {
+            Spacer(Modifier.width(Space.sm))
+            SecondaryAction(
+                text = "Copy",
+                onClick = {
+                    val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                    clipboard.setPrimaryClip(ClipData.newPlainText(label, value))
+                    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) {
+                        Toast.makeText(context, "$label copied", Toast.LENGTH_SHORT).show()
+                    }
+                },
+                minHeight = Space.compactTarget,
+            )
+        }
+    }
+    Spacer(Modifier.height(Space.xs))
+    androidx.compose.material3.HorizontalDivider(thickness = Space.hairline, color = Hairline)
 }
 
 private fun copyAutomationToken(context: Context, token: String) {

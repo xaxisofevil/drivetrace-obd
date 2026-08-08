@@ -12,6 +12,13 @@ one action, a `command` extra, and a `token` extra that authenticates the
 sender. If a recipe against AdGuard already works on this phone, this is the
 same recipe with different strings.
 
+**This exact recipe also lives inside the app.** Settings > Automation > "How
+to set this up in MacroDroid" opens a walkthrough matching MacroDroid's own
+"Send Intent" dialog field for field, with a Copy button on every value,
+including the live token, so nothing has to be retyped or transcribed by eye
+from this document. This page is the reference copy; that dialog is the one
+meant to be followed live while building the macro.
+
 ## The contract
 
 | Field | Value |
