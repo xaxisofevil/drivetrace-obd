@@ -39,6 +39,7 @@ Full details: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
 |---|---|
 | Set up and run the Android app | `app/` (Gradle project), pair the adapter in Android Bluetooth settings first |
 | Set up and run the PC logger instead | [pc_logger/README.md](pc_logger/README.md) |
+| Start and stop logging from MacroDroid/Tasker (e.g. on car Bluetooth) | [docs/AUTOMATION.md](docs/AUTOMATION.md) |
 | Set up the home server (live streaming, auto-analysis) | [server/README.md](server/README.md) |
 | Run analysis on an exported drive | [scripts/README.md](scripts/README.md) |
 | Understand the exact data schema / PID list | [docs/DATA_SCHEMA.md](docs/DATA_SCHEMA.md) |

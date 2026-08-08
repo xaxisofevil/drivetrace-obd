@@ -262,6 +262,14 @@ one layer reads them now.
 | `last_device_address` | string | MAC of the last-used ELM327 adapter |
 | `vehicle_profile` | string | `VehicleProfile` enum name, picks the PID catalog |
 | `high_contrast_daylight` | bool | Daylight readout boost, default false. Not a light theme; see DESIGN_SYSTEM.md section 3 |
+| `instrument_skin` | string | `SkinId` enum name; an unknown value falls back to the default skin |
+| `automation_token` | string | Shared secret an automation app presents to `AutomationReceiver`. Generated on first read (10 `SecureRandom` bytes as hex), never in the APK, no Room involvement. Shown and copyable on the Setup screen; see AUTOMATION.md |
+
+`last_device_address` is worth one extra note now that it has a second reader:
+`SetupScreen` writes it when **Start logging** is tapped, not when a device is
+selected, and `AutomationReceiver` reads it to start a session without any UI.
+A phone that has never started a session by hand therefore has nothing for an
+automated start to connect to, which the receiver logs rather than acting on.
 
 ## Where each shape lives
 
