@@ -13,6 +13,11 @@ const val PREFS_NAME = "drivetrace_prefs"
 const val PREF_LAST_DEVICE = "last_device_address"
 const val PREF_VEHICLE_PROFILE = "vehicle_profile"
 
+/** The shared secret an automation app (MacroDroid, Tasker) has to present to
+ *  [com.ericbarone.drivetrace.service.AutomationReceiver]. Generated on first read, never
+ *  shipped in the APK; see docs/AUTOMATION.md. */
+const val PREF_AUTOMATION_TOKEN = "automation_token"
+
 /** See [DisplaySettings.highContrast]. Off by default: the standard palette is the right one in
  *  the conditions this app was designed around (see docs/DESIGN_SYSTEM.md section 2). */
 const val PREF_HIGH_CONTRAST = "high_contrast_daylight"

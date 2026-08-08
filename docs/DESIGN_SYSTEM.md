@@ -426,8 +426,8 @@ WorkManager rather than setting a boolean at tap time; see the logbook below.
 
 ### SetupScreen — pre-flight
 
-Two decisions, two display settings and one action, so it is three labelled config sections over a
-pinned action bar, not a scrolling column of controls.
+Two decisions, two display settings, one copyable value and one action, so it is four labelled
+config sections over a pinned action bar, not a scrolling column of controls.
 
 The **Display** section holds both display settings, skin first and the daylight toggle under it,
 in that order because the skin is the outer of the two: it decides what the palette is, the toggle
@@ -441,7 +441,16 @@ rather than behind a settings screen for the same reason: the question the toggl
 sunny right now", asked while sitting in the car about to press Start, and a settings screen for
 two rows is a navigation framework this app spent section 10's rule avoiding.
 
-The section costs the bonded-device list two rows of height, which it absorbs: the list's
+The **Automation** section is one panel: the token an automation app has to send back (see
+[AUTOMATION.md](AUTOMATION.md)) in the `mono` style, because it is an identifier to compare
+character by character against what got pasted into MacroDroid, and one `SecondaryAction` to copy
+it. No new component; an `InstrumentPanel` with a value and an action, which is what the rest of
+this screen already is. It sits above the adapter list rather than below it because that list owns
+`weight(1f)` and anything after it competes with the scroll area the Start button depends on. It is
+shown in full rather than masked: masking is theatre next to a Copy button on an unlocked phone,
+and the whole reason to display it is to check it against the macro.
+
+The sections cost the bonded-device list a few rows of height, which it absorbs: the list's
 `weight(1f)` caps it to the space left and it scrolls internally, which is what that weight has
 always been there to do. Bonded devices are `SelectableRow` panels where the whole
 panel is the target rather than a 20dp `RadioButton` circle, selection is carried by accent bar +

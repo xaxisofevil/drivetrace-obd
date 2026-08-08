@@ -9,7 +9,9 @@ app/                    Android app (Kotlin, Jetpack Compose)
                           MazdaPidCatalog/SubaruPidCatalog + VehicleProfile),
                           bug-workaround "safe" commands
   service/                Foreground service (survives screen-off), process-wide
-                          UI status bus (LoggingStatus)
+                          UI status bus (LoggingStatus), and the exported
+                          AutomationReceiver a MacroDroid/Tasker macro starts
+                          and stops a drive through (see Entry points below)
   streaming/              Best-effort live stream + guaranteed backfill + analysis
                           request/poll client
   export/                 CSV bundle export, on-device rough trip-MPG estimate
@@ -75,6 +77,31 @@ blueprint/              The original spec this project was built from.
    local Room, with upload/analysis status and a manual "Retry upload" for
    anything not yet confirmed. Works fully offline; the server is never
    queried directly for this list.
+
+## Entry points into the app
+
+Three of them, all converging on the same two intents
+(`DriveLoggingService.startIntent` / `stopIntent`). Nothing starts or stops a
+session by any other route, which is why an automation-started drive is
+indistinguishable from a hand-started one once it is running.
+
+| Front door | Exported | Starts | Stops |
+|---|---|---|---|
+| `MainActivity` → `SetupScreen`/`LoggingScreen` | yes (LAUNCHER) | Start logging button | Stop dialog, with a note |
+| The foreground-service notification | no | — | Stop action (`PendingIntent.getForegroundService`, see KNOWN_ISSUES.md) |
+| `service/AutomationReceiver` | **yes** | `command=start` | `command=stop` |
+
+`AutomationReceiver` is the only exported component that acts on the vehicle,
+so it authenticates: a `token` extra checked against a `SecureRandom` value
+generated on this device and kept in `drivetrace_prefs`, without which any app
+on the phone could start a two-hour session holding a wake lock and GPS, or end
+one mid-drive. It carries **no** adapter address or vehicle profile of its own;
+both are read back from the same preferences the Setup screen writes, so the
+macro never needs editing when the adapter changes. It dispatches through
+`startForegroundService` for the reason the notification's Stop action does, and
+declines to send anything when there is no saved adapter or no live session,
+logging why under the `DriveTraceAutomation` tag rather than failing silently.
+User-facing setup: [AUTOMATION.md](AUTOMATION.md).
 
 ## Key design decisions and why
 
