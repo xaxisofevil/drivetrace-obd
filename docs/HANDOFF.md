@@ -25,8 +25,8 @@ up cleanly instead of re-deriving context or, worse, redoing work.
 
 ## Current state
 
-**Last commit:** `daeef77` "Add Delete Trip: wipes a drive from local Room
-and the server" (2026-08-08)
+**Last commit:** `ad48192` "Self-heal missing sessions rows; fixes Retry
+Analysis failing forever" (2026-08-08)
 
 **On the phone right now:** a debug build of `daeef77`, installed and
 confirmed working (back-button navigation and Delete Trip both verified live
@@ -64,7 +64,9 @@ export, drive-to-drive comparison, premium display skins, Settings screen
 split, MacroDroid/Tasker automation (with an in-app setup walkthrough),
 tapping a Logbook card to open that drive's full historical trip report,
 system back button now closes the current screen instead of the whole app,
-Delete Trip (wipes a drive from local Room + server).
+Delete Trip (wipes a drive from local Room + server), server-side self-heal
+for a missing `sessions` row (was permanently breaking Retry Analysis for
+any drive whose one-shot `/start` call missed, see KNOWN_ISSUES.md).
 
 **Known, deliberately open gap:** the 34-minute-hang fix (watchdog coroutine
 that force-closes the Bluetooth socket, see KNOWN_ISSUES.md's "Four bugs
