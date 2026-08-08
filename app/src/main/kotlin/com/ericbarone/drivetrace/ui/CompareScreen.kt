@@ -1,5 +1,6 @@
 package com.ericbarone.drivetrace.ui
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -73,6 +74,9 @@ import kotlin.math.min
  */
 @Composable
 fun CompareScreen(sessionIdA: Long, sessionIdB: Long, onBack: () -> Unit) {
+    // See HistoryScreen's own BackHandler comment: no navigation library means the system back
+    // gesture is never told about this screen otherwise, and falls through to exiting the app.
+    BackHandler(onBack = onBack)
     val context = LocalContext.current
     val scroll = rememberScrollState()
     var comparison by remember(sessionIdA, sessionIdB) { mutableStateOf<DriveComparison?>(null) }

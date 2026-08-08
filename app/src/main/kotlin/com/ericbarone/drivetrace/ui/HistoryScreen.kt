@@ -1,5 +1,6 @@
 package com.ericbarone.drivetrace.ui
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
@@ -100,6 +101,12 @@ import java.util.Locale
  */
 @Composable
 fun HistoryScreen(onBack: () -> Unit, onCompare: (Long, Long) -> Unit) {
+    // This app deliberately has no navigation library (rule 10: a handful of screens don't need
+    // one), which means the system back gesture/button is never told about any of them and falls
+    // through to Android's own default: finish the Activity. Every non-root screen wires its own
+    // BackHandler to the exact same callback its header's Back affordance already uses, so the two
+    // can never disagree about what "back" means here.
+    BackHandler(onBack = onBack)
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     var sessions by remember { mutableStateOf<List<SessionEntity>>(emptyList()) }
