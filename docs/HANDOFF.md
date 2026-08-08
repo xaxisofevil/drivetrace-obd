@@ -25,8 +25,8 @@ up cleanly instead of re-deriving context or, worse, redoing work.
 
 ## Current state
 
-**Last commit:** `ad48192` "Self-heal missing sessions rows; fixes Retry
-Analysis failing forever" (2026-08-08)
+**Last commit:** `a3e4c22` "Stop zeroing fuel burned during
+non-stoichiometric operation" (2026-08-08)
 
 **On the phone right now:** a debug build of `daeef77`, installed and
 confirmed working (back-button navigation and Delete Trip both verified live
@@ -66,7 +66,9 @@ tapping a Logbook card to open that drive's full historical trip report,
 system back button now closes the current screen instead of the whole app,
 Delete Trip (wipes a drive from local Room + server), server-side self-heal
 for a missing `sessions` row (was permanently breaking Retry Analysis for
-any drive whose one-shot `/start` call missed, see KNOWN_ISSUES.md).
+any drive whose one-shot `/start` call missed), and a real fix to the
+MAF-based fuel-rate estimate that was silently zeroing out a drive's
+highest-consumption seconds (see KNOWN_ISSUES.md for both).
 
 **Known, deliberately open gap:** the 34-minute-hang fix (watchdog coroutine
 that force-closes the Bluetooth socket, see KNOWN_ISSUES.md's "Four bugs
@@ -195,3 +197,35 @@ note.
   healthy and running current code as of the end of it.
 - No Android app changes this round, server-only. Nothing rebuilt or
   reinstalled on the phone.
+
+### 2026-08-08, later still (Claude Code)
+
+- Eric reported a real Subaru drive showing 38 MPG in the Logbook when
+  the ADR/on-device estimate at Stop time said ~21, certain 38 was
+  wrong. Root-caused and fixed a real analysis bug, not a display bug:
+  `scripts/analyze_drive.py`'s fuel-rate estimate was masking non-
+  near-stoichiometric samples to zero fuel burned instead of unknown,
+  and confirmed those masked samples were the drive's *highest*-MAF
+  moments (acceleration/enrichment), not noise. See KNOWN_ISSUES.md's
+  "MPG estimate runs well above the vehicle's own trip computer" update
+  for the full account and the before/after numbers on three real
+  sessions. Fixed by removing the mask; committed as `a3e4c22`.
+- The disputed drive now analyzes at 30.4 MPG (down from 38.7), still
+  above Eric's ~21 sense of it and above the vehicle's own trip
+  computer by roughly the same still-open, still-unexplained margin
+  documented in that same KNOWN_ISSUES.md section (MAF under-reporting
+  vs. a more direct injector-pulse-width reference is the leading
+  unproven theory). **This fix corrected a real bug but did not fully
+  close the gap to the dash reading**; don't treat 30.4 as validated
+  accurate, just less wrong than 38.7 was.
+- Re-ran analysis server-side for the fixed sessions (the disputed
+  drive plus the two Subaru drives recovered earlier tonight) so the
+  server holds the corrected numbers. **Eric still needs to tap Retry
+  Analysis in the app on all three** for the phone's local Room copy
+  to catch up; same category of manual step as the previous entry's
+  note, this fix doesn't reach back and update what's already stored
+  on the phone.
+- No Android app changes, server-only (`scripts/analyze_drive.py`,
+  shared by the server's live analysis path and any manual
+  `python analyze_drive.py` run against an exported CSV bundle or the
+  PC logger). Nothing rebuilt or reinstalled on the phone.
