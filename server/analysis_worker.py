@@ -12,6 +12,7 @@ screen isn't the place for matplotlib figures.
 
 from __future__ import annotations
 
+import shutil
 import sys
 import threading
 from pathlib import Path
@@ -44,6 +45,16 @@ def _sanitize(value: Any) -> Any:
 def get_status(session_id: int) -> dict[str, Any]:
     with _state_lock:
         return dict(_state.get(session_id, {"status": "not_requested"}))
+
+
+def forget(session_id: int) -> None:
+    """Called on Delete Trip: drops this session's in-memory analysis result (so a stale
+    'done' status can't outlive the DuckDB rows it summarized) and its output/<id>/ directory
+    of plots and markdown, which is server-local storage no different from the DB rows for
+    the purpose of a delete. Safe to call for a session that was never analyzed."""
+    with _state_lock:
+        _state.pop(session_id, None)
+    shutil.rmtree(OUTPUT_ROOT / str(session_id), ignore_errors=True)
 
 
 def request_analysis(session_id: int, conn: duckdb.DuckDBPyConnection, db_lock: threading.Lock) -> None:

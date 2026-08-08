@@ -13,6 +13,10 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.systemBarsPadding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -22,6 +26,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import com.ericbarone.drivetrace.BuildConfig
 import com.ericbarone.drivetrace.data.AppDatabase
 import com.ericbarone.drivetrace.data.SessionEntity
 import com.ericbarone.drivetrace.data.computeAdapterHealth
@@ -34,13 +39,20 @@ import com.ericbarone.drivetrace.export.buildTripReport
 import com.ericbarone.drivetrace.export.computeTripSummary
 import com.ericbarone.drivetrace.export.durationSeconds
 import com.ericbarone.drivetrace.export.reportSource
+import com.ericbarone.drivetrace.streaming.StreamingClient
 import com.ericbarone.drivetrace.ui.components.ActionBar
 import com.ericbarone.drivetrace.ui.components.EmptyState
 import com.ericbarone.drivetrace.ui.components.HeaderBar
 import com.ericbarone.drivetrace.ui.components.PrimaryAction
 import com.ericbarone.drivetrace.ui.components.SecondaryAction
+import com.ericbarone.drivetrace.ui.components.SectionLabel
+import com.ericbarone.drivetrace.ui.theme.Chalk
 import com.ericbarone.drivetrace.ui.theme.Ink
+import com.ericbarone.drivetrace.ui.theme.LocalReadoutType
+import com.ericbarone.drivetrace.ui.theme.Mist
+import com.ericbarone.drivetrace.ui.theme.Panel
 import com.ericbarone.drivetrace.ui.theme.Space
+import com.ericbarone.drivetrace.ui.theme.StatusFault
 import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -74,6 +86,17 @@ import java.util.Locale
  * `CompareScreen` are all already left. A third button in the bar repeating it would be the only
  * Back button in the app.
  *
+ * **Delete trip lives below the fold, not in the pinned bar.** It is the one action here that
+ * cannot be undone and the one this screen's live counterpart has no equivalent of at all: a
+ * drive that just ended has nothing to delete yet. Sitting under a Danger zone label at the
+ * bottom of the scroll, past the whole report, is the same guard rail the Stop dialog's own
+ * confirm step is: a deliberate scroll and a second tap, not a control sharing a row with Export
+ * CSV where a thumb aiming for the wrong button in a moving car costs a whole drive's data.
+ * Deletes local Room first (cascades to its measurements/locations/events, see
+ * `SessionDao.deleteSession`), which is the authoritative copy, then asks the server to drop its
+ * own rows too, best-effort like everything else this app sends the server, since Room is already
+ * the fact of the matter by the time that call goes out.
+ *
  * **The whole report is loaded before any of it is drawn,** unlike the live screen, which fills the
  * report in as the on-device pass returns and honestly says `calculating...` in the hero meanwhile.
  * Nothing is being calculated here in that sense: the drive ended, the numbers are all sitting in
@@ -91,11 +114,18 @@ fun TripReportScreen(sessionId: Long, onBack: () -> Unit) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val scroll = rememberScrollState()
+    // Remembered rather than rebuilt per delete, same reasoning as DriveNoteEditor's copy: it
+    // owns an OkHttp client.
+    val streamingClient = remember {
+        StreamingClient(BuildConfig.INGEST_BASE_URL, BuildConfig.INGEST_TOKEN)
+    }
     var session by remember(sessionId) { mutableStateOf<SessionEntity?>(null) }
     var report by remember(sessionId) { mutableStateOf<TripReport?>(null) }
     var loading by remember(sessionId) { mutableStateOf(true) }
     var exportingCsv by remember(sessionId) { mutableStateOf(false) }
     var exportingPdf by remember(sessionId) { mutableStateOf(false) }
+    var showDeleteConfirm by remember(sessionId) { mutableStateOf(false) }
+    var deleting by remember(sessionId) { mutableStateOf(false) }
 
     // Room only, every one of them, so a drive that has never once reached the server reopens with
     // its full report: economy, adapter health and stored codes all derive from local rows. The
@@ -155,6 +185,22 @@ fun TripReportScreen(sessionId: Long, onBack: () -> Unit) {
                 )
                 else -> CompleteBody(current, sessionId)
             }
+            // Below the whole report, not beside Export/Report PDF in the pinned bar: see this
+            // screen's own kdoc for why an irreversible action gets a scroll and a label between
+            // it and the controls someone actually means to tap while driving.
+            if (current != null) {
+                Column(verticalArrangement = Arrangement.spacedBy(Space.md)) {
+                    SectionLabel("Danger zone")
+                    SecondaryAction(
+                        text = if (deleting) "Deleting..." else "Delete trip",
+                        busy = deleting,
+                        contentColor = StatusFault,
+                        borderColor = StatusFault.copy(alpha = 0.4f),
+                        onClick = { showDeleteConfirm = true },
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                }
+            }
             Spacer(Modifier.height(Space.sm))
         }
 
@@ -193,5 +239,52 @@ fun TripReportScreen(sessionId: Long, onBack: () -> Unit) {
                 )
             }
         }
+    }
+
+    if (showDeleteConfirm) {
+        val label = session?.let {
+            "${vehicleDisplayName(it.vehicleProfile)}, ${dateFmt.format(Date(it.startWallTimeUtc))}"
+        } ?: "this drive"
+        AlertDialog(
+            onDismissRequest = { showDeleteConfirm = false },
+            containerColor = Panel,
+            titleContentColor = Chalk,
+            textContentColor = Mist,
+            title = { Text("Delete trip?", style = MaterialTheme.typography.headlineSmall) },
+            text = {
+                Text(
+                    "This permanently deletes $label from this phone and from the server. " +
+                        "There is no undo, and no server copy to restore it from afterward.",
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        showDeleteConfirm = false
+                        deleting = true
+                        scope.launch {
+                            // Room first: it is authoritative, and this is the write that makes
+                            // the drive actually gone regardless of what the server call below
+                            // does. Cascades to measurements/locations/events on its own, see
+                            // SessionDao.deleteSession.
+                            AppDatabase.getInstance(context).sessionDao().deleteSession(sessionId)
+                            // Awaited, not fire-and-forget, so the request isn't orphaned by
+                            // onBack() below cancelling this composable's coroutine scope before
+                            // OkHttp gets to send it. Best-effort regardless: Room's copy is
+                            // already gone either way, this is the server catching up to that.
+                            streamingClient.deleteSession(sessionId)
+                            onBack()
+                        }
+                    },
+                ) {
+                    Text("DELETE", style = LocalReadoutType.current.label, color = StatusFault)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showDeleteConfirm = false }) {
+                    Text("CANCEL", style = LocalReadoutType.current.label, color = Mist)
+                }
+            },
+        )
     }
 }

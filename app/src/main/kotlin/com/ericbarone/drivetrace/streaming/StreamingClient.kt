@@ -388,6 +388,29 @@ class StreamingClient(private val baseUrl: String, private val token: String) {
             }
         }
 
+    /**
+     * Delete Trip's server half. Not fire-and-forget: the caller (TripReportScreen) wants to know
+     * whether the server's copy is actually gone, same reasoning as [backfillSession]. But Room's
+     * delete already committed before this is ever called (see the screen), so a `false` here
+     * means only "ask again once the server's reachable", never "the delete didn't happen" - the
+     * phone's copy is gone either way, per the blueprint's local-is-authoritative rule.
+     */
+    suspend fun deleteSession(sessionId: Long): Boolean =
+        withContext(Dispatchers.IO) {
+            if (!enabled) return@withContext false
+            try {
+                val request = Request.Builder()
+                    .url("$baseUrl/sessions/$sessionId")
+                    .addHeader("Authorization", "Bearer $token")
+                    .delete()
+                    .build()
+                backfillClient.newCall(request).execute().use { it.isSuccessful }
+            } catch (e: Exception) {
+                Log.w(TAG, "deleteSession failed: ${e.message}")
+                false
+            }
+        }
+
     suspend fun pollAnalysis(sessionId: Long): AnalysisPollResult =
         withContext(Dispatchers.IO) {
             try {

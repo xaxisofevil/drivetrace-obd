@@ -381,6 +381,29 @@ def get_analysis(session_id: int):
     return analysis_worker.get_status(session_id)
 
 
+@app.delete("/sessions/{session_id}", dependencies=[Depends(_require_auth)])
+def delete_session(session_id: int):
+    """Delete Trip: wipes this drive from the server entirely, the server-side half of a
+    delete Room already did locally (see SessionDao.deleteSession, which cascades to
+    measurements/locations/events on that side). Deletes here too rather than relying on
+    cascade, since DuckDB tables here carry no foreign keys to cascade through. Best-effort
+    from the app's point of view same as every other server call: local Room is authoritative
+    and the delete already happened there regardless of whether this succeeds."""
+    with _db_lock:
+        _conn.execute("BEGIN TRANSACTION")
+        try:
+            _conn.execute("DELETE FROM measurements WHERE session_id = ?", [session_id])
+            _conn.execute("DELETE FROM locations WHERE session_id = ?", [session_id])
+            _conn.execute("DELETE FROM events WHERE session_id = ?", [session_id])
+            _conn.execute("DELETE FROM sessions WHERE session_id = ?", [session_id])
+            _conn.execute("COMMIT")
+        except Exception:
+            _conn.execute("ROLLBACK")
+            raise
+    analysis_worker.forget(session_id)
+    return {"ok": True, "session_id": session_id}
+
+
 @app.get("/health")
 def health():
     with _db_lock:

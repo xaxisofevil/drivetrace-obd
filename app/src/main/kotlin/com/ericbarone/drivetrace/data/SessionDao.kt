@@ -67,4 +67,10 @@ interface SessionDao {
 
     @Query("SELECT COUNT(*) FROM measurements WHERE sessionId = :sessionId")
     suspend fun getMeasurementCount(sessionId: Long): Int
+
+    /** Delete Trip. Deleting just the sessions row is enough: measurements/locations/events all
+     * declare `onDelete = CASCADE` against sessionId (see Entities.kt), so Room drops every child
+     * row itself rather than this needing three separate queries in a transaction. */
+    @Query("DELETE FROM sessions WHERE sessionId = :sessionId")
+    suspend fun deleteSession(sessionId: Long)
 }
