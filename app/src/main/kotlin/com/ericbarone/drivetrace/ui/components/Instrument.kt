@@ -48,6 +48,9 @@ import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import kotlin.math.PI
+import kotlin.math.cos
+import kotlin.math.sin
 import com.ericbarone.drivetrace.ui.theme.AccentMixture
 import com.ericbarone.drivetrace.ui.theme.AccentMotion
 import com.ericbarone.drivetrace.ui.theme.Ash
@@ -129,12 +132,12 @@ enum class Tone(val glyph: Glyph) {
         }
 }
 
-enum class Glyph { TICK, BANG, CROSS, DASH, DOTS, CHEVRON_LEFT }
+enum class Glyph { TICK, BANG, CROSS, DASH, DOTS, CHEVRON_LEFT, GEAR }
 
 /**
- * Glyphs are drawn rather than pulled from a font. The set needed is five shapes; adding the
- * Material icon artifact for that would cost an extra dependency and a few hundred KB of vector
- * assets to use six of them.
+ * Glyphs are drawn rather than pulled from a font. The set needed is a handful of shapes; adding
+ * the Material icon artifact for that would cost an extra dependency and a few hundred KB of
+ * vector assets to use seven of them.
  */
 @Composable
 fun GlyphMark(glyph: Glyph, color: Color, modifier: Modifier = Modifier, sizeDp: Int = 14) {
@@ -167,6 +170,26 @@ fun GlyphMark(glyph: Glyph, color: Color, modifier: Modifier = Modifier, sizeDp:
             Glyph.CHEVRON_LEFT -> {
                 drawLine(color, Offset(w * 0.62f, h * 0.18f), Offset(w * 0.34f, h * 0.5f), stroke.width, StrokeCap.Round)
                 drawLine(color, Offset(w * 0.34f, h * 0.5f), Offset(w * 0.62f, h * 0.82f), stroke.width, StrokeCap.Round)
+            }
+            // A hub and six radial teeth, at a thinner stroke than the rest of the set: this is
+            // the only glyph made of more than two marks, and the shared 0.14 weight closes the
+            // gaps between the teeth into a solid disc at header size.
+            Glyph.GEAR -> {
+                val c = Offset(w * 0.5f, h * 0.5f)
+                val teeth = w * 0.11f
+                drawCircle(color, radius = w * 0.19f, center = c, style = Stroke(width = teeth))
+                repeat(6) { i ->
+                    val a = i * (PI.toFloat() / 3f)
+                    val dx = cos(a)
+                    val dy = sin(a)
+                    drawLine(
+                        color,
+                        Offset(c.x + dx * w * 0.30f, c.y + dy * h * 0.30f),
+                        Offset(c.x + dx * w * 0.45f, c.y + dy * h * 0.45f),
+                        teeth,
+                        StrokeCap.Round,
+                    )
+                }
             }
         }
     }
@@ -262,10 +285,45 @@ fun SectionLabel(text: String, modifier: Modifier = Modifier, color: Color = Ash
 }
 
 /**
+ * A bare glyph as a tappable target. The compact 44dp square, the control radius and the drawn
+ * glyph are exactly what the back affordance below has always been; it is a named component now
+ * because the header grew a second one of them (the Settings gear) and two hand-rolled copies of
+ * a touch target is how they drift apart.
+ *
+ * [label] is what TalkBack reads, since a drawn glyph carries no text of its own.
+ */
+@Composable
+fun IconAction(
+    glyph: Glyph,
+    label: String,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    tint: Color = Mist,
+    sizeDp: Int = 18,
+) {
+    Box(
+        modifier = modifier
+            .size(Space.compactTarget)
+            .clip(DriveTraceShapes.control)
+            .clickable(onClickLabel = label, role = Role.Button, onClick = onClick),
+        contentAlignment = Alignment.Center,
+    ) {
+        GlyphMark(glyph, tint, sizeDp = sizeDp)
+    }
+}
+
+/**
  * The screen header. Deliberately not a Material TopAppBar: the M3 bar's 64dp of chrome, its
  * centred-or-left title debate and its overflow-menu affordance all exist to serve navigation
- * this app does not have (three screens, one of them modal). What is left is a wordmark, an
- * optional back affordance, and one optional action, over a hairline rule.
+ * this app does not have (four screens, two of them modal). What is left is a wordmark, an
+ * optional back affordance, and a trailing action slot, over a hairline rule.
+ *
+ * [trailing] is a `RowScope` lambda rather than a single composable, so a screen that needs two
+ * actions (Setup carries the Settings gear alongside Logbook) emits both into the header's own
+ * Row. That was true of the signature before the gear existed and is stated here because it is
+ * the reason no second header component was needed: the slot was never "one action", it was
+ * "whatever the header's Row should end with". A screen putting more than two things in there is
+ * building an overflow menu, which is the thing this component exists to not have.
  */
 @Composable
 fun HeaderBar(
@@ -281,15 +339,7 @@ fun HeaderBar(
             verticalAlignment = Alignment.CenterVertically,
         ) {
             if (onBack != null) {
-                Box(
-                    modifier = Modifier
-                        .size(Space.compactTarget)
-                        .clip(DriveTraceShapes.control)
-                        .clickable(onClick = onBack),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    GlyphMark(Glyph.CHEVRON_LEFT, Mist, sizeDp = 18)
-                }
+                IconAction(Glyph.CHEVRON_LEFT, label = "Back", onClick = onBack)
                 Spacer(Modifier.width(Space.sm))
             }
             Column(modifier = Modifier.weight(1f)) {
