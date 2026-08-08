@@ -1,5 +1,6 @@
 package com.ericbarone.drivetrace.ui
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -81,6 +82,12 @@ import java.util.Locale
  */
 @Composable
 fun TripReportScreen(sessionId: Long, onBack: () -> Unit) {
+    // Same wiring every other non-root screen uses, and for the reason HistoryScreen's own comment
+    // gives: with no navigation library, the system back gesture is never told this screen exists
+    // and falls through to finishing the Activity. One callback serves it and the header chevron
+    // both, so the two can never disagree about what "back" means here.
+    BackHandler(onBack = onBack)
+
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val scroll = rememberScrollState()
