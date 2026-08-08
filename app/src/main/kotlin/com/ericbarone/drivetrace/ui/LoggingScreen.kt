@@ -1,5 +1,6 @@
-package com.ericbarone.drivetrace.ui
+﻿package com.ericbarone.drivetrace.ui
 
+import android.content.Context
 import android.content.Intent
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
@@ -23,6 +24,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.ReadOnlyComposable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -39,17 +41,26 @@ import androidx.core.content.FileProvider
 import com.ericbarone.drivetrace.data.AdapterHealth
 import com.ericbarone.drivetrace.data.DtcReport
 import com.ericbarone.drivetrace.data.computeAdapterHealth
-import com.ericbarone.drivetrace.data.describeDtc
-import com.ericbarone.drivetrace.data.isSuspectedFramingArtifact
 import com.ericbarone.drivetrace.data.readSessionDtcs
+import com.ericbarone.drivetrace.export.CaptureItem
 import com.ericbarone.drivetrace.export.CsvExporter
+import com.ericbarone.drivetrace.export.DTC_CAPTION
+import com.ericbarone.drivetrace.export.PdfTripReportExporter
+import com.ericbarone.drivetrace.export.ReportBraking
+import com.ericbarone.drivetrace.export.ReportCategory
+import com.ericbarone.drivetrace.export.ReportCode
+import com.ericbarone.drivetrace.export.ReportEmphasis
+import com.ericbarone.drivetrace.export.ReportTile
+import com.ericbarone.drivetrace.export.ReportTone
+import com.ericbarone.drivetrace.export.TripReport
 import com.ericbarone.drivetrace.export.TripSummary
+import com.ericbarone.drivetrace.export.buildTripReport
 import com.ericbarone.drivetrace.export.computeTripSummary
+import com.ericbarone.drivetrace.export.formatDuration
 import com.ericbarone.drivetrace.obd.MeasurementSample
 import com.ericbarone.drivetrace.service.ConnectionState
 import com.ericbarone.drivetrace.service.LoggingUiState
 import com.ericbarone.drivetrace.service.TriState
-import com.ericbarone.drivetrace.streaming.AnalysisSummary
 import com.ericbarone.drivetrace.ui.components.ActionBar
 import com.ericbarone.drivetrace.ui.components.Caption
 import com.ericbarone.drivetrace.ui.components.ConsoleLine
@@ -82,6 +93,7 @@ import com.ericbarone.drivetrace.ui.theme.StatusCaution
 import com.ericbarone.drivetrace.ui.theme.StatusFault
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import java.io.File
 
 /**
  * Two genuinely different jobs share this screen, so they get two genuinely different layouts
@@ -99,7 +111,8 @@ fun LoggingScreen(status: LoggingUiState, onStop: (String) -> Unit, onNewSession
     var showStopConfirm by remember { mutableStateOf(false) }
     var stopNote by remember { mutableStateOf("") }
     var nowMs by remember { mutableLongStateOf(System.currentTimeMillis()) }
-    var exporting by remember { mutableStateOf(false) }
+    var exportingCsv by remember { mutableStateOf(false) }
+    var exportingPdf by remember { mutableStateOf(false) }
     var tripSummary by remember { mutableStateOf<TripSummary?>(null) }
     var adapterHealth by remember { mutableStateOf<AdapterHealth?>(null) }
     var dtcs by remember { mutableStateOf<DtcReport?>(null) }
@@ -149,6 +162,21 @@ fun LoggingScreen(status: LoggingUiState, onStop: (String) -> Unit, onNewSession
         }
     }
 
+    // Built once, here, and handed to both renderers. `CompleteBody` draws it on the phone and
+    // `PdfTripReportExporter` draws it on a printed page, so the exported file is literally the
+    // report that was on screen rather than a second reading of the same inputs. See
+    // export/TripReport.kt for why the model exists at all and what happens when it drifts.
+    // Keyed on its inputs rather than rebuilt per recomposition: the one-second `nowMs` tick keeps
+    // running while the report is on screen, and the export lambda below closes over this object,
+    // so a stable identity is worth the `remember`.
+    val report = remember(status, tripSummary, adapterHealth, dtcs, completedDurationSeconds) {
+        if (sessionComplete) {
+            buildTripReport(status, tripSummary, adapterHealth, dtcs, completedDurationSeconds)
+        } else {
+            null
+        }
+    }
+
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -182,8 +210,8 @@ fun LoggingScreen(status: LoggingUiState, onStop: (String) -> Unit, onNewSession
             verticalArrangement = Arrangement.spacedBy(Space.section),
         ) {
             Spacer(Modifier.height(Space.xs))
-            if (sessionComplete) {
-                CompleteBody(status, tripSummary, adapterHealth, dtcs, completedDurationSeconds)
+            if (report != null) {
+                CompleteBody(report, status.sessionId)
             } else {
                 LiveBody(status, elapsedSeconds, lastSampleAgeSeconds, nowMs)
             }
@@ -199,31 +227,46 @@ fun LoggingScreen(status: LoggingUiState, onStop: (String) -> Unit, onNewSession
                 )
             } else {
                 PrimaryAction(
-                    text = if (exporting) "Exporting..." else "Export CSV",
-                    enabled = !exporting,
+                    text = if (exportingCsv) "Exporting..." else "Export CSV",
+                    enabled = !exportingCsv,
                     onClick = {
                         val sessionId = status.sessionId ?: return@PrimaryAction
-                        exporting = true
+                        exportingCsv = true
                         scope.launch {
                             val zip = CsvExporter(context).export(sessionId)
-                            exporting = false
-                            val uri = FileProvider.getUriForFile(
-                                context, "${context.packageName}.fileprovider", zip,
-                            )
-                            val shareIntent = Intent(Intent.ACTION_SEND).apply {
-                                type = "application/zip"
-                                putExtra(Intent.EXTRA_STREAM, uri)
-                                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-                            }
-                            context.startActivity(Intent.createChooser(shareIntent, "Export drive data"))
+                            exportingCsv = false
+                            share(context, zip, "application/zip", "Export drive data")
                         }
                     },
                 )
-                SecondaryAction(
-                    text = "New session",
-                    onClick = onNewSession,
-                    modifier = Modifier.fillMaxWidth(),
-                )
+                // The PDF sits beside "New session" rather than taking a second 56dp primary row.
+                // Rule 1 allows one hero and rule 8 pins one primary action; the CSV bundle keeps
+                // it because it is the drive's data of record, the thing the analysis script and
+                // the server both consume. The PDF is the *readable* copy of the screen above it,
+                // which is a secondary-rank action however useful it is, and pairing it with the
+                // other non-primary control keeps the bar exactly as tall as it already was.
+                Row(horizontalArrangement = Arrangement.spacedBy(Space.md)) {
+                    SecondaryAction(
+                        text = "Report PDF",
+                        busy = exportingPdf,
+                        onClick = {
+                            val sessionId = status.sessionId ?: return@SecondaryAction
+                            val current = report ?: return@SecondaryAction
+                            exportingPdf = true
+                            scope.launch {
+                                val pdf = PdfTripReportExporter(context).export(sessionId, current)
+                                exportingPdf = false
+                                share(context, pdf, "application/pdf", "Share trip report")
+                            }
+                        },
+                        modifier = Modifier.weight(1f),
+                    )
+                    SecondaryAction(
+                        text = "New session",
+                        onClick = onNewSession,
+                        modifier = Modifier.weight(1f),
+                    )
+                }
             }
         }
     }
@@ -678,82 +721,61 @@ private fun ConnectionPill(state: ConnectionState) {
  *     because it decides whether the figures mean anything. When the answer is bad it takes the
  *     screen's one alert band. When it is fine there is no band at all: the band's power comes
  *     entirely from being the only one, same rule the LIVE layout already lives by.
- *  2. **The best number this drive actually produced** (see [heroFigure]). Not "MPG or a dash".
- *  3. **What the car said** — stored codes, but only when there are some.
- *  4. **How the drive went** — the profile tiles, then anomaly flags and braking.
- *  5. **What you want to remember about it** — the note.
- *  6. **How much to trust all of the above, and whether the app owes you anything** — one
+ *  2. **The best number this drive actually produced.** Not "MPG or a dash".
+ *  3. **What the car said** - stored codes, but only when there are some.
+ *  4. **How the drive went** - the profile tiles, then anomaly flags and braking.
+ *  5. **What you want to remember about it** - the note.
+ *  6. **How much to trust all of the above, and whether the app owes you anything** - one
  *     subordinate `DataRow` block at the bottom, carrying verdicts only, with the counts behind
- *     a tap that only appears when something went wrong. Upload, analysis, adapter health, the
- *     clean-code confirmation and the on-device cross-check used to be four separate full-weight
- *     sections; they are all the same question and none of them is about the car or the drive.
- *     See [CaptureAndDeliverySection] for what each line had to earn to stay.
+ *     a tap that only appears when something went wrong.
+ *
+ * **Every one of those decisions now lives in `export/TripReport.kt` rather than here,** and this
+ * function is what is left once they do: a renderer. Which figure earns the hero, whether the
+ * drive gets a band and what it says, which tile the hero already claimed, which capture lines are
+ * verdicts and which are counts, all of it is decided once, in one place, and drawn twice: here on
+ * a dark phone screen, and again by [com.ericbarone.drivetrace.export.PdfTripReportExporter] on a
+ * light printed page. The PDF is meant to be a faithful copy of this screen rather than a second
+ * opinion about the same drive, and the only way to guarantee that is for both to draw the same
+ * object. See TripReport.kt for what the alternative cost the last time it was tried.
+ *
+ * What stays here is everything that genuinely is about *this* medium: the skin's colour tokens
+ * (rule 15 keeps those inside composition), the component vocabulary, the tile wrapping widths,
+ * the scroll, and the note editor, which is an editor here and a line of stored text in the export.
  */
 @Composable
-private fun ColumnScope.CompleteBody(
-    status: LoggingUiState,
-    tripSummary: TripSummary?,
-    adapterHealth: AdapterHealth?,
-    dtcs: DtcReport?,
-    durationSeconds: Long?,
-) {
-    val analysis = status.analysisSummary
-    val serverMpg = analysis?.overallMpg
-    val deviceMpg = tripSummary?.overallMpg
-    // Prefer the server figure: it gates on stoichiometric operation, the on-device one doesn't.
-    val mpg = serverMpg ?: deviceMpg
-    val distanceKm = analysis?.distanceGpsKm ?: tripSummary?.distanceKm
-    // Nothing is knowable until the on-device pass has run; before then the honest answer to
-    // every question below is "still working it out", not "it failed".
-    val settled = tripSummary != null
-    val drove = (distanceKm ?: 0.0) >= 0.05
-    // The on-device figure is only a *cross-check* when there is a server figure to check it
-    // against. The two are computed differently on purpose (the server gates on stoichiometric
-    // operation, this one doesn't), which is the entire reason to show both. When the server
-    // never answered, the on-device number IS the hero, and printing it again in the capture
-    // block is the same number twice at two sizes, which is exactly what DriveProfileSection
-    // already goes out of its way to avoid. That was the state of the real screenshot that
-    // prompted this pass: `23.8` at 64sp, then `23.8` again eleven rows down.
-    val crossCheckMpg = deviceMpg.takeIf { serverMpg != null }
+private fun ColumnScope.CompleteBody(report: TripReport, sessionId: Long?) {
+    report.verdict?.let { band ->
+        StatusBand(tone = band.tone.asTone, title = band.title, body = band.body)
+    }
 
-    CaptureVerdictBand(settled = settled, haveMpg = mpg != null, drove = drove, health = adapterHealth)
-
-    val hero = heroFigure(
-        mpg = mpg,
-        fromServer = serverMpg != null,
-        distanceKm = distanceKm.takeIf { drove },
-        durationSeconds = durationSeconds,
-        settled = settled,
-    )
     HeroReadout(
-        label = hero.label,
-        value = hero.value,
-        unit = hero.unit,
-        accent = hero.accent,
-        caption = hero.caption,
+        label = report.hero.label,
+        value = report.hero.value,
+        // No category means the value is `--`, which is neither a reading nor a status. Ash rather
+        // than the disabled grey: the hero avoids `--` where it can, and where it cannot the `--`
+        // has to be readable. See DESIGN_SYSTEM.md section 7.
+        accent = report.hero.category?.accent ?: Ash,
+        unit = report.hero.unit,
+        caption = report.hero.caption,
     )
 
     // The vehicle talking, and the highest-consequence thing this screen can carry, so it sits
     // directly under the hero. Only when there is something to say: a full accent-barred panel
     // reading "no stored trouble codes" after every single drive is the "everything is fine"
-    // green wash ISA-101 rules out, it becomes wallpaper by the third drive, and it costs a whole
-    // section of vertical space that pushes real content below the fold. The clean read is still
-    // reported, as one line in the capture block at the bottom, because a confirmed clean read is
-    // a real result and losing it entirely would be worse than over-showing it.
-    if (dtcs != null && dtcs.read && !dtcs.isEmpty) {
-        DiagnosticCodesSection(dtcs)
+    // green wash ISA-101 rules out. The clean read is still reported, as one line in the capture
+    // block at the bottom.
+    if (report.codes.isNotEmpty()) {
+        DiagnosticCodesSection(report.codes)
     }
 
-    DriveProfileSection(
-        analysis = analysis,
-        distanceKm = distanceKm.takeIf { hero.kind != HeroKind.DISTANCE },
-        durationSeconds = durationSeconds.takeIf { hero.kind != HeroKind.DURATION },
-    )
+    if (report.tiles.isNotEmpty()) {
+        DriveProfileSection(report.tiles)
+    }
 
-    if (analysis != null && analysis.flags.isNotEmpty()) {
+    if (report.flags.isNotEmpty()) {
         Column(verticalArrangement = Arrangement.spacedBy(Space.md)) {
             SectionLabel("Anomaly flags")
-            for (flag in analysis.flags) {
+            for (flag in report.flags) {
                 InstrumentPanel(
                     modifier = Modifier.fillMaxWidth(),
                     accent = StatusCaution,
@@ -771,197 +793,25 @@ private fun ColumnScope.CompleteBody(
         }
     }
 
-    if (analysis != null && (analysis.brakingEventCount ?: 0) > 0) {
-        Column(verticalArrangement = Arrangement.spacedBy(Space.md)) {
-            SectionLabel("Braking")
-            InstrumentPanel(modifier = Modifier.fillMaxWidth()) {
-                DataRow("Braking events", analysis.brakingEventCount.toString())
-                analysis.brakingFuelEquivMl?.let {
-                    DataRow("Est. fuel to brake heat", "%.0f mL".format(it), valueColor = AccentMixture)
-                }
-                analysis.brakingEventsWithoutCoast?.let {
-                    if (it > 0) {
-                        Spacer(Modifier.height(Space.xs))
-                        Text(
-                            "$it of ${analysis.brakingEventCount} had no coast phase first, " +
-                                "speed was carried right up to the brakes.",
-                            style = LocalReadoutType.current.unit,
-                            color = StatusCaution,
-                        )
-                    }
-                }
-                Spacer(Modifier.height(Space.sm))
-                Caption(
-                    "Estimate only: braking is inferred from deceleration rate, not measured, and " +
-                        "the mL figure assumes a fixed vehicle mass/engine efficiency. See " +
-                        "analysis_report.md for details.",
-                )
-            }
-        }
-    }
+    report.braking?.let { BrakingSection(it) }
 
     // Last item that is about the drive, first item the thumb reaches, and directly under the
     // evidence it is a reaction to: you annotate a drive after reading what happened on it, not
     // before. Above the capture block on purpose, because the driver's own words rank over the
     // app's account of its own plumbing, the same ranking the logbook card already uses.
-    status.sessionId?.let { sessionId ->
+    sessionId?.let { id ->
         Column(verticalArrangement = Arrangement.spacedBy(Space.md)) {
             SectionLabel("Drive note")
-            DriveNoteEditor(sessionId = sessionId)
+            DriveNoteEditor(sessionId = id)
         }
     }
 
-    CaptureAndDeliverySection(status, crossCheckMpg, adapterHealth, dtcs)
-
-    if (status.statusMessage.isNotBlank()) {
-        ConsoleLine(status.statusMessage, color = Ash)
-    }
-}
-
-// ---------------------------------------------------------------------------
-// Session complete: the hero
-// ---------------------------------------------------------------------------
-
-private enum class HeroKind { MPG, DISTANCE, DURATION, NONE }
-
-private data class HeroFigure(
-    val kind: HeroKind,
-    val label: String,
-    val value: String,
-    val unit: String?,
-    val accent: Color,
-    val caption: String,
-)
-
-/**
- * Which number owns the trip report.
- *
- * The old answer was "MPG, or a dash if there isn't one", which spends the largest thing on the
- * screen, 64sp of it, on the absence of data. A hero reading `--` is a hero with no content: it
- * occupies the slot, defeats the hierarchy it is supposed to create, and still leaves the reader
- * hunting for a number that does exist.
- *
- * So the hero is the best figure the drive actually produced, down a fixed chain: economy if
- * there is any, otherwise distance, otherwise session length, which exists for every session that
- * ever started. `--` is now unreachable in practice.
- *
- * The cost is that the hero changes identity between drives, and the design system leans on the
- * hero slot's position to identify what is in it (which is part of why MOTION is achromatic). The
- * trade is worth taking here and would not be on the LIVE screen: this one is read stationary
- * with attention, the readout already carries its own label and provenance caption, and the
- * accent still obeys the category contract, teal for economy and MOTION white for distance and
- * duration, so the hue never lies about which system the number came from. "You drove 12.4 km and
- * got no fuel data" is a result. "-- MPG" is a layout.
- *
- * **The two `--` branches used to paint themselves `Slate`,** which is the disabled-text grey and
- * sits at about 2.2:1 on `Ink`. At 64sp Light weight that is a hero which is technically drawn
- * and practically not there, and it is the one state where the screen most needs to be legible
- * about what it does not know. `Ash` (~5.4:1, the same grey the hero's own label already uses)
- * costs nothing, cannot be confused with a real reading because it is achromatic, and keeps rule
- * 13 honest end to end: the hero avoids `--` where it can, and where it cannot the `--` is
- * readable. Both greys are registered in every skin's daylight palette, so rule 11 still holds.
- *
- * `@Composable` only because the colour tokens it names are now skin-dependent (see
- * `ui/theme/Color.kt`). Nothing about what it decides changed.
- */
-@Composable
-private fun heroFigure(
-    mpg: Double?,
-    fromServer: Boolean,
-    distanceKm: Double?,
-    durationSeconds: Long?,
-    settled: Boolean,
-): HeroFigure = when {
-    mpg != null -> HeroFigure(
-        kind = HeroKind.MPG,
-        label = "Trip economy",
-        value = "%.1f".format(mpg),
-        unit = "MPG",
-        accent = AccentMixture,
-        caption = if (fromServer) {
-            "server analysis, stoichiometric-gated"
-        } else {
-            "on-device estimate, ungated"
-        },
-    )
-    !settled -> HeroFigure(
-        kind = HeroKind.NONE,
-        label = "Trip economy",
-        value = "--",
-        unit = "MPG",
-        accent = Ash,
-        caption = "calculating...",
-    )
-    distanceKm != null -> HeroFigure(
-        kind = HeroKind.DISTANCE,
-        label = "Distance driven",
-        value = "%.2f".format(distanceKm),
-        unit = "km",
-        accent = AccentMotion,
-        caption = "no fuel data, so no economy figure for this drive",
-    )
-    durationSeconds != null -> HeroFigure(
-        kind = HeroKind.DURATION,
-        label = "Session length",
-        value = formatDuration(durationSeconds),
-        unit = null,
-        accent = AccentMotion,
-        caption = "the only figure this session produced",
-    )
-    else -> HeroFigure(
-        kind = HeroKind.NONE,
-        label = "Trip economy",
-        value = "--",
-        unit = "MPG",
-        accent = Ash,
-        caption = "no fuel data captured",
-    )
-}
-
-/**
- * The trip report's one alert slot, and it answers the question that outranks every number on the
- * screen: is any of this worth reading.
- *
- * Nothing else on this screen is allowed to be a band, exactly as on the LIVE layout. A failed
- * upload deliberately does not qualify: it retries on its own, the logbook has a Retry control,
- * and nothing about the drive is lost, so it is plumbing and it belongs in the block at the
- * bottom with the rest of the plumbing. Losing the drive's data is not plumbing.
- *
- * The body names the likely cause rather than restating the symptom, and points at the one
- * section that has the detail. That connection, "no MPG *because* the adapter dropped reads", is
- * the whole job: the old layout had both facts on screen and left the reader to join them.
- */
-@Composable
-private fun ColumnScope.CaptureVerdictBand(
-    settled: Boolean,
-    haveMpg: Boolean,
-    drove: Boolean,
-    health: AdapterHealth?,
-) {
-    if (!settled || haveMpg) return
-
-    val adapterClause = if (health != null && !health.isClean) {
-        " The adapter dropped ${health.distinctPidsDropped} " +
-            "PID${if (health.distinctPidsDropped == 1) "" else "s"} this drive; open Capture " +
-            "detail below for which ones."
-    } else {
-        ""
+    if (report.capture.isNotEmpty()) {
+        CaptureAndDeliverySection(report.capture)
     }
 
-    if (drove) {
-        StatusBand(
-            tone = Tone.CAUTION,
-            title = "No fuel data this drive",
-            body = "Distance was recorded, but Mass Air Flow never answered, so this drive has no " +
-                "economy figure and can't be compared against another one.$adapterClause",
-        )
-    } else {
-        StatusBand(
-            tone = Tone.FAULT,
-            title = "Nothing usable recorded",
-            body = "No distance and no fuel data came back, so there is nothing in this report to " +
-                "compare against another drive.$adapterClause",
-        )
+    if (report.statusMessage.isNotBlank()) {
+        ConsoleLine(report.statusMessage, color = Ash)
     }
 }
 
@@ -971,67 +821,11 @@ private fun ColumnScope.CaptureVerdictBand(
 
 /**
  * The secondary band: everything about the drive that is not the hero, at roughly a third its
- * weight. Whichever figure the hero took is omitted here rather than repeated, so the screen
- * never shows the same number twice at two sizes.
- *
- * Session length is new. It was on the LIVE screen as the hero and then vanished the moment the
- * drive ended, which meant the report could not answer "how long was that" at all: on the real
- * screenshot, "35 min and 0.00 km" would have explained the whole session in one line and the
- * report simply did not have it.
+ * weight. Whichever figure the hero took was already filtered out upstream rather than repeated,
+ * so the screen never shows the same number twice at two sizes.
  */
 @Composable
-private fun ColumnScope.DriveProfileSection(
-    analysis: AnalysisSummary?,
-    distanceKm: Double?,
-    durationSeconds: Long?,
-) {
-    val tiles = buildList<@Composable RowScope.() -> Unit> {
-        if (distanceKm != null) {
-            add {
-                MetricTile(
-                    label = "Distance",
-                    value = "%.2f".format(distanceKm),
-                    unit = "km",
-                    accent = AccentMotion,
-                    modifier = Modifier.weight(1f),
-                )
-            }
-        }
-        if (durationSeconds != null) {
-            add {
-                MetricTile(
-                    label = "Duration",
-                    value = formatDuration(durationSeconds),
-                    accent = AccentMotion,
-                    modifier = Modifier.weight(1f),
-                )
-            }
-        }
-        analysis?.idleFractionPct?.let { idle ->
-            add {
-                MetricTile(
-                    label = "Idle",
-                    value = "%.1f".format(idle),
-                    unit = "%",
-                    accent = AccentMixture,
-                    modifier = Modifier.weight(1f),
-                )
-            }
-        }
-        analysis?.warmupMinutes?.let { warmup ->
-            add {
-                MetricTile(
-                    label = "Warm-up",
-                    value = "%.1f".format(warmup),
-                    unit = "min",
-                    accent = AccentThermal,
-                    modifier = Modifier.weight(1f),
-                )
-            }
-        }
-    }
-    if (tiles.isEmpty()) return
-
+private fun ColumnScope.DriveProfileSection(tiles: List<ReportTile>) {
     // Four tiles across a phone leaves each one about 78dp, which is narrower than the word
     // "WARM-UP" at the label style's tracking. Wrapping at three, and splitting four into 2+2
     // rather than 3+1 so neither row looks like a leftover, keeps every tile legible without
@@ -1045,11 +839,43 @@ private fun ColumnScope.DriveProfileSection(
         SectionLabel("Drive profile")
         for (rowTiles in tiles.chunked(perRow)) {
             Row(horizontalArrangement = Arrangement.spacedBy(Space.tileGap)) {
-                for (tile in rowTiles) tile()
+                for (tile in rowTiles) {
+                    MetricTile(
+                        label = tile.label,
+                        value = tile.value,
+                        unit = tile.unit,
+                        accent = tile.category.accent,
+                        modifier = Modifier.weight(1f),
+                    )
+                }
                 // Short final row keeps its tiles the same width as the rows above it rather than
                 // stretching a lone tile across the screen and reading as a second hero.
                 repeat(perRow - rowTiles.size) { Spacer(Modifier.weight(1f)) }
             }
+        }
+    }
+}
+
+@Composable
+private fun ColumnScope.BrakingSection(braking: ReportBraking) {
+    Column(verticalArrangement = Arrangement.spacedBy(Space.md)) {
+        SectionLabel("Braking")
+        InstrumentPanel(modifier = Modifier.fillMaxWidth()) {
+            DataRow("Braking events", braking.eventCount.toString())
+            braking.fuelEquivMl?.let {
+                DataRow("Est. fuel to brake heat", "%.0f mL".format(it), valueColor = AccentMixture)
+            }
+            braking.eventsWithoutCoast?.takeIf { it > 0 }?.let {
+                Spacer(Modifier.height(Space.xs))
+                Text(
+                    "$it of ${braking.eventCount} had no coast phase first, " +
+                        "speed was carried right up to the brakes.",
+                    style = LocalReadoutType.current.unit,
+                    color = StatusCaution,
+                )
+            }
+            Spacer(Modifier.height(Space.sm))
+            Caption(braking.caption)
         }
     }
 }
@@ -1059,298 +885,183 @@ private fun ColumnScope.DriveProfileSection(
 // ---------------------------------------------------------------------------
 
 /**
- * Everything about the capture rig and the pipeline rather than about the car or the drive.
+ * Everything about the capture rig and the pipeline rather than about the car or the drive, as one
+ * subordinate block of `DataRow`-weight lines replacing what used to be four full sections.
  *
- * The first pass at this merged four full sections (**Pipeline**, **Adapter health**, the clean
- * half of **Diagnostic codes**, **On-device cross-check**) into one `DataRow`-weight block. That
- * fixed the visual weight and left the *substance* alone, which turned out to be the actual
- * problem. A photograph of the merged version on a real completed drive still read, in full:
- * `13 PIDs dropped`, `Failed reads 259`, `Cooldown pauses 123`, `LONG_TERM_BANK_2 78`,
- * `SHORT_TERM_BANK_2 78`, `FUEL_CONSUMPTION_RATE 43`, a three-line caption about unsupported
- * PIDs, then a distance and an MPG that were both already on the screen above. That is a QA log
- * for the capture rig, on the default first-look state of the screen whose entire job is "how was
- * my MPG", on every drive, whether or not anything went wrong.
+ * **The block states verdicts and the disclosure holds counts** (rule 15). A verdict is a word
+ * that changes what the reader does next ("complete", "will retry", "all answered", "13 PIDs
+ * dropped", "none"). A count is a number that only means something once you have already decided
+ * to debug the rig, and no count answers the question this screen exists to answer. So on a clean
+ * drive this is a few achromatic lines and no controls; on a bad one it grows a tone, a glyph and
+ * one collapsed control. Which line is which is decided in `buildTripReport`, not here.
  *
- * The rule that sorts it: **the block states verdicts, and the disclosure holds counts.** A
- * verdict is a word that changes what the reader does next ("complete", "will retry", "all
- * answered", "13 PIDs dropped", "none"). A count is a number that only means something once
- * you have already decided to debug the rig, and no count answers the question this screen
- * exists to answer. So on a clean drive this is four achromatic lines and no controls, and on a
- * bad one it grows a tone, a glyph, and one collapsed control.
- *
- * Per item, because "made it smaller" is not a reason:
- *
- *  - **Upload.** Kept, one line. It is the only thing here the app still owes the user, and the
- *    only one where the answer changes what they do (nothing, mostly, which is the point). The
- *    label lost `(verified complete)`, which described the delivery protocol to nobody. **A
- *    failed upload is now `CAUTION`, not `FAULT`,** matching the reasoning the verdict band
- *    already uses to refuse it a band: it retries on its own, the logbook has a control for it,
- *    and no data is lost. `WILL RETRY` in amber is what that is. `FAILED` in red was the status
- *    table's "broken" tone spent on a state that heals itself, and red for a self-healing state
- *    is precisely the wolf-crying ISA-101 exists to prevent.
- *  - **The upload's success detail** (`"412 measurements, 88 GPS, 19 events"`) moved into the
- *    disclosure. It is the app counting its own rows. `COMPLETE` already carries the verdict.
- *  - **PC analysis.** Kept, one line, still nested under a successful upload. Its `PENDING`
- *    detail line ("Waiting on the PC to analyze this drive...") is gone: the state word `RUNNING`
- *    and the pulsing dot next to it already say that, twice. A *failed* analysis keeps its
- *    server-authored message, because that one is a real cause and the server is the only thing
- *    that knows it.
- *  - **Adapter reads.** Kept as the trust signal, one line, verdict only. Clean is now
- *    `NEUTRAL` and glyphless rather than a green tick: rule 14 and ISA-101 both say the normal
- *    state is achromatic, and a tick on the one row that is fine, next to rows that carry no
- *    glyph at all, reads as decoration.
- *  - **Failed reads, cooldown pauses, the per-PID breakdown and their caption.** Behind a tap,
- *    collapsed by default, and only offered at all when something actually dropped. Not deleted:
- *    idea #9 is right that distinguishing "one unsupported PID cycling through cooldown" from
- *    "several different PIDs failing, so it's the adapter or the link" is the whole reason
- *    adapter-health reporting was built, and that distinction lives entirely in these counts.
- *    It is just never the answer to "how was my MPG". Collapsing it behind a `SecondaryAction`
- *    is the same move, and the same component, the logbook already uses for its per-card note
- *    editor, so this adds no vocabulary.
- *  - **The clean-DTC line.** Kept, unchanged. One achromatic line for a confirmed clean read of
- *    the highest-consequence thing this screen reports is the cheapest true statement on it.
- *  - **The on-device cross-check.** Kept only when it is one. Two figures computed two ways
- *    disagreeing is real information; the same figure printed twice is not. The caller passes a
- *    number here only when the server also produced one, so on a drive where the server never
- *    answered (which is every drive where this block used to be at its longest) the row and its
- *    caption both disappear rather than restating the hero.
- *  - **The on-device distance row is gone outright.** It was never a cross-check. Both figures
- *    are computed from the same GPS fixes out of the same Room table, one on the phone and one
- *    on the PC after the phone uploaded them; agreement between them tests the upload, not the
- *    measurement. Distance already has a hero slot and a `MetricTile`, and this was its third
- *    appearance on one screen.
- *  - **The `calculating...` and `n/a (no fuel data)` rows are gone.** The hero says both, at
- *    64sp, before the reader gets this far.
+ * There is at most one [CaptureItem.Disclosure] in the block, so its open/closed state is hoisted
+ * to the section rather than remembered per item: a `remember` inside the loop would key on
+ * position and quietly reopen when the list shape changed.
  */
 @Composable
-private fun ColumnScope.CaptureAndDeliverySection(
-    status: LoggingUiState,
-    crossCheckMpg: Double?,
-    health: AdapterHealth?,
-    dtcs: DtcReport?,
-) {
+private fun ColumnScope.CaptureAndDeliverySection(items: List<CaptureItem>) {
     // rememberSaveable, on the same reasoning 120e0e0 applied to MainActivity's showHistory: this
     // screen outlives a process death under memory pressure often enough to be worth it, and
     // silently re-collapsing a panel the user opened is the kind of small wrongness nobody
     // reports and everybody notices.
     var showDetail by rememberSaveable { mutableStateOf(false) }
 
-    // Never the raw status.backfillMessage: on the failure path that is the transport exception,
-    // naming the server's hostname, public IP and port. ui/PipelineMessages.kt is the single door
-    // and it is a whitelist, not a scrubber; rule 12. On success the string it returns is three
-    // integers the app counted itself, which is a count, so it goes in the disclosure.
-    val uploaded = when (status.backfillStatus) {
-        TriState.YES -> true
-        TriState.NO -> false
-        TriState.PENDING -> null
-    }
-    val uploadMessage = uploadDetail(uploaded = uploaded, rawMessage = status.backfillMessage)
-    val degraded = health != null && !health.isClean
-
     Column(verticalArrangement = Arrangement.spacedBy(Space.md)) {
         SectionLabel("Capture and delivery")
         InstrumentPanel(modifier = Modifier.fillMaxWidth()) {
-            StatusRow(
-                label = "Upload",
-                state = when (status.backfillStatus) {
-                    TriState.PENDING -> "uploading"
-                    TriState.YES -> "complete"
-                    TriState.NO -> "will retry"
-                },
-                tone = if (uploaded == false) Tone.CAUTION else toneOf(status.backfillStatus),
-                detail = uploadMessage.takeIf { uploaded == false },
-                pulsing = status.backfillStatus == TriState.PENDING,
-            )
-            // Nesting rule unchanged: analysis cannot have an outcome until the upload landed.
-            if (status.backfillStatus == TriState.YES) {
-                StatusRow(
-                    label = "PC analysis",
-                    state = triStateWord(status.analysisStatus, pending = "running"),
-                    tone = toneOf(status.analysisStatus),
-                    detail = status.analysisMessage
-                        .takeIf { status.analysisStatus == TriState.NO && it.isNotBlank() },
-                    pulsing = status.analysisStatus == TriState.PENDING,
-                )
-            }
-
-            if (health != null) {
-                val tone = when {
-                    health.isClean -> Tone.NEUTRAL
-                    health.distinctPidsDropped <= 2 -> Tone.CAUTION
-                    else -> Tone.FAULT
-                }
-                DataRow(
-                    label = "Adapter reads",
-                    value = if (health.isClean) {
-                        "all answered"
-                    } else {
-                        "${health.distinctPidsDropped} " +
-                            "PID${if (health.distinctPidsDropped == 1) "" else "s"} dropped"
-                    },
-                    valueColor = tone.color,
-                    // Glyph only when it carries something. Clean is the normal state and the
-                    // normal state does not get a mark; see rule 5's other half.
-                    leadingGlyph = tone.glyph.takeIf { !health.isClean },
-                    glyphColor = tone.color,
-                )
-            }
-
-            // The counts, off by default, attached directly under the verdict they explain rather
-            // than at the foot of the panel, so the tap and its result are one thought.
-            if (degraded) {
-                Spacer(Modifier.height(Space.xs))
-                SecondaryAction(
-                    text = if (showDetail) "Hide capture detail" else "Capture detail",
-                    onClick = { showDetail = !showDetail },
-                    minHeight = Space.compactTarget,
-                )
-                if (showDetail) {
+            for (item in items) {
+                if (item is CaptureItem.Disclosure) {
+                    // Attached directly under the verdict it explains rather than at the foot of
+                    // the panel, so the tap and its result are one thought.
                     Spacer(Modifier.height(Space.xs))
-                    DataRow("Failed reads", health.failedReads.toString(), valueColor = Mist)
-                    DataRow("Cooldown pauses", health.cooldowns.toString(), valueColor = Mist)
-                    for ((pidTag, count) in health.worstOffenders) {
-                        DataRow(pidTag, count.toString(), valueColor = Mist)
-                    }
-                    Caption(
-                        "A PID this ECU genuinely doesn't support fails every attempt too, so one " +
-                            "PID with a high count is more likely unsupported than a bad adapter. " +
-                            "Several different PIDs failing is the adapter or the Bluetooth link.",
+                    SecondaryAction(
+                        text = if (showDetail) "Hide ${item.label.lowercase()}" else item.label,
+                        onClick = { showDetail = !showDetail },
+                        minHeight = Space.compactTarget,
                     )
-                    uploadMessage.takeIf { uploaded == true }?.let {
+                    if (showDetail) {
                         Spacer(Modifier.height(Space.xs))
-                        Caption("Delivered: $it.")
+                        for (child in item.items) CaptureLine(child)
+                        Spacer(Modifier.height(Space.sm))
                     }
-                    Spacer(Modifier.height(Space.sm))
+                } else {
+                    CaptureLine(item)
                 }
-            }
-
-            // The clean-read confirmation, demoted out of its own section. Achromatic rather than
-            // green: "nothing stored" is the normal state and normal state does not get a colour.
-            if (dtcs != null && dtcs.read && dtcs.isEmpty) {
-                DataRow("Stored trouble codes", "none", valueColor = Chalk)
-            }
-
-            if (crossCheckMpg != null) {
-                DataRow(
-                    "On-device MPG cross-check",
-                    "%.1f".format(crossCheckMpg),
-                    valueColor = AccentMixture,
-                )
-                Spacer(Modifier.height(Space.sm))
-                Caption(
-                    "The hero figure is the PC's, gated on stoichiometric operation. This one is " +
-                        "the phone's: total distance over total fuel burned, ungated. They only " +
-                        "part company when a real share of the drive ran outside closed loop.",
-                )
             }
         }
     }
 }
 
+/** One leaf of the capture block. Never a [CaptureItem.Disclosure]; those do not nest. */
+@Composable
+private fun CaptureLine(item: CaptureItem) {
+    when (item) {
+        is CaptureItem.Stage -> StatusRow(
+            label = item.label,
+            state = item.state,
+            tone = item.tone.asTone,
+            detail = item.detail,
+            pulsing = item.pulsing,
+        )
+
+        is CaptureItem.Line -> {
+            // A null tone means this line has earned no status, so it keeps its emphasis colour and
+            // draws no mark at all. Rule 5's other half: the normal state does not get a glyph.
+            val tone = item.tone?.asTone
+            DataRow(
+                label = item.label,
+                value = item.value,
+                valueColor = tone?.color ?: item.emphasis.color,
+                leadingGlyph = tone?.glyph,
+                glyphColor = tone?.color ?: Ash,
+            )
+        }
+
+        is CaptureItem.Note -> {
+            Spacer(Modifier.height(Space.xs))
+            Caption(item.text)
+        }
+
+        is CaptureItem.Disclosure -> Unit
+    }
+}
+
 /**
- * Stored trouble codes, read once at session start. Each code gets its plain-English meaning from
- * [describeDtc]; a code outside the generic table still gets a structural decode rather than a
- * blank line, and says so.
+ * Stored trouble codes, read once at session start and decoded upstream by `buildTripReport`. One
+ * accent-barred panel per code, the code leading and its plain-English meaning under it, the set it
+ * came from as a `StatusChip`.
  *
  * On the trip report rather than the Setup screen because a DTC is per-session data read from a
  * session that does not exist yet when Setup is on screen. Setup would have to either show the
  * *previous* drive's codes (misleading: the point of a code is that it is current) or start a
  * connection of its own just to populate a panel.
- *
- * Only rendered when there are codes. The clean case, which is nearly every drive, moved to a
- * single `DataRow` in the capture block; see [CaptureAndDeliverySection] for why. Codes present is
- * the highest-consequence statement this screen can make, so when it does render it renders
- * immediately under the hero.
  */
 @Composable
-private fun ColumnScope.DiagnosticCodesSection(dtcs: DtcReport) {
+private fun ColumnScope.DiagnosticCodesSection(codes: List<ReportCode>) {
     Column(verticalArrangement = Arrangement.spacedBy(Space.md)) {
         SectionLabel("Diagnostic codes")
-
-        // Current codes are the lit check-engine lamp, so they are the only fault-toned group.
-        // Pending has not been confirmed across enough drive cycles to light anything, and
-        // permanent is a code already cleared that the ECU is holding until its own monitors
-        // pass; both are real information but neither is "stop driving".
-        DtcGroup("Current", dtcs.current, Tone.FAULT)
-        DtcGroup("Pending", dtcs.pending, Tone.CAUTION)
-        DtcGroup("Permanent", dtcs.permanent, Tone.CAUTION)
-
-        Caption(
-            "Meanings come from the generic SAE code table built into this app. Manufacturer-" +
-                "specific codes (P1xxx and some P3xxx) are decoded structurally only; check them " +
-                "against the vehicle's own service data before acting on one. This app reads " +
-                "codes and never clears them.",
-        )
-    }
-}
-
-@Composable
-private fun DtcGroup(groupLabel: String, codes: List<String>, tone: Tone) {
-    for (code in codes) {
-        val described = describeDtc(code)
-        // A code the library's unverified decode is known to fabricate gets demoted out of the
-        // fault channel entirely: showing "confirmed fault" next to a parser artifact is worse
-        // than showing nothing, and this app cannot yet tell the two apart. See KNOWN_ISSUES.md.
-        val suspect = isSuspectedFramingArtifact(described.code)
-        val codeTone = if (suspect) Tone.UNKNOWN else tone
-        InstrumentPanel(
-            modifier = Modifier.fillMaxWidth(),
-            accent = codeTone.color,
-            contentPadding = PaddingValues(horizontal = Space.lg, vertical = Space.md),
-        ) {
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(Space.md),
+        for (code in codes) {
+            val tone = code.tone.asTone
+            InstrumentPanel(
+                modifier = Modifier.fillMaxWidth(),
+                accent = tone.color,
+                contentPadding = PaddingValues(horizontal = Space.lg, vertical = Space.md),
             ) {
-                GlyphMark(codeTone.glyph, codeTone.color, sizeDp = 14)
-                // The code leads and the meaning follows, not the other way round: the code is
-                // what gets typed into a search, quoted to a mechanic, or matched against a
-                // service bulletin, and it stays the same string in every one of those places.
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(Space.md),
+                ) {
+                    GlyphMark(tone.glyph, tone.color, sizeDp = 14)
+                    // The code leads and the meaning follows, not the other way round: the code is
+                    // what gets typed into a search, quoted to a mechanic, or matched against a
+                    // service bulletin, and it stays the same string in every one of those places.
+                    Text(
+                        code.code,
+                        style = LocalReadoutType.current.small,
+                        color = tone.color,
+                        modifier = Modifier.weight(1f),
+                    )
+                    StatusChip(text = code.group, tone = tone)
+                }
+                Spacer(Modifier.height(Space.xs))
                 Text(
-                    described.code,
-                    style = LocalReadoutType.current.small,
-                    color = codeTone.color,
-                    modifier = Modifier.weight(1f),
-                )
-                StatusChip(text = groupLabel, tone = codeTone)
-            }
-            Spacer(Modifier.height(Space.xs))
-            if (suspect) {
-                Text(
-                    "Probably not a real code: this matches the response-framing artifact the " +
-                        "library's unverified DTC decode is known to produce for this request. " +
-                        "See KNOWN_ISSUES.md.",
+                    code.meaning,
                     style = LocalReadoutType.current.unit,
-                    color = Ash,
-                )
-            } else {
-                Text(
-                    described.meaning,
-                    style = LocalReadoutType.current.unit,
-                    color = if (described.known) Mist else Ash,
+                    color = if (code.known && !code.suspect) Mist else Ash,
                 )
             }
         }
+        Caption(DTC_CAPTION)
     }
 }
 
 // ---------------------------------------------------------------------------
+// Model to medium
+//
+// The report model names categories and tones; this screen resolves them to the running skin's
+// tokens. Composable getters rather than stored values, per rule 15: a colour cached outside
+// composition pins itself to whichever skin happened to load first and silently stops following
+// the setting.
+// ---------------------------------------------------------------------------
 
-private fun toneOf(state: TriState): Tone = when (state) {
-    TriState.PENDING -> Tone.UNKNOWN
-    TriState.YES -> Tone.LIVE
-    TriState.NO -> Tone.FAULT
-}
+private val ReportCategory.accent: Color
+    @Composable @ReadOnlyComposable get() = when (this) {
+        ReportCategory.MOTION -> AccentMotion
+        ReportCategory.MIXTURE -> AccentMixture
+        ReportCategory.THERMAL -> AccentThermal
+    }
 
-private fun triStateWord(state: TriState, pending: String): String = when (state) {
-    TriState.PENDING -> pending
-    TriState.YES -> "complete"
-    TriState.NO -> "failed"
-}
+private val ReportEmphasis.color: Color
+    @Composable @ReadOnlyComposable get() = when (this) {
+        ReportEmphasis.PRIMARY -> Chalk
+        ReportEmphasis.SECONDARY -> Mist
+        ReportEmphasis.ECONOMY -> AccentMixture
+    }
 
-private fun formatDuration(totalSeconds: Long): String {
-    val h = totalSeconds / 3600
-    val m = (totalSeconds % 3600) / 60
-    val s = totalSeconds % 60
-    return if (h > 0) "%d:%02d:%02d".format(h, m, s) else "%d:%02d".format(m, s)
+/** The status channel is the same five states in both media, so this is a rename, not a mapping. */
+private val ReportTone.asTone: Tone
+    get() = when (this) {
+        ReportTone.NEUTRAL -> Tone.NEUTRAL
+        ReportTone.UNKNOWN -> Tone.UNKNOWN
+        ReportTone.LIVE -> Tone.LIVE
+        ReportTone.CAUTION -> Tone.CAUTION
+        ReportTone.FAULT -> Tone.FAULT
+    }
+
+// ---------------------------------------------------------------------------
+
+/**
+ * Hand an exported file to whatever the user picks. Both exports go out the same door: the same
+ * `exports/` directory the FileProvider already publishes, and the same chooser, so the CSV bundle
+ * and the PDF differ only in their MIME type.
+ */
+private fun share(context: Context, file: File, mimeType: String, title: String) {
+    val uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file)
+    val intent = Intent(Intent.ACTION_SEND).apply {
+        type = mimeType
+        putExtra(Intent.EXTRA_STREAM, uri)
+        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+    }
+    context.startActivity(Intent.createChooser(intent, title))
 }
