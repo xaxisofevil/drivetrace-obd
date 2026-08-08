@@ -7,8 +7,8 @@ component vocabulary). Those files are the machine-readable copy of this documen
 independent source of truth; if they disagree, this document is wrong and should be fixed, or the
 code drifted and should be pulled back.
 
-Two of the claims in here are numeric rather than stylistic — the contrast floors in section 3 and
-the category separation section 8 rule 4 depends on — and `docs/skin_check.py` checks both against
+Two of the claims in here are numeric rather than stylistic: the contrast floors in section 3, and
+the category separation section 8 rule 4 depends on. `docs/skin_check.py` checks both against
 every skin that ships. Run it after touching a colour.
 
 ## 1. What this thing actually is
@@ -35,7 +35,7 @@ OBD tool ships dark by default for the same reason: Torque Pro, Car Scanner ELM 
 Harry's LapTimer all default to dark. This is the single biggest reason the app locks to dark
 rather than following the system setting.
 
-**Colin Ware, *Information Visualization: Perception for Design*** — hue is a pre-attentive
+**Colin Ware, *Information Visualization: Perception for Design*.** Hue is a pre-attentive
 channel, so a category can be identified without reading its label, but the channel saturates
 somewhere around eight simultaneous categories. That sets the accent budget at six and forces
 the "which system is this" question to be answered by colour rather than by text.
@@ -288,7 +288,7 @@ Amber's six categories separate further from each other than Instrument's do, wh
 flourish: the tuning was run against these numbers, and `AccentMixture`, `StatusLive`,
 `AccentIgnition` and `AccentAirpath` all moved from their first draft to clear the two floors.
 
-MOTION against CAUTION, the pair the amber ground put at risk, lands at 26.89 ΔE — lower than
+MOTION against CAUTION, the pair the amber ground put at risk, lands at 26.89 ΔE, lower than
 Instrument's 31.96, and twice Instrument's own worst *category* pair. It separates on chroma and
 luminance rather than on hue (C\* 11 against 78), which is the same mechanism that already lets
 Instrument's near-white MOTION sit beside a blue THERMAL 12° away in hue. Rule 5's redundant glyph
@@ -429,7 +429,7 @@ WorkManager rather than setting a boolean at tap time; see the logbook below.
 
 ## 7. Screen layouts
 
-### SetupScreen — pre-flight
+### SetupScreen: pre-flight
 
 Two decisions and one action, so it is two labelled config sections over a pinned action bar, not
 a scrolling column of controls. **Vehicle**, **Adapter**, Start. Nothing else.
@@ -466,7 +466,7 @@ character by character, not prose), and adapters matching the name heuristic are
 now that the Material widget is gone. The `weight(1f)` on the device `LazyColumn` is load-bearing
 and its original comment is preserved verbatim.
 
-### SettingsScreen — standing configuration
+### SettingsScreen: standing configuration
 
 Everything chosen once and then left alone. Two sections today, **Display** and **Automation**,
 both of which were on Setup until idea #13 split them off, and it is the screen idea #12's
@@ -516,7 +516,7 @@ the screen silently resets to the `else` branch when it goes. The manifest's por
 the rotation trigger; the flag stays saveable against process death under memory pressure while a
 long drive's foreground service keeps running. Four screens is still not a navigation framework.
 
-### LoggingScreen — two modes, two layouts
+### LoggingScreen: two modes, two layouts
 
 The same composable serves two genuinely different jobs, so it now branches into two layouts
 rather than one column of rows that changes length.
@@ -688,7 +688,7 @@ a different list:
   `SHORT_TERM_BANK_2 78`, `FUEL_CONSUMPTION_RATE 43`, a three-line caption about unsupported PIDs,
   and then a distance and an MPG that were both already on the screen above it. Compact, correctly
   ranked, and still a QA log for the capture rig sitting in the default first-look state of the
-  screen whose whole job is "how was my MPG" — on every drive, whether or not anything went wrong.
+  screen whose whole job is "how was my MPG," on every drive, whether or not anything went wrong.
 
   **The rule that sorts it, and rule 15 below states it generally: the block carries verdicts, the
   disclosure carries counts.** A verdict is a word that changes what the reader does next
@@ -733,7 +733,7 @@ a different list:
   - **The cross-check now only appears when it is one.** Two figures computed two different ways
     disagreeing is real information; the same figure printed twice is not. The screen passes the
     on-device number down here only when the server also produced one, so on a drive where the
-    server never answered — which is every drive where this block used to be at its longest — the
+    server never answered (which is every drive where this block used to be at its longest), the
     row and its caption both disappear instead of restating the hero at a twentieth the size. That
     was the state of the photographed report: `23.8` at 64sp, then `23.8` again eleven rows down.
   - **The on-device distance row is gone outright, and it was never a cross-check.** Both figures
@@ -784,7 +784,7 @@ analysis". That one is fixed at the source rather than at the screen, because un
 server-authored analysis errors are untouched: those are the useful ones, and they describe the
 server's view rather than this phone's.
 
-### HistoryScreen — logbook
+### HistoryScreen: logbook
 
 One card per drive. MPG is right-aligned in a fixed column so the eye runs straight down the
 numbers and compares drives, which is the only reason to open this screen that is not "why didn't
@@ -915,7 +915,7 @@ Observations from redesigning, roughly in order of how much they would change th
 ones since built say so and keep what building them turned out to require, which is the part worth
 reading. Monetisation potential called out where it exists.
 
-## 1. ~~The live gauge cluster the theme is already built for~~ — built
+## 1. ~~The live gauge cluster the theme is already built for~~ **Built.**
 
 **Built.** `LoggingUiState` now carries `latestValues: Map<String, MeasurementSample>`, keyed on
 `canonicalName`, and the LIVE layout in section 7 is the cluster this entry described: RPM in the
@@ -957,8 +957,8 @@ and a preset is that table plus a stored per-vehicle override.
 ## 2. Exportable trip report as PDF
 
 `CsvExporter` already produces the bundle and the server already computes the full analysis. A
-rendered one-page report — headline MPG, drive profile, anomaly flags, the coolant and trim
-traces — is a small step from data the app already holds, and it is the artifact you actually
+rendered one-page report (headline MPG, drive profile, anomaly flags, the coolant and trim
+traces) is a small step from data the app already holds, and it is the artifact you actually
 hand to a mechanic or attach to a forum post. *Monetisation:* clean free/paid line; unbranded or
 custom-branded export is a standard paid tier for shop use.
 
@@ -972,7 +972,7 @@ product's actual purpose.
 
 ## 4. Shareable drive summary card
 
-A single generated image — route, distance, MPG, notable flags — sized for a forum post or a
+A single generated image (route, distance, MPG, notable flags), sized for a forum post or a
 group chat. Cheap to build on the analysis data that already exists, and it is the organic growth
 loop for an app whose users already congregate in model-specific forums.
 
@@ -1029,9 +1029,9 @@ identities are a palette swap rather than a rewrite. Two corrections, both of wh
 **Routing through a package is not the same as being swappable.** The values did all live in
 `ui/theme/`, and they lived there as top-level `val`s holding literal hex, which is one identity
 rather than a swappable one. The fix was to move the hex into a `Skin` data class and turn each
-token name into a property with a composable getter reading `LocalSkin`. That is genuinely small
-— the refactor changed one line outside `ui/theme/` and `SetupScreen.kt`, and `HistoryScreen.kt`
-and `DriveNote.kt` were not touched at all — but "small" and "already done" are different claims
+token name into a property with a composable getter reading `LocalSkin`. That is genuinely small:
+the refactor changed one line outside `ui/theme/` and `SetupScreen.kt`, and `HistoryScreen.kt`
+and `DriveNote.kt` were not touched at all. But "small" and "already done" are different claims,
 and this document made the second one.
 
 **The expensive part was never the code.** Meeting section 8's rules under a warm ground took
@@ -1044,7 +1044,7 @@ should price the second sentence, not the first.
 The daylight variant (section 3) was the earlier proof of the same idea, and its correction still
 stands and generalised: it needed a `CompositionLocal` carrying a token *mapping* rather than a
 second set of values, because screens name colours by their standard token. `ReadoutPalette` was
-indeed the seam to widen — it is now built from the active skin, so the direct-sun mode works
+indeed the seam to widen: it is now built from the active skin, so the direct-sun mode works
 under any skin without being reimplemented per skin.
 
 *Monetisation, unchanged:* cosmetic packs are among the least objectionable things to charge for,
@@ -1156,7 +1156,7 @@ factory infotainment supports Android Auto for real-vehicle testing when wanted.
 
 ## 11. Cross-vehicle YMM comparison: "is this normal for your car, or just your car"
 
-Every session already records `vehicleProfile` (Year/Make/Model, effectively — see
+Every session already records `vehicleProfile` (Year/Make/Model, effectively; see
 `VehicleProfile.kt`), so once more than one user's data lives on a server, the same "compare
 against a baseline" idea `ANALYSIS_STARTING_POINTS.md` already flags as the single biggest gap
 for one user's own drive history extends naturally to a *community* baseline: how does this
@@ -1289,8 +1289,8 @@ need the same rescue.
 **Split, not just relabel:** Setup keeps exactly the two pre-flight decisions and the pinned
 Start action, nothing else. Everything else, moves to a new Settings destination: display
 (daylight contrast, skin picker), automation (the MacroDroid token and its copy action), and
-whatever idea #12's auto-stop toggle and idea #5's per-vehicle preferences eventually need too
-— a fourth thing has already outgrown the guess of "just these three." A gear icon or similar in
+whatever idea #12's auto-stop toggle and idea #5's per-vehicle preferences eventually need too.
+A fourth thing has already outgrown the guess of "just these three." A gear icon or similar in
 `HeaderBar`'s trailing slot, next to the existing Logbook button, is the obvious entry point,
 following the nav pattern `MainActivity.kt` already uses for Logbook rather than introducing a
 bottom nav bar (rule 10 still holds: three-going-on-four screens don't need a navigation

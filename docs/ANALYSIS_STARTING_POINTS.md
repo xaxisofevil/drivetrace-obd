@@ -27,7 +27,7 @@ diagnostic hypotheses this data is meant to distinguish between:
   a change in how the trip computer itself estimates MPG
 - **Coincident with an oil service**: verify oil level/viscosity, that the
   airbox/MAF/intake wasn't disturbed, and no undertray/brake/tire issue
-  happened around the same time — the oil brand itself is very unlikely to
+  happened around the same time; the oil brand itself is very unlikely to
   explain ~5 MPG
 
 `anomaly_flags()` and `vehicle_awake_flags()` in `analyze_drive.py` already
@@ -41,7 +41,7 @@ conclusion, it's designed to be a lead, not an answer.
 Everything in `analyze_drive.py`, run either manually or automatically via
 `analysis_worker.py`:
 
-- `build_snapshot` — 1-second-grid as-of join of every PID, with an
+- `build_snapshot`: 1-second-grid as-of join of every PID, with an
   `age_s_<key>` column showing how stale each value was when carried
   forward (a PID sampled every 20s will show up to ~20s of staleness; don't
   mistake that for the value having "not changed")
