@@ -14,6 +14,7 @@ import com.ericbarone.drivetrace.service.BackfillRetryWorker
 import com.ericbarone.drivetrace.service.DriveLoggingService
 import com.ericbarone.drivetrace.service.LoggingStatus
 import com.ericbarone.drivetrace.service.LoggingUiState
+import com.ericbarone.drivetrace.ui.CompareScreen
 import com.ericbarone.drivetrace.ui.DisplaySettings
 import com.ericbarone.drivetrace.ui.HistoryScreen
 import com.ericbarone.drivetrace.ui.LoggingScreen
@@ -48,13 +49,29 @@ class MainActivity : ComponentActivity() {
                 var showHistory by rememberSaveable { mutableStateOf(false) }
                 // Same pattern, same reason, for the Settings destination the header's gear opens.
                 var showSettings by rememberSaveable { mutableStateOf(false) }
+                // The two drives the logbook handed over, or null for "not comparing anything".
+                // Two Longs rather than a route object because rule 10 still holds: five screens
+                // do not need a navigation framework, they need one more `when` branch.
+                var compareA by rememberSaveable { mutableStateOf<Long?>(null) }
+                var compareB by rememberSaveable { mutableStateOf<Long?>(null) }
+                val comparing = compareA != null && compareB != null
                 when {
                     status.sessionId != null -> LoggingScreen(
                         status = status,
                         onStop = { note -> startService(DriveLoggingService.stopIntent(this, note)) },
                         onNewSession = { LoggingStatus.state.value = LoggingUiState() },
                     )
-                    showHistory -> HistoryScreen(onBack = { showHistory = false })
+                    // Ahead of the logbook branch, and `showHistory` deliberately stays true
+                    // underneath, so Back off this screen lands on the list that opened it.
+                    comparing -> CompareScreen(
+                        sessionIdA = compareA!!,
+                        sessionIdB = compareB!!,
+                        onBack = { compareA = null; compareB = null },
+                    )
+                    showHistory -> HistoryScreen(
+                        onBack = { showHistory = false },
+                        onCompare = { a, b -> compareA = a; compareB = b },
+                    )
                     showSettings -> SettingsScreen(onBack = { showSettings = false })
                     else -> SetupScreen(
                         onStartLogging = { address, vehicleProfile ->
