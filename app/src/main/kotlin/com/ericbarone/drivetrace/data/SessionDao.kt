@@ -36,6 +36,23 @@ interface SessionDao {
     @Query("SELECT * FROM measurements WHERE sessionId = :sessionId ORDER BY sequence ASC")
     suspend fun getMeasurements(sessionId: Long): List<MeasurementEntity>
 
+    /** Just the PIDs a caller actually needs, ordered on the timeline they will be joined on.
+     * A long drive logs tens of thousands of measurement rows, and reading all of them to keep
+     * six canonical names is the scan that makes a screen feel broken; same argument as
+     * getEventsOfTypes below. Implausible and unparseable rows are dropped here rather than in
+     * Kotlin, since every caller of this wants numbers it can average. Used by the drive
+     * comparison, see DriveComparison.kt. */
+    @Query(
+        "SELECT * FROM measurements WHERE sessionId = :sessionId " +
+            "AND canonicalName IN (:canonicalNames) " +
+            "AND qualityFlag = 'OK' AND valueNumeric IS NOT NULL " +
+            "ORDER BY elapsedNs ASC",
+    )
+    suspend fun getMeasurementsOfTypes(
+        sessionId: Long,
+        canonicalNames: List<String>,
+    ): List<MeasurementEntity>
+
     @Query("SELECT * FROM locations WHERE sessionId = :sessionId ORDER BY elapsedNs ASC")
     suspend fun getLocations(sessionId: Long): List<LocationEntity>
 
