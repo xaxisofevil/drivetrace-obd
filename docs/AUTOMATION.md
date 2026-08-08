@@ -23,7 +23,7 @@ same recipe with different strings.
 | Extra 1 name | `command` |
 | Extra 1 value | `start` or `stop` (string; case and surrounding spaces are ignored) |
 | Extra 2 name | `token` |
-| Extra 2 value | the token shown on DriveTrace's Setup screen (string) |
+| Extra 2 value | the token shown on DriveTrace's Settings screen (string) |
 
 Both extras are required. Every other detail of the session, which adapter to
 connect to and which vehicle profile to poll, comes from the app's own saved
@@ -51,7 +51,8 @@ W DriveTraceAutomation: start ignored: no adapter has ever been selected on this
 
 ### 2. Copy the token
 
-Setup screen, **AUTOMATION** section. Press **Copy**; the token goes to the
+Settings screen (the gear in the Setup screen's header), **AUTOMATION** section.
+Press **Copy**; the token goes to the
 clipboard ready to paste into the macro. It is generated on this device the
 first time that screen is opened and does not change afterwards. Clearing the
 app's data regenerates it, at which point every macro holding the old value
@@ -111,7 +112,7 @@ Bluetooth from the list.
 | Extra 1 name | `command` |
 | Extra 1 value | `start` |
 | Extra 2 name | `token` |
-| Extra 2 value | paste the token from the Setup screen |
+| Extra 2 value | paste the token from the Settings screen |
 
 Leave the extras as plain strings; do not mark them as integers or booleans.
 
@@ -193,7 +194,7 @@ nothing else in the app uses that tag.
 |---|---|
 | `start accepted, dispatched to DriveLoggingService.` | Working as intended. |
 | `Rejected "start": no 'token' extra.` | The macro is missing the second extra. |
-| `Rejected "start": 'token' does not match...` | Wrong or stale token. Re-copy it from the Setup screen. Neither the sent nor the expected token is ever logged. |
+| `Rejected "start": 'token' does not match...` | Wrong or stale token. Re-copy it from the Settings screen. Neither the sent nor the expected token is ever logged. |
 | `Authenticated but ignored: unknown command "..."` | The `command` extra is something other than `start` or `stop`. |
 | `start ignored: no adapter has ever been selected...` | Step 1 above was skipped. |
 | `start ignored: a session is already running` | A drive is already being logged; the second start is a no-op, not an error. |

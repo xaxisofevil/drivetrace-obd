@@ -173,7 +173,7 @@ supplying five colours and no code at all.
 
 ## 3.5 Skins
 
-Alternate visual identities, selected on SetupScreen and persisted as `instrument_skin` in the
+Alternate visual identities, selected on SettingsScreen and persisted as `instrument_skin` in the
 existing `drivetrace_prefs` store. This is idea #8 in the feature list below, built.
 
 ### The mechanism, and why it is this one
@@ -364,7 +364,8 @@ is a design-system change and belongs in this document.
 |---|---|
 | `InstrumentPanel` | Bordered container with an optional left accent bar carrying category or status |
 | `SectionLabel` | Uppercase legend with a rule running to the right edge, binding the label to what it names |
-| `HeaderBar` | Wordmark, optional back affordance, one optional action, over a hairline. **Not** a `TopAppBar`. |
+| `HeaderBar` | Wordmark, optional back affordance, a trailing `RowScope` action slot, over a hairline. **Not** a `TopAppBar`. |
+| `IconAction` | A drawn glyph as a 44dp tappable target. The header's back chevron and Setup's Settings gear. Carries a TalkBack label, since a glyph has no text of its own. |
 | `HeroReadout` | 64sp numeral, separate unit, optional caption. One per screen state. |
 | `MetricTile` | The secondary band. Roughly a third the hero's weight. |
 | `DataRow` | Dense label/value line. Where Tier C data belongs. |
@@ -379,10 +380,14 @@ is a design-system change and belongs in this document.
 | `Caption` | Methodology caveats and small print |
 | `PrimaryAction` / `SecondaryAction` / `ActionBar` | 56dp full-width primary in a pinned bar. `SecondaryAction` also carries a `busy` state for work that outlives the tap |
 | `EmptyState` | Says what to do next, not only what is missing |
-| `GlyphMark` | The five drawn glyphs (tick, bang, cross, dash, dots, chevron) |
+| `GlyphMark` | The drawn glyphs (tick, bang, cross, dash, dots, chevron, gear) |
 
-Glyphs are drawn with `Canvas` rather than pulled from `material-icons`. Six shapes do not
+Glyphs are drawn with `Canvas` rather than pulled from `material-icons`. Seven shapes do not
 justify an extra dependency and a few hundred KB of vector assets.
+
+**The gear is the only glyph made of more than two marks,** a stroked hub and six radial teeth, and
+it draws at a thinner weight than the rest of the set: at the 0.14 stroke every other glyph uses,
+the teeth close into a solid disc at the 20dp the header renders it at.
 
 **How the daylight boost reaches the hero without touching any screen.** `ReadoutPalette`
 (`ui/theme/Color.kt`) is a map from a standard token to its daylight twin plus the two greys the
@@ -426,39 +431,90 @@ WorkManager rather than setting a boolean at tap time; see the logbook below.
 
 ### SetupScreen — pre-flight
 
-Two decisions, two display settings, one copyable value and one action, so it is four labelled
-config sections over a pinned action bar, not a scrolling column of controls.
+Two decisions and one action, so it is two labelled config sections over a pinned action bar, not
+a scrolling column of controls. **Vehicle**, **Adapter**, Start. Nothing else.
 
-The **Display** section holds both display settings, skin first and the daylight toggle under it,
-in that order because the skin is the outer of the two: it decides what the palette is, the toggle
-decides how much luminance the hero spends out of it. The **skin picker** is a plain loop over
-`SkinId.entries` emitting the same `SelectableRow` the vehicle picker above it uses, so a third
-skin is one entry in `SkinId` and nothing on this screen. The **daylight toggle** is a `ToggleRow`,
-same panel-is-the-target treatment as `SelectableRow` with `Role.Switch` and a square check mark
-rather than the round single-choice mark, deliberately not a Material `Switch` (a 52x32dp sliding
-pill is the one shape this system rules out everywhere else). Both sit on the pre-flight screen
-rather than behind a settings screen for the same reason: the question the toggle answers is "is it
-sunny right now", asked while sitting in the car about to press Start, and a settings screen for
-two rows is a navigation framework this app spent section 10's rule avoiding.
+It briefly was something else, and the correction is idea #13, built. A Display section (skin
+picker, daylight toggle) and an Automation section (the MacroDroid token and its Copy action)
+accumulated here across one evening, because this was the only screen in the app with anywhere to
+put standing configuration. That put four config sections and a growing scroll between opening the
+app and the one button a driver opened it for, which is the trip report's own problem transplanted
+onto the screen that can least afford it. Both sections moved to `SettingsScreen` below. **The test
+for whether something belongs here is whether it is answered in the car, engine off, about to press
+Start.** Which car and which adapter are. Which skin is not, and the daylight toggle is the
+interesting near-miss: it was argued onto this screen on the grounds that "is it sunny right now"
+genuinely is a pre-flight question. That argument was right about the question and wrong about the
+cost, since the section it justified is what let the next two settings land here without anyone
+having to make a case at all.
 
-The **Automation** section is one panel: the token an automation app has to send back (see
-[AUTOMATION.md](AUTOMATION.md)) in the `mono` style, because it is an identifier to compare
-character by character against what got pasted into MacroDroid, and one `SecondaryAction` to copy
-it. No new component; an `InstrumentPanel` with a value and an action, which is what the rest of
-this screen already is. It sits above the adapter list rather than below it because that list owns
-`weight(1f)` and anything after it competes with the scroll area the Start button depends on. It is
-shown in full rather than masked: masking is theatre next to a Copy button on an unlocked phone,
-and the whole reason to display it is to check it against the macro.
+The header carries the two destinations in `HeaderBar`'s trailing slot: a gear `IconAction` for
+Settings, then the existing **Logbook** `SecondaryAction`. That slot is a `RowScope` lambda and
+always was, so two actions needed no change to `HeaderBar` and no second header component; a screen
+wanting a third is building an overflow menu, which is the thing `HeaderBar` exists to not have.
+The gear is a bare glyph rather than a second outlined button because two word-buttons side by side
+is most of a 44dp header, and Settings is the rarer destination of the two: it gets the icon,
+Logbook keeps its label.
 
-The sections cost the bonded-device list a few rows of height, which it absorbs: the list's
-`weight(1f)` caps it to the space left and it scrolls internally, which is what that weight has
-always been there to do. Bonded devices are `SelectableRow` panels where the whole
+Losing the two sections gives the bonded-device list back the height they cost it, which it had
+been absorbing: the list's `weight(1f)` caps it to whatever space is left and it scrolls
+internally, which is what that weight has always been there to do. Bonded devices are
+`SelectableRow` panels where the whole
 panel is the target rather than a 20dp `RadioButton` circle, selection is carried by accent bar +
 border + fill simultaneously, the MAC address is monospaced (it is an identifier to compare
 character by character, not prose), and adapters matching the name heuristic are marked `LIKELY`.
 `role = Role.RadioButton` on the selectable preserves the single-choice semantics TalkBack needs
 now that the Material widget is gone. The `weight(1f)` on the device `LazyColumn` is load-bearing
 and its original comment is preserved verbatim.
+
+### SettingsScreen — standing configuration
+
+Everything chosen once and then left alone. Two sections today, **Display** and **Automation**,
+both of which were on Setup until idea #13 split them off, and it is the screen idea #12's
+auto-stop toggle and idea #5's per-vehicle preferences land on rather than growing Setup a fifth
+section.
+
+**No pinned `ActionBar`, and it is the only screen in the app without one.** Nothing here is an
+action to commit: every control takes effect on the tap and writes straight through to
+SharedPreferences, so there is no state to confirm and no button to reach. Rule 8 is about primary
+actions never scrolling away, and a screen with no primary action does not acquire one to be
+consistent. The way out is the header's back affordance, the same `onBack` `HistoryScreen` uses,
+reached the same way (see below).
+
+**The whole column scrolls; nothing owns `weight(1f)`.** Setup's adapter list needs that weight
+because a Start button below it must never be pushed off screen. There is nothing below this
+content, so a fourth section should lengthen the scroll rather than squeeze whatever section
+happens to be a list.
+
+The **Display** section holds both display settings, skin first and the daylight toggle under it,
+in that order because the skin is the outer of the two: it decides what the palette is, the toggle
+decides how much luminance the hero spends out of it. The **skin picker** is a plain loop over
+`SkinId.entries` emitting the same `SelectableRow` Setup's vehicle picker uses, so a third skin is
+one entry in `SkinId` and nothing on this screen. The **daylight toggle** is a `ToggleRow`, same
+panel-is-the-target treatment as `SelectableRow` with `Role.Switch` and a square check mark rather
+than the round single-choice mark, deliberately not a Material `Switch` (a 52x32dp sliding pill is
+the one shape this system rules out everywhere else).
+
+Both row types live in `ui/ConfigRows.kt` rather than in either screen, because both screens that
+ask the user to choose something now use them. They are deliberately **not** in
+`ui/components/Instrument.kt`: they are a composition of `InstrumentPanel` and `Text` specific to
+configuration screens, and section 6 is a list of container types, not of every composable two
+screens happen to share. `ui/DriveNote.kt` is the same shape of decision.
+
+The **Automation** section is one panel: the token an automation app has to send back (see
+[AUTOMATION.md](AUTOMATION.md)) in the `mono` style, because it is an identifier to compare
+character by character against what got pasted into MacroDroid, and one `SecondaryAction` to copy
+it. No new component; an `InstrumentPanel` with a value and an action. It is shown in full rather
+than masked: masking is theatre next to a Copy button on an unlocked phone, and the whole reason to
+display it is to check it against the macro. **The screen is also what generates the token:** the
+first read is the write, so it exists from the first moment anyone could want to copy it and never
+before, which is why nothing else in the app reads it into being.
+
+**Navigation is one more `when` branch, per rule 10.** `MainActivity` gains a `showSettings` flag
+alongside `showHistory`, and it is `rememberSaveable` for the reason KNOWN_ISSUES.md records
+against the Logbook: plain `remember` does not survive Activity recreation or process death, and
+the screen silently resets to the `else` branch when it goes. The manifest's portrait lock removes
+the rotation trigger; the flag stays saveable against process death under memory pressure while a
+long drive's foreground service keeps running. Four screens is still not a navigation framework.
 
 ### LoggingScreen — two modes, two layouts
 
@@ -813,7 +869,9 @@ again, and it is where "that was the one with the new tyres" actually occurs to 
 7. Elevation is a hairline border, not a shadow.
 8. Primary actions are 56dp and live in a pinned `ActionBar`, never at the end of a scroll.
 9. Only `StatusDot` animates.
-10. No `TopAppBar`, no hamburger, no bottom nav. Three screens do not need a navigation framework.
+10. No `TopAppBar`, no hamburger, no bottom nav. Four screens do not need a navigation framework;
+    a new destination is a `rememberSaveable` flag and one more `when` branch in `MainActivity`,
+    and its entry point is an action in `HeaderBar`'s trailing slot.
 11. A colour a hero readout can carry registers a daylight twin on the `Skin`. The map
     `Skin.readoutPalette` builds is the whole daylight mode; a token missing from it silently
     renders at night luminance in direct sun.
@@ -1037,9 +1095,9 @@ what got deliberately left out of it, is the useful part.
   costs nothing, interrupts nobody, and leaves the note exactly where it already was.
 - ~~**A daylight-readable high-contrast mode.**~~ **Built,** and see section 3's daylight table
   for the tokens and section 6 for the mechanism. Still not a light theme: `Ink` stays the ground
-  in both modes and only `HeroReadout` reads the boosted palette. Toggle lives on SetupScreen
-  under a **Display** section, persisted as `high_contrast_daylight` in the existing
-  `drivetrace_prefs` store. **Since generalised:** the twins moved onto the `Skin` and
+  in both modes and only `HeroReadout` reads the boosted palette. Toggle lives on SettingsScreen
+  under a **Display** section (it shipped on SetupScreen and moved with idea #13), persisted as
+  `high_contrast_daylight` in the existing `drivetrace_prefs` store. **Since generalised:** the twins moved onto the `Skin` and
   `Skin.readoutPalette` builds the mapping, so the boost is relative to the running skin rather
   than to the palette it was first written against. Nothing about the toggle, its storage, or
   `HeroReadout` changed to make that true, which was the point of building it as a token mapping
@@ -1185,7 +1243,35 @@ timestamp, reset on any reading meaningfully above idle. On threshold, call the 
 stop path `ACTION_STOP` already uses, `stopSession()`, directly, no need to round-trip through
 Android's intent system for a self-triggered stop. Not yet built.
 
-## 13. A real Settings screen (Setup is outgrowing its own brief)
+## 13. ~~A real Settings screen (Setup is outgrowing its own brief)~~ **Built.**
+
+**Built,** as described, the same night the entry was written. See section 7 for both screens as
+they now stand. Setup is back to vehicle, adapter, Start; `SettingsScreen` holds Display and
+Automation; the entry point is a gear `IconAction` in `HeaderBar`'s trailing slot next to Logbook;
+`MainActivity` gained one `rememberSaveable` flag and one `when` branch, as predicted.
+
+Three things building it turned out to involve, which are the parts worth keeping:
+
+- **The trailing slot already took two actions.** It is typed `@Composable (RowScope.() -> Unit)?`,
+  so the gear and the Logbook button are just two children of the header's own `Row`. The entry
+  guessed "a gear icon or similar in `HeaderBar`'s trailing slot" without knowing whether that slot
+  was singular, and the honest answer was that the signature never said one thing, the call sites
+  had only ever put one thing in it. What it did cost was a `GEAR` glyph, which is the first one in
+  the set made of more than two marks and the first to need its own stroke weight, and an
+  `IconAction` component, because the header's back chevron was a hand-rolled 44dp target and a
+  second copy of it is how two touch targets drift apart.
+- **The split moved two composables neither screen owns any more.** `SelectableRow` and `ToggleRow`
+  were private to `SetupScreen.kt`; the skin picker uses the first and the daylight toggle is the
+  only user of the second. They went to `ui/ConfigRows.kt` rather than being duplicated or left
+  behind for the new screen to import out of the old one. That is the seam a "settings screen" work
+  item never mentions and always has.
+- **The near-miss is the daylight toggle, and it is the useful lesson.** Its case for living on
+  Setup was real: "is it sunny right now" genuinely is asked in the car about to press Start. The
+  case was still wrong, because the section it justified is what made the skin picker and then the
+  automation token look like they belonged there too. A screen's brief erodes one defensible
+  exception at a time.
+
+The original entry follows, unchanged.
 
 `SetupScreen` was scoped in section 7 as "two decisions and one action": which vehicle, which
 adapter, Start. That was true when it shipped. It is no longer true: tonight alone added a
@@ -1210,5 +1296,5 @@ following the nav pattern `MainActivity.kt` already uses for Logbook rather than
 bottom nav bar (rule 10 still holds: three-going-on-four screens don't need a navigation
 framework, they need one more `when` branch).
 
-Not yet built. Worth doing before a fifth setting shows up and the decision gets made by
-inertia instead of on purpose.
+Worth doing before a fifth setting shows up and the decision gets made by inertia instead of on
+purpose. (It was, that same night; the note at the top of this entry is what it took.)

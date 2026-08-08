@@ -263,7 +263,7 @@ one layer reads them now.
 | `vehicle_profile` | string | `VehicleProfile` enum name, picks the PID catalog |
 | `high_contrast_daylight` | bool | Daylight readout boost, default false. Not a light theme; see DESIGN_SYSTEM.md section 3 |
 | `instrument_skin` | string | `SkinId` enum name; an unknown value falls back to the default skin |
-| `automation_token` | string | Shared secret an automation app presents to `AutomationReceiver`. Generated on first read (10 `SecureRandom` bytes as hex), never in the APK, no Room involvement. Shown and copyable on the Setup screen; see AUTOMATION.md |
+| `automation_token` | string | Shared secret an automation app presents to `AutomationReceiver`. Generated on first read (10 `SecureRandom` bytes as hex), never in the APK, no Room involvement. Shown and copyable on the Settings screen; see AUTOMATION.md |
 
 `last_device_address` is worth one extra note now that it has a second reader:
 `SetupScreen` writes it when **Start logging** is tapped, not when a device is
