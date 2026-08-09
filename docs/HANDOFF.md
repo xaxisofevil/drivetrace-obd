@@ -25,8 +25,8 @@ up cleanly instead of re-deriving context or, worse, redoing work.
 
 ## Current state
 
-**Last commit:** `a3e4c22` "Stop zeroing fuel burned during
-non-stoichiometric operation" (2026-08-08)
+**Last commit:** `942b808` "Add nine Subaru enhanced (Mode 22) PIDs, led
+by injector pulse width" (2026-08-09)
 
 **On the phone right now:** a debug build of `daeef77`, installed and
 confirmed working (back-button navigation and Delete Trip both verified live
@@ -229,3 +229,42 @@ note.
   shared by the server's live analysis path and any manual
   `python analyze_drive.py` run against an exported CSV bundle or the
   PC logger). Nothing rebuilt or reinstalled on the phone.
+
+### 2026-08-09 (Claude Code)
+
+- Eric asked ChatGPT to find Subaru-equivalent manufacturer-specific
+  (Mode 22) enhanced PIDs, matching the Mazda catalog's depth, and
+  specifically hoping for something closer to direct fuel data than
+  the MAF reconstruction. ChatGPT found a genuinely strong source: a
+  real capture of a 2014 FB25 Forester ECU's own supported-DID bitmap
+  (same engine code, same year as the Outback, not the same vehicle).
+  Verified the math and checked for collisions before implementing,
+  same discipline as the Mazda enhanced-PID work; caught and fixed two
+  real bugs of my own along the way (bare `Int` arithmetic feeding a
+  `%f` format specifier, which throws at runtime; a naming collision
+  where "Target Engine Speed" would have silently matched the existing
+  vehicle-speed keyword pattern). Full account in KNOWN_ISSUES.md's
+  "Nine manufacturer-specific enhanced PIDs" entry.
+- New file `SubaruEnhancedCommands.kt`, wired into `SubaruPidCatalog.kt`
+  (four in Tier B: injector pulse width, learned ignition timing, AVCS
+  cam angle both banks; five in Tier C: alternator/battery telemetry,
+  target RPM), plausibility clamps added to `PidScheduler.kt`, and
+  `PID_KEYWORDS` entries added to `analyze_drive.py` including a fix
+  to the existing `rpm` pattern to stop it from also matching the new
+  Target Engine RPM PID. Build is clean (`assembleDebug` succeeded).
+  Server restarted with the updated `analyze_drive.py` and
+  regression-checked against the drive fixed earlier tonight (still
+  30.4 MPG, no change), so the new PID_KEYWORDS entries didn't disturb
+  anything already working.
+- **Fuel Injector Pulse Width (0x2210A3) is captured but not yet used
+  for anything.** It's a pulse-width number, not a fuel-mass number;
+  turning it into one needs this specific injector's flow rate and
+  injection frequency, which nobody has yet. Don't expect a second MPG
+  estimate to exist until that conversion gets built, this only gets
+  the raw signal onto the phone and into Room/CSV/exports.
+- **Not installed on the phone** (disconnected all session). Whoever
+  picks this up needs to `adb devices` to get the current wireless
+  address, then install `app/build/outputs/apk/debug/app-debug.apk`
+  before any of this can actually be tested on a real drive. Nothing
+  about these nine PIDs is confirmed against the real Outback yet,
+  only against a different-but-same-engine Forester's declared support.
