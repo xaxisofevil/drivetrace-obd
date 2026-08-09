@@ -42,6 +42,14 @@ import com.github.eltonvs.obd.command.control.MILOnCommand
  * don't assume the Mazda's results (or this catalog's PID choices) transfer. VIN is included
  * here, unlike MazdaPidCatalog: there's no evidence yet that it fails on this vehicle, removing
  * it was a Mazda-specific finding, not a project-wide default.
+ *
+ * Also carries nine manufacturer-specific (Mode 22) PIDs, see SubaruEnhancedCommands.kt: fuel
+ * injector pulse width (the strongest lead yet for a second, independent fuel-consumption signal
+ * to check the MAF-based estimate against, since the standard Engine Fuel Rate PID returns NO
+ * DATA on every session logged so far), learned ignition timing, intake AVCS cam angle both
+ * banks, and alternator/battery telemetry. Corroborated against a real capture of a same engine
+ * code, same model year Forester's supported-DID bitmap, stronger evidence than the Mazda
+ * catalog's enhanced PIDs had, but still not confirmed against this exact Outback.
  */
 object SubaruPidCatalog : PidCatalog {
     override fun tierA(): List<() -> ObdCommand> =
@@ -69,6 +77,14 @@ object SubaruPidCatalog : PidCatalog {
             { SafeFuelConsumptionRateCommand() }, // ditto FuelConsumptionRateCommand
             { TimingAdvanceCommand() },
             { SafeAbsoluteLoadCommand() }, // library's AbsoluteLoadCommand has the unbounded-byte bug too
+            // Manufacturer-specific (Mode 22), community-sourced but corroborated against a real
+            // ECU capture, see SubaruEnhancedCommands.kt. These four move on the same timescale
+            // as combustion itself (fueling, knock correction, cam timing), so they belong
+            // alongside the rest of Tier B, not the slower Tier C signals below.
+            { FuelInjectorPulseWidthCommand() },
+            { LearnedIgnitionTimingCommand() },
+            { IntakeVvtAdvanceAngleRightCommand() },
+            { IntakeVvtAdvanceAngleLeftCommand() },
         )
 
     override fun tierC(): List<() -> ObdCommand> =
@@ -82,6 +98,13 @@ object SubaruPidCatalog : PidCatalog {
             { FuelLevelCommand() },
             { CatalystTemperatureBank1Sensor1Command() }, // not in the library; checks for exhaust restriction
             { OilTemperatureCommand() }, // not in the library; complements coolant temp for the warm-up hypothesis
+            // Same source as Tier B's four above (see SubaruEnhancedCommands.kt), but these move
+            // on the electrical system's slower timescale, not combustion's, so Tier C fits them.
+            { AlternatorDutyCommand() },
+            { BatteryCurrentCommand() },
+            { BatteryTemperatureCommand() },
+            { AlternatorControlModeCommand() },
+            { TargetEngineRpmCommand() },
         )
 
     override fun oneTimeReadOnly(): List<() -> ObdCommand> =

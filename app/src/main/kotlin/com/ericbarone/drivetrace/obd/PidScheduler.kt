@@ -85,6 +85,20 @@ private val PLAUSIBLE_RANGES: Map<String, ClosedFloatingPointRange<Double>> = ma
     "Distance traveled since codes cleared" to 0.0..100_000.0,
     "Engine Runtime" to 0.0..86_400.0,
     "Fuel Level" to 0.0..100.0,
+    // Community-sourced Mode 22 parameters, Subaru-only, see SubaruEnhancedCommands.kt for the
+    // real uncertainty behind these (corroborated against a real ECU capture, but a Forester's,
+    // not this exact Outback's). Formula's own extremes noted per entry; AVCS uses a physically
+    // chosen range rather than the formula's raw byte-math bounds (-50..205), which the source
+    // itself doesn't claim is a real cam-angle limit.
+    "Fuel Injector Pulse Width" to 0.0..65.28, // formula's own max (255*0.256)
+    "Learned Ignition Timing" to -64.0..63.5, // formula's own extremes
+    "Intake VVT Advance Angle Right" to -20.0..60.0, // physically chosen, not the formula's raw bounds
+    "Intake VVT Advance Angle Left" to -20.0..60.0,
+    "Alternator Duty" to 0.0..100.0,
+    "Battery Current" to -100.0..100.0,
+    "Battery Temperature" to -20.0..60.0,
+    "Alternator Control Mode" to 0.0..5.0,
+    "Target Engine RPM" to 0.0..10_000.0,
 )
 
 /**

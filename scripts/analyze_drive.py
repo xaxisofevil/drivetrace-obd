@@ -57,7 +57,11 @@ import pandas as pd
 # an exact lookup table, so the script degrades to "column missing" instead of
 # silently mismatching if the real strings differ slightly.
 PID_KEYWORDS: dict[str, list[str]] = {
-    "rpm": [r"\brpm\b"],
+    # Negative lookbehind excludes "Target Engine RPM" (a new Subaru enhanced PID, see
+    # target_rpm below): the bare \brpm\b pattern would otherwise match it too as a substring,
+    # confirmed directly with the same regex before fixing, silently mixing the ECU's target
+    # into the actual-RPM column. Same class of bug as map_kpa's "desired" exclusion below.
+    "rpm": [r"(?<!target engine )\brpm\b"],
     "speed_kmh": [r"vehicle speed", r"\bspeed\b"],
     "load_pct": [r"engine load", r"calculated load"],
     "maf_gs": [r"mass air flow", r"\bmaf\b"],
@@ -94,6 +98,19 @@ PID_KEYWORDS: dict[str, list[str]] = {
     "turbo_b_inlet_kpa": [r"turbocharger b compressor inlet pressure"],
     "knock_retard_deg": [r"knock retard"],
     "knock_control_pct": [r"knock control system"],
+    # Community-sourced Mode 22 parameters, Subaru-only, see SubaruEnhancedCommands.kt.
+    # injector_pw_ms is the one worth watching closest: the first non-MAF-derived fuel signal
+    # this project has ever captured, see add_derived_columns for why nothing downstream
+    # converts it to a fuel-mass number yet.
+    "injector_pw_ms": [r"fuel injector pulse width"],
+    "learned_ignition_timing_deg": [r"learned ignition timing"],
+    "avcs_right_deg": [r"intake vvt advance angle right"],
+    "avcs_left_deg": [r"intake vvt advance angle left"],
+    "alternator_duty_pct": [r"alternator duty"],
+    "battery_current_a": [r"battery current"],
+    "battery_temp_c": [r"battery temp"],
+    "alternator_mode": [r"alternator control mode"],
+    "target_rpm": [r"target engine rpm"],
 }
 
 STOICH_AFR_GASOLINE = 14.7  # air:fuel mass ratio at lambda = 1

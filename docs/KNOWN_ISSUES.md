@@ -1102,3 +1102,92 @@ so it can't clobber real metadata that got there first).
 a named `ValueError` instead of falling through to the bare
 `sess_row.iloc[0]` `IndexError`, cheap insurance for whatever the next
 undiscovered way to reach a missing row turns out to be.
+
+## Nine manufacturer-specific enhanced PIDs added (Subaru only, substantially untested)
+
+Prompted by the fuel-rate investigation above: asked for a Subaru-specific
+search for enhanced PIDs the way `MazdaEnhancedCommands.kt` already has for
+the Mazda, specifically hoping for something closer to a direct fuel
+signal than the MAF-based reconstruction. Source: ParsePID
+(github.com/giotec/ParsePID)'s `Subaru_mode22_def.csv`, cross-checked
+against that same repo's `2014 Forester FB25 non-Turbo Responses.txt`, a
+real capture of a 2014 FB25 NA/CVT ECU's own "supported DIDs" bitmap.
+That capture is meaningfully stronger evidence than the Mazda CSV had:
+it's not a spreadsheet of plausible-looking definitions, it's a real ECU
+of the same engine code and model year as this project's Outback
+confirming these specific DIDs exist on it. Still a Forester, not this
+exact Outback; treat as strong, not certain.
+
+**Every formula hand-verified against its own byte-math extremes before
+implementing** (same discipline the Mazda file used, for the same reason:
+that file's Knock Control System catch was a real, previously-confirmed
+failure mode for community-sourced PID data). All nine checked out
+internally consistent, no equivalent of that earlier mismatch.
+
+**Real bug caught and fixed before it ever ran:** wrote several of the new
+handlers using bare `Int` arithmetic (`bytesToInt(...) - 50`, etc.) feeding
+directly into `"%.1f".format(...)`, which throws at runtime in Kotlin
+(`%f` requires a floating-point type). Every existing command in
+`MazdaEnhancedCommands.kt` avoids this by ending its arithmetic in a
+Float-typed operation (`* 8f`, `/ 32f`); the ones here that had no natural
+float-promoting operation needed an explicit `f` suffix or `.toFloat()`
+added. Confirmed by grepping every `.format(` call in the new file and
+checking each one resolves to Float, then by a clean build.
+
+**Real collision caught and fixed before it ever ran:** the natural name
+for the new Target Engine RPM PID, "Target Engine Speed" (the source
+file's own name), would have silently matched the existing `speed_kmh`
+keyword's bare `\bspeed\b` pattern; confirmed by testing the regex
+directly. Renamed to "Target Engine RPM" to sidestep that, matching this
+project's existing "Engine RPM" naming for the standard PID, but that
+still legitimately contains the word "RPM", which would then silently
+match the existing bare `\brpm\b` pattern instead. Fixed with a negative
+lookbehind on that pattern (`(?<!target engine )\brpm\b`), the same
+category of fix `map_kpa`'s "desired" exclusion already needed for the
+Mazda catalog. Verified with a script that cross-checks every canonical
+name (old and new, 39 total) against the entire `PID_KEYWORDS` table:
+zero collisions, each name matches exactly the one key it should.
+
+**The nine, split by how fast they move** (Tier B for combustion-timescale
+signals, Tier C for the electrical system's slower one):
+- `Fuel Injector Pulse Width` (0x2210A3, `A*0.256` ms): the one genuinely
+  new capability here. This project's fuel-burned estimate has been
+  entirely MAF-derived because the standard Engine Fuel Rate PID (Mode 01
+  0x5E) returns NO DATA on every session ever logged, confirmed directly
+  against the server's full measurement history, Mazda and Subaru both,
+  136 failed attempts logged on one drive alone. Pulse width is not
+  itself a fuel-mass number: turning it into one needs this injector's
+  flow rate and injection frequency, neither known yet, so nothing
+  downstream converts it. Captured now as a second, independent signal to
+  eventually cross-check the MAF-based estimate against, once that
+  conversion exists, not a working second estimate today.
+- `Learned Ignition Timing` (0x2210A5, `(A-128)/2` deg): deliberately not
+  treated as an instantaneous knock-event signal. Per its own source
+  definition and NASIOC discussion, this is closer to a learned/adaptive
+  correction than a live knock reading, distinct from the existing
+  standard Timing Advance PID and from RomRaider's Feedback/Fine Learning
+  Knock Correction, for which no Mode 22 UDS mapping was found at all for
+  this ECU (only its proprietary SSM logging, a different protocol this
+  project's generic-ELM327 approach can't read).
+- `Intake VVT Advance Angle Right`/`Left` (0x2210B4/B5, `A-50` deg): the
+  source supplies no real min/max, so the plausibility clamp uses a
+  physically chosen range (-20..60) rather than the formula's own raw
+  byte-math bounds (-50..205), which the source itself doesn't claim is a
+  real cam-angle limit.
+- `Alternator Duty` (0x2210B2), `Battery Current` (0x221135, `A-128` A),
+  `Battery Temperature` (0x221136, `A-40` C), `Alternator Control Mode`
+  (0x221137, enum 0-5), `Target Engine RPM` (0x221121, `((A*256)+B)/4`
+  rpm, same 2-byte `/4` scaling as the standard Engine RPM PID, a real
+  internal-consistency signal, not coincidence). Electrical load
+  ultimately shows up as mechanical load on the engine, worth having
+  alongside the economy investigation even though it's a slower signal
+  than the combustion-timescale four above.
+
+**Deliberately excluded** despite appearing in the wider ParsePID
+definition file: EGR Target/Actual Valve Opening Angle (0x22111B/111C),
+marked diesel-only in the source and absent from the Forester capture's
+supported-DID set entirely.
+
+**Completely untested against a real vehicle**, same caveat every enhanced
+PID in this project carries until a real drive confirms it. Built,
+compiles clean, not yet installed as of this entry (phone disconnected).
