@@ -1331,3 +1331,64 @@ running backfill and analysis a second time for the same session.
 Build clean, installed. Confirmed on the real device for everything
 except this specific fix, which needs one more real Stop tap to see;
 not yet visually confirmed as of this entry.
+
+## LTFT finally has real data: the MAF hypothesis is now supported, not just plausible
+
+The whole point of this project. Four real Mazda drives now have valid
+`Long Term Fuel Trim Bank 1` data (the PID-swap bug fixed earlier this
+project is confirmed actually fixed, first time this signal has ever
+existed here), each independently analyzed with tonight's corrected
+fuel-rate math. Checked against the exact criteria
+`MPG_ASSESSMENT_PLAYBOOK.md` already laid out for distinguishing a
+vacuum leak from a MAF-calibration issue, not eyeballed:
+
+- **LTFT sits at +5.8% to +8.4% on every drive, consistently, not
+  once negative.** Session means: +5.77%, +6.20%, +6.30%, +5.7%
+  (a never-cleanly-ended session recovered in the same sitting, see
+  the pd.NA fix above). That consistency across four independent
+  drives is itself evidence this is a real, repeatable bias, not
+  session-to-session noise.
+- **Split idle vs. moving**: idle runs about 2 points higher than
+  moving (7.5-8.4% vs. 5.6-5.9%) on every drive, a mild gradient, not
+  the sharp idle-only spike (+10-25%+) the playbook says a real vacuum/
+  PCV leak produces.
+- **Split by phase** (city/backroad/highway, matching
+  `phase_breakdown()`): elevated at every single phase, same sign,
+  same rough magnitude, with only a mild downward gradient at higher
+  speed (city ~6.7-7.4%, backroad ~5.7-6.0%, highway ~5.0-5.6%). This
+  is exactly the playbook's stated MAF-calibration signature:
+  "consistent trim skew... across every phase_breakdown() row,
+  rather than an idle-specific pattern."
+- **Octane/knock-driven timing retard, checked and not supported**:
+  Knock Retard stays near zero (means 0.40-0.41°, brief spikes to
+  ~5.5-5.9° only), Timing Advance holds healthy positive values
+  (means 17.8-21.7°). No evidence of chronic active knock mitigation
+  on current (87 octane) fuel. Doesn't rule out a subtler base-map
+  effect, but rules out the dramatic version of this hypothesis.
+
+**What this data can't fully settle**: whether a ~6% MAF bias alone
+accounts for the whole remembered MPG drop. No baseline drive exists
+from when the car was known-good (the cross-drive comparison the
+playbook already flagged as missing), and these four drives are
+idle/city-heavy (13.5-24.1% idle fraction), which pulls MPG down on
+its own regardless of any sensor issue, not proof by itself of
+underperformance against EPA's combined rating.
+
+**What it does settle**: this is no longer "a plausible theory that
+can't be checked," it's a real, repeatable, multi-drive-confirmed
+signal, in exactly the shape a MAF sensor mildly under-reporting
+airflow produces, cleanly distinguished from a vacuum leak by its own
+methodology. A MAF sensor clean (cheap, ~10 minutes, isopropyl alcohol
+or MAF-specific cleaner) or replacement is a concrete, justified next
+step, not a shot in the dark. The direct confirmation test: log
+another comparable drive after cleaning it and check whether LTFT
+drops back toward 0%.
+
+**Not yet done**: `anomaly_flags()`'s existing fuel-trim check only
+fires above +/-10% during cruise, calibrated for a large, obvious skew;
+none of these four drives crossed it despite the finding above being
+real, which is why it took a manual per-phase query to surface at all
+rather than showing up on the report automatically. Worth a second,
+lower-threshold flag specifically for "same-sign skew consistent
+across every phase" if this keeps mattering, not done tonight since
+the immediate ask was the finding itself, not the tooling around it.
