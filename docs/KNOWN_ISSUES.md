@@ -1259,3 +1259,75 @@ token, wrong token, no adapter ever selected, background-start refused),
 so a live logcat capture during a real macro trigger should identify
 this in one attempt rather than more code reading. Blocked on the phone
 being reachable over adb to capture that.
+
+### Update: root-caused live, via logcat, exactly as planned (fixed)
+
+Two separate, compounding device-level barriers, confirmed one at a
+time by reproducing the real macro's broadcast directly with
+`adb shell am broadcast` and watching what changed after each fix, not
+guessed:
+
+1. **Battery optimization blocked the foreground-service start
+   outright**: `ForegroundServiceStartNotAllowedException:
+   startForegroundService() not allowed due to mAllowStartForeground
+   false`. `AutomationReceiver.dispatch()` already logs the exact fix
+   for this one (Settings > Apps > DriveTrace > Battery >
+   Unrestricted); applied directly via `adb shell dumpsys deviceidle
+   whitelist +com.ericbarone.drivetrace` on the test device instead.
+2. **Deeper, only reachable once #1 stopped blocking it, and a real
+   crash, not the graceful degradation the code assumed**: this
+   service's manifest declares `foregroundServiceType=
+   "connectedDevice|location"`. Android 14+ enforces a stricter,
+   separate eligibility check on the "location" half specifically:
+   starting it from the background without `ACCESS_BACKGROUND_LOCATION`
+   throws `SecurityException` straight out of `startForeground()`,
+   killing the whole process. This project's own comments (see
+   `AutomationReceiver.kt`'s pre-start warning) predicted GPS would
+   just come up empty for a background-started session, not that the
+   entire session, OBD included, would never start at all. Confirmed
+   by reproducing the exact crash with the permission ungranted, then
+   confirming it stopped happening the moment the permission was
+   granted, both directly via adb, not inferred.
+
+**Fixed**: granted `ACCESS_BACKGROUND_LOCATION` on the test device
+(the real fix, already anticipated by the manifest's own comment on
+why that permission is declared but never requested in-app). Also
+wrapped the `startForeground()` call in `onStartCommand` with a
+`try/catch(SecurityException)` that logs one clear, actionable line
+and returns cleanly instead of crashing, defense-in-depth for the next
+phone that reaches this without the permission granted yet, matching
+the reliability rule (section 9: detect the impossible, don't crash)
+this project already applies everywhere else.
+
+**Confirmed end to end** with the real MacroDroid macro after both
+fixes: clean start, GPS actually recording live (17 fixes over about
+15 seconds in a stationary test), clean stop, no crash.
+
+## Stop logging gave no visual feedback while backfill/analysis ran (found and fixed)
+
+Reported live, same session as the automation fix above: tapping Stop
+in the app looked identical to still-logging for however long
+backfill and analysis took in the background, up to close to a minute
+if analysis was slow to answer, with nothing on screen saying so.
+
+**Root cause**: the live/complete split in `LoggingScreen` is driven
+entirely by `sessionComplete = connectionState == DISCONNECTED`, which
+`DriveLoggingService.stopSession()` only sets at the very end of the
+whole backfill-then-analyze chain. Nothing marked the gap in between.
+The service was already updating `LoggingUiState.statusMessage`
+through that whole sequence ("Verifying complete upload...", "Analyzing
+drive..."), correctly, the whole time; nothing on this screen ever
+read it.
+
+**Fixed** with a local `stopping` flag, set the instant the Stop
+dialog is confirmed rather than waiting on any state round trip, and a
+new `StoppingBody` view (pulsing status dot, the service's own
+already-correct `statusMessage`) shown in that gap. Also hides the
+pinned action bar during that window: leaving "Stop logging" tappable
+while a stop was already in flight would have fired a second
+`ACTION_STOP` at a service that had already nulled out `sessionJob`,
+running backfill and analysis a second time for the same session.
+
+Build clean, installed. Confirmed on the real device for everything
+except this specific fix, which needs one more real Stop tap to see;
+not yet visually confirmed as of this entry.

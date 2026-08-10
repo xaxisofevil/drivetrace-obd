@@ -25,8 +25,8 @@ up cleanly instead of re-deriving context or, worse, redoing work.
 
 ## Current state
 
-**Last commit:** `0871622` "Fix the foreground notification freezing at
-Initializing all drive long" (2026-08-10)
+**Last commit:** `14039fc` "Fix Send Intent automation crash; add
+visible feedback for Stop" (2026-08-10)
 
 **On the phone right now:** a debug build of `daeef77`, installed and
 confirmed working (back-button navigation and Delete Trip both verified live
@@ -308,3 +308,35 @@ note.
   entry has been installed or tested on the real phone**, it was
   disconnected the entire session. All three items need the phone back
   before they can move past "should be fixed" to "confirmed fixed."
+
+### 2026-08-10, later same day (Claude Code)
+
+- Phone reconnected (`192.168.0.182:37149`, changes every time, ask
+  Eric for the current one). Installed the build from the entry above
+  and root-caused the Send Intent failure live, via logcat, exactly as
+  planned: NOT a code bug in the receiver itself (Eric's macro was
+  configured perfectly), but two stacked device-level barriers. See
+  KNOWN_ISSUES.md's "Update: root-caused live" for the full account.
+  Fixed both directly via adb (Doze whitelist, ACCESS_BACKGROUND_LOCATION)
+  and added a defensive try/catch in `DriveLoggingService.onStartCommand`
+  so a future phone without that permission granted fails with one
+  clear log line instead of a hard crash. **Confirmed end to end with
+  Eric's real MacroDroid macro**: clean start, GPS actually recording,
+  clean stop, no crash. This one is genuinely done, not just "should
+  be fixed."
+- Eric separately reported tapping Stop in the app gives no visual
+  feedback while backfill/analysis run. Root-caused
+  (`sessionComplete` only flips once the *entire* chain finishes,
+  nothing marked the gap) and fixed with a new `StoppingBody` view,
+  shown the instant Stop is confirmed. Build clean, installed.
+  **Not yet visually confirmed** — a screenshot-based check was
+  attempted but the tap coordinates missed the button and the
+  follow-up (`uiautomator dump` for exact bounds) hit a Git-Bash
+  path-mangling issue (`/sdcard/...` getting rewritten to
+  `C:/Program Files/Git/...`, prefix with `MSYS_NO_PATHCONV=1` next
+  time) before it could be retried; user cut the verification loop
+  short rather than let it keep fighting tooling. **Next real Stop
+  tap should confirm this visually**, or fix directly if it doesn't
+  look right.
+- Server was healthy and untouched this entry, no server-side changes.
+- Committed as `14039fc`.
