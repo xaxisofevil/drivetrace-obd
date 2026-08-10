@@ -39,6 +39,11 @@ private const val NOTIFICATION_ID = 1
 private const val INITIAL_BACKOFF_MS = 1_000L
 private const val MAX_BACKOFF_MS = 15_000L
 private const val SETUP_TIMEOUT_MS = 30_000L
+// How often the foreground notification (shade + lock screen) is refreshed with live sample/GPS
+// counts. Matches Tier B's own "every 2-5s" cadence reasoning elsewhere in this project: fast
+// enough that a glance at the lock screen mid-drive looks alive, far below the rate that would
+// make repeated NotificationManager.notify() calls wasteful or get throttled by the system.
+private const val NOTIFICATION_UPDATE_INTERVAL_MS = 3_000L
 
 // Some cheap ELM327 clones fabricate plausible-looking zero data instead of a clean error when
 // the ECU is asleep, so "a response arrived" isn't proof of a live vehicle. RPM > this is a cheap
@@ -186,6 +191,22 @@ class DriveLoggingService : Service() {
             }
         }
 
+        // CONFIRMED REAL BUG, fixed here: updateNotification() used to only ever be called once,
+        // right after the initial connect finished, before the polling loop had produced any real
+        // samples yet. LoggingStatus.state itself updates live on every measurement (the in-app UI
+        // reads it directly and looks fine), but nothing was pushing those updates back into the
+        // notification shown in the shade and on the lock screen, so it froze at whatever it said
+        // in that first split second (often still "Initializing...") for the rest of the drive,
+        // reported live: "the lock screen notification never updates, it stays at Initializing
+        // always". A ticker on the session's own timescale, not tied to any one PID or reconnect
+        // attempt, is what a display meant to be glanced at without unlocking the phone needs.
+        val notificationTickerJob = serviceScope.launch {
+            while (isActive) {
+                delay(NOTIFICATION_UPDATE_INTERVAL_MS)
+                updateNotification()
+            }
+        }
+
         var backoffMs = INITIAL_BACKOFF_MS
         val transport = BluetoothTransport(applicationContext)
 
@@ -329,6 +350,7 @@ class DriveLoggingService : Service() {
             }
         } finally {
             locationJob.cancel()
+            notificationTickerJob.cancel()
             transport.close()
         }
     }
@@ -460,6 +482,14 @@ class DriveLoggingService : Service() {
             .setContentIntent(openAppIntent)
             .addAction(R.drawable.ic_notification, "Stop", stopPendingIntent)
             .setOngoing(true)
+            // Unset defaults to VISIBILITY_PRIVATE, which redacts this notification's content
+            // (and, on a locked device, can drop its action buttons entirely, the Stop action
+            // included) down to a generic "content hidden" line on a secured lock screen. Nothing
+            // here is sensitive, sample counts and connection state, so there is no reason to ask
+            // for that redaction; PUBLIC is what makes Stop reachable without unlocking the phone.
+            // Still subject to the device's own "hide sensitive notifications" lock screen
+            // setting if the user has that on, which this can't and shouldn't override.
+            .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
             .build()
     }
 

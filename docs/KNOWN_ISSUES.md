@@ -1191,3 +1191,71 @@ supported-DID set entirely.
 **Completely untested against a real vehicle**, same caveat every enhanced
 PID in this project carries until a real drive confirms it. Built,
 compiles clean, not yet installed as of this entry (phone disconnected).
+
+## Foreground notification froze at "Initializing" for the whole drive (found and fixed)
+
+Reported live: the lock screen / shade notification never updates once a
+drive starts, stuck showing whatever it said in the first instant after
+connecting.
+
+**Root cause, confirmed by reading the actual call graph, not guessed:**
+`updateNotification()` was called exactly once, right after the initial
+connect/init sequence finished, before the polling loop had produced any
+real samples yet. `LoggingStatus.state` itself updates live on every
+single measurement (`connectionState = LOGGING`, `measurementCount + 1`,
+etc., inside the `onMeasurement` callback), which is why the in-app UI,
+which reads that state directly, looked completely fine the whole time.
+Nothing was ever pushing those same live updates back into the
+notification shown outside the app. It was built once and never touched
+again until the drive ended.
+
+**Fixed** with a ticker coroutine on the session's own timescale (every
+3s, launched alongside the existing GPS collector job, cancelled the same
+way in the same `finally` block) that calls `updateNotification()` for as
+long as the session runs, independent of any one PID or reconnect
+attempt.
+
+**Also fixed alongside it, and part of why the notification's existing
+Stop action may not have been reachable from a locked phone**: the
+notification never called `setVisibility()`, which defaults to
+`VISIBILITY_PRIVATE`. On a secured lock screen that can redact a
+notification down to a generic "content hidden" line with no action
+buttons at all, Stop included. Nothing in this notification is sensitive
+(sample counts, connection state), so there was no reason to accept that
+default. Set to `VISIBILITY_PUBLIC`, still subject to the device's own
+"hide sensitive notifications" setting if the user has that on, which an
+app has no business overriding.
+
+Built, compiles clean. Not yet installed or confirmed on a real drive as
+of this entry (phone disconnected).
+
+## Send Intent (MacroDroid) automation reported as doing nothing (under investigation)
+
+Reported live, alongside the notification issue above: firing the
+configured MacroDroid "Send Intent" macro appears to do nothing at all,
+no session starts.
+
+**Checked and ruled out**: the macro's own configuration, confirmed
+directly from a screenshot of the actual MacroDroid dialog. Target is
+Broadcast (correct: Android 8+ delivers implicit broadcasts to dynamic
+receivers only, never to a manifest-declared one like
+`AutomationReceiver`, so this has to be explicit). Package
+(`com.ericbarone.drivetrace`) and Class
+(`com.ericbarone.drivetrace.service.AutomationReceiver`) are both filled
+in and exactly correct, which is what makes an explicit broadcast
+explicit in the first place; a missing Package/Class was the leading
+suspect before seeing the screenshot, and it isn't the answer here.
+Action string, and both Extras (`command`/`start`, `token`/a 20-char hex
+value matching this project's token format) all look right too.
+
+**Not yet checked**: whether the token in the macro actually matches
+what's currently on this device (Settings > Automation), whether
+`AutomationReceiver.onReceive` is being entered at all (would show
+immediately in `adb logcat -s DriveTraceAutomation`, per that class's own
+design), and whether MacroDroid's own trigger actually fired versus the
+macro never running in the first place. `AutomationReceiver.kt` already
+logs a specific, actionable line for every rejection path (missing
+token, wrong token, no adapter ever selected, background-start refused),
+so a live logcat capture during a real macro trigger should identify
+this in one attempt rather than more code reading. Blocked on the phone
+being reachable over adb to capture that.
