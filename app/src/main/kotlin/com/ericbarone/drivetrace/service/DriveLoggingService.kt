@@ -103,7 +103,42 @@ class DriveLoggingService : Service() {
                     ?.let { name -> VehicleProfile.entries.find { it.name == name } }
                     ?: VehicleProfile.entries.first()
                 if (deviceAddress != null && sessionJob == null) {
-                    startForeground(NOTIFICATION_ID, buildNotification("Starting..."))
+                    // CONFIRMED REAL CRASH, fixed here: this manifest declares
+                    // foregroundServiceType="connectedDevice|location", and Android 14+
+                    // enforces an eligibility check on the "location" half specifically, on top
+                    // of (and stricter than) the generic background-FGS-start check
+                    // AutomationReceiver.dispatch() already anticipates: a foreground service
+                    // with a location type, started while this app is not itself in an eligible
+                    // foreground/while-in-use state, throws SecurityException from
+                    // startForeground() outright, killing the whole process, not just skipping
+                    // GPS the way this file's own comments (see AutomationReceiver.kt's
+                    // ACCESS_BACKGROUND_LOCATION warning) predicted. Confirmed live via
+                    // MacroDroid and reproduced directly with `adb shell am broadcast`: a
+                    // background-triggered start crashed with exactly this exception every
+                    // time the device lacked "Allow all the time" location, and stopped
+                    // crashing the moment that permission was granted. A manual Start Logging
+                    // tap never hit this, the app is already in an eligible foreground state
+                    // at that exact moment.
+                    //
+                    // Granting ACCESS_BACKGROUND_LOCATION is the real fix and was applied to
+                    // the test device directly; this catch is the defense-in-depth this
+                    // project's reliability rule (section 9: detect the impossible, don't
+                    // crash) already asks for everywhere else, for the next phone that reaches
+                    // this without that permission granted yet.
+                    try {
+                        startForeground(NOTIFICATION_ID, buildNotification("Starting..."))
+                    } catch (e: SecurityException) {
+                        android.util.Log.e(
+                            "DriveLoggingService",
+                            "Could not start the foreground service: ${e.message}. This almost " +
+                                "always means Location is not set to \"Allow all the time\" for " +
+                                "DriveTrace, which Android requires for a GPS-capable foreground " +
+                                "service started while the app is in the background (an " +
+                                "automation trigger, not the in-app Start button). Settings > " +
+                                "Apps > DriveTrace > Permissions > Location > Allow all the time.",
+                        )
+                        return START_NOT_STICKY
+                    }
                     sessionJob = serviceScope.launch { runSession(deviceAddress, vehicleProfile) }
                 }
             }

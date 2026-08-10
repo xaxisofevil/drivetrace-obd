@@ -110,6 +110,12 @@ fun LoggingScreen(status: LoggingUiState, onStop: (String) -> Unit, onNewSession
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     var showStopConfirm by remember { mutableStateOf(false) }
+    // Set the instant Stop is confirmed, not waiting on any round trip through LoggingStatus.state
+    // to say so: see StoppingBody's own doc for why a tap with no immediate, visible result reads
+    // as a tap that didn't register. Never needs resetting by hand: this whole composable unmounts
+    // once the session fully ends and "New session" moves MainActivity back to SetupScreen, so a
+    // future session remounts LoggingScreen fresh with this back at its default.
+    var stopping by remember { mutableStateOf(false) }
     var stopNote by remember { mutableStateOf("") }
     var nowMs by remember { mutableLongStateOf(System.currentTimeMillis()) }
     var exportingCsv by remember { mutableStateOf(false) }
@@ -194,11 +200,19 @@ fun LoggingScreen(status: LoggingUiState, onStop: (String) -> Unit, onNewSession
             .imePadding(),
     ) {
         HeaderBar(
-            title = if (sessionComplete) "Session Complete" else "Logging",
+            title = when {
+                sessionComplete -> "Session Complete"
+                stopping -> "Stopping"
+                else -> "Logging"
+            },
             subtitle = if (sessionComplete) "trip report" else null,
             modifier = Modifier.padding(horizontal = Space.gutter),
             trailing = {
-                if (!sessionComplete) {
+                // Not during stopping either: connectionState here is whatever it happened to be
+                // the instant Stop was tapped (still LOGGING, still pulsing LIVE), which is no
+                // longer true the moment the adapter connection starts tearing down, and showing
+                // it would contradict StoppingBody's own pulsing dot right below it.
+                if (!sessionComplete && !stopping) {
                     ConnectionPill(status.connectionState)
                 }
             },
@@ -217,14 +231,23 @@ fun LoggingScreen(status: LoggingUiState, onStop: (String) -> Unit, onNewSession
             verticalArrangement = Arrangement.spacedBy(Space.section),
         ) {
             Spacer(Modifier.height(Space.xs))
-            if (report != null) {
-                CompleteBody(report, status.sessionId)
-            } else {
-                LiveBody(status, elapsedSeconds, lastSampleAgeSeconds, nowMs)
+            when {
+                report != null -> CompleteBody(report, status.sessionId)
+                // Checked ahead of the live cluster: stopping stays true (and sessionComplete
+                // stays false) for however long backfill/analysis take, and this screen has
+                // nothing new to say from the adapter during that stretch regardless of what
+                // LoggingUiState still holds from the last sample before Stop was tapped.
+                stopping -> StoppingBody(status.statusMessage)
+                else -> LiveBody(status, elapsedSeconds, lastSampleAgeSeconds, nowMs)
             }
             Spacer(Modifier.height(Space.sm))
         }
 
+        // No bar at all while stopping: the one action that belonged here just got tapped, and a
+        // second tap on it mid-stop would fire a second ACTION_STOP at a service that already set
+        // sessionJob back to null, running a redundant second backfill/analysis pass for no
+        // reason. Reappears once sessionComplete's own Export/PDF/New-session row takes over.
+        if (!stopping) {
         ActionBar {
             if (!sessionComplete) {
                 PrimaryAction(
@@ -276,6 +299,7 @@ fun LoggingScreen(status: LoggingUiState, onStop: (String) -> Unit, onNewSession
                 }
             }
         }
+        }
     }
 
     if (showStopConfirm) {
@@ -301,7 +325,7 @@ fun LoggingScreen(status: LoggingUiState, onStop: (String) -> Unit, onNewSession
                 }
             },
             confirmButton = {
-                TextButton(onClick = { showStopConfirm = false; onStop(stopNote.trim()) }) {
+                TextButton(onClick = { showStopConfirm = false; stopping = true; onStop(stopNote.trim()) }) {
                     Text("STOP", style = LocalReadoutType.current.label, color = StatusFault)
                 }
             },
@@ -380,6 +404,39 @@ private const val GRID_COLUMNS = 3
  * matching the status table's "stale samples" row. A PID that has never answered at all draws
  * nothing, so `--` in this cluster only ever means "the number that came back was garbage".
  */
+/**
+ * Between tapping Stop and the session actually reaching [ConnectionState.DISCONNECTED], not a
+ * state this screen used to have a name for at all. Before this existed, the live gauge cluster
+ * just kept rendering, frozen (no new samples are coming in, but nothing on screen said so),
+ * for however long backfill and analysis take, up to a minute if analysis is slow to answer. A
+ * tap with no visible result is indistinguishable from a tap that didn't register; this exists so
+ * "wrapping up" has a screen of its own the instant Stop is confirmed, not just eventually once
+ * everything happens to finish.
+ *
+ * [statusMessage] is [LoggingUiState.statusMessage], which the service already updates through
+ * this exact sequence ("Verifying complete upload...", then "Analyzing drive..."), previously
+ * computed but never actually shown anywhere on this screen. Pulsing [StatusDot] rather than a
+ * static one for the same reason it's used everywhere else in this app: rule 9's one animation is
+ * reserved for "data is still arriving", and this genuinely is that, just server-side instead of
+ * from the adapter.
+ */
+@Composable
+private fun ColumnScope.StoppingBody(statusMessage: String) {
+    Column(
+        modifier = Modifier.fillMaxSize().padding(vertical = Space.xxxl),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(Space.md),
+    ) {
+        StatusDot(tone = Tone.CAUTION, pulsing = true, sizeDp = 14)
+        Text("STOPPING", style = LocalReadoutType.current.label, color = Ash)
+        Text(
+            statusMessage.ifBlank { "Wrapping up..." },
+            style = LocalReadoutType.current.mono,
+            color = Mist,
+        )
+    }
+}
+
 @Composable
 private fun ColumnScope.LiveBody(
     status: LoggingUiState,
