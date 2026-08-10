@@ -25,8 +25,8 @@ up cleanly instead of re-deriving context or, worse, redoing work.
 
 ## Current state
 
-**Last commit:** `942b808` "Add nine Subaru enhanced (Mode 22) PIDs, led
-by injector pulse width" (2026-08-09)
+**Last commit:** `0871622` "Fix the foreground notification freezing at
+Initializing all drive long" (2026-08-10)
 
 **On the phone right now:** a debug build of `daeef77`, installed and
 confirmed working (back-button navigation and Delete Trip both verified live
@@ -268,3 +268,43 @@ note.
   before any of this can actually be tested on a real drive. Nothing
   about these nine PIDs is confirmed against the real Outback yet,
   only against a different-but-same-engine Forester's declared support.
+
+### 2026-08-10 (Claude Code)
+
+- Eric reported three things at once: MacroDroid's Send Intent macro
+  doing nothing, the foreground notification frozen at "Initializing"
+  all drive long, and a feature request to stop a session from the
+  lock screen.
+- **Notification freeze: root-caused and fixed.** `updateNotification()`
+  was called exactly once, right after the initial connect, never
+  again for the rest of the drive; `LoggingStatus.state` itself was
+  updating live the whole time (that's why the in-app UI looked fine),
+  nothing was pushing it back into the notification. Fixed with a 3s
+  ticker coroutine, cancelled the same way the existing GPS job is.
+  Committed as `0871622`.
+- **Lock screen Stop: turned out to already exist in code**, just
+  probably unreachable. The notification never called `setVisibility()`
+  (defaults to PRIVATE, which can redact a locked-screen notification
+  down to a content-hidden line with no action buttons at all). Set to
+  `VISIBILITY_PUBLIC` in the same commit. Should resolve the feature
+  request without it being a separate feature; needs confirming on a
+  real locked phone since I can't verify that part from a build alone.
+- **Send Intent automation: NOT resolved, actively blocked on phone
+  access.** Eric sent a screenshot of the actual MacroDroid dialog;
+  checked it directly against what `AutomationReceiver` expects and it
+  is configured correctly, Target/Package/Class/Action/both Extras all
+  exactly right, ruling out the leading suspect (missing explicit
+  package/class, required since Android 8 for manifest receivers).
+  `AutomationReceiver.kt` already logs a specific, actionable reason
+  for every rejection path under the `DriveTraceAutomation` tag, so a
+  live `adb logcat -s DriveTraceAutomation` capture during a real macro
+  trigger should identify the real cause in one attempt. **This is the
+  next thing to do the moment the phone is reachable over adb again**:
+  clear logcat, start a capture, have Eric fire the macro, read what
+  (if anything) shows up. Don't re-read code first, the diagnostic
+  logging is already there and more thorough than guessing further
+  would be.
+- Build is clean (`assembleDebug` succeeded) but **nothing from this
+  entry has been installed or tested on the real phone**, it was
+  disconnected the entire session. All three items need the phone back
+  before they can move past "should be fixed" to "confirmed fixed."
