@@ -19,6 +19,7 @@ from pathlib import Path
 from typing import Any
 
 import duckdb
+import pandas as pd
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from scripts import analyze_drive as ad  # noqa: E402
@@ -107,8 +108,16 @@ def _analyze(session_id: int, conn: duckdb.DuckDBPyConnection, db_lock: threadin
     sess = sess_row.iloc[0]
     metadata = {
         "sessionId": session_id,
-        "startWallTimeUtc": int(sess["start_wall_time_utc_ms"]) if sess["start_wall_time_utc_ms"] is not None else None,
-        "endWallTimeUtc": int(sess["end_wall_time_utc_ms"]) if sess["end_wall_time_utc_ms"] is not None else None,
+        # CONFIRMED REAL BUG, fixed here: `is not None` doesn't catch a NULL DuckDB column read
+        # back through fetchdf(), which comes back as pandas' own `pd.NA` sentinel (nullable
+        # Int64 dtype), not Python's None. `pd.NA is not None` is True, so the guard passed
+        # straight through into `int(pd.NA)`, a bare TypeError. Only end_wall_time_utc_ms hit
+        # this in practice: a session with no /end call yet (killed app, dead phone) analyzed
+        # with a real, substantial 10000+ measurements couldn't be analyzed at all until this
+        # was fixed. start_wall_time_utc_ms carried the identical latent bug, just never
+        # triggered since every session has one by construction; fixed the same way regardless.
+        "startWallTimeUtc": int(sess["start_wall_time_utc_ms"]) if pd.notna(sess["start_wall_time_utc_ms"]) else None,
+        "endWallTimeUtc": int(sess["end_wall_time_utc_ms"]) if pd.notna(sess["end_wall_time_utc_ms"]) else None,
         "vehicleProfile": sess["vehicle_profile"],
         "adapterName": sess["adapter_name"],
         "adapterAddress": sess["adapter_address"],
