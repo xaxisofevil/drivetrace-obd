@@ -67,14 +67,30 @@ describing a move that already occurred as still-pending.
 - **No existing DB-migration tooling** anywhere in the repo. This has to be a
   direct file operation, verified by query, not something to build a script
   for.
-- **`ericpc` reachability, checked directly from the laptop, inconclusive**:
-  `nslookup ericpc` returned "Non-existent domain" (the router's own DNS
-  doesn't know that name). `ping ericpc.local` (mDNS) resolved to a
-  link-local IPv6 address that timed out, could be stale/cached, could be a
-  real machine not answering ICMP, can't tell from here. **Net: cannot
-  confirm `ericpc` is currently reachable at all from the laptop's LAN, and
-  cannot determine its OS from this session.** Needs Eric to confirm directly
-  before Sections 1 and 3 below can be finalized.
+- **`ericpc` reachability and OS: now confirmed directly, resolved since the
+  first draft of this plan.** LAN IP is `192.168.0.129` (`ericpc` itself
+  doesn't resolve via the router's DNS or mDNS from the laptop; use the IP,
+  or set up a hosts-file entry or local DNS record if the name is wanted).
+  ICMP ping to that IP fails, but that's Windows Firewall's default ICMP
+  block, not a real reachability problem, confirmed by `Test-NetConnection
+  -Port 22` succeeding and a full SSH session completing. OS confirmed via a
+  live SSH session: **Windows 11 Pro, build 22631**. SSH key-based auth
+  (ed25519, no passphrase) from the laptop's `ericm` account to ericpc's
+  `ericm` account is working as of this update, useful for Section 3's
+  remote setup steps and for any future AI-assisted work on ericpc directly.
+  Getting SSH working took real troubleshooting, documented here since it's
+  a real gotcha for anyone repeating this on another machine: OpenSSH on
+  Windows requires admin accounts' keys in the single shared
+  `C:\ProgramData\ssh\administrators_authorized_keys` (not the per-user
+  `~/.ssh/authorized_keys` Linux/Mac use), that file needs its ACL locked to
+  only `SYSTEM` and `Administrators` (`icacls ... /inheritance:r /grant
+  "Administrators:F" /grant "SYSTEM:F"`) or sshd silently rejects every key
+  in it, and writing that file with PowerShell's `Add-Content` can leave a
+  trailing CRLF that also causes a silent, generic-looking rejection versus
+  a bare `\n`. Neither failure mode produces a clear client-side error,
+  both look identical to "wrong key," `LogLevel VERBOSE` in `sshd_config`
+  plus the `OpenSSH/Operational` Windows Event Log channel is what actually
+  surfaces the real reason.
 
 ## Open design question (Eric decides, plan supports either)
 
@@ -128,18 +144,22 @@ Sections 3 and 9 below assume it unless told otherwise.
 
 Confirm all of these before touching data or the scheduled task:
 
-- [ ] **ericpc's OS.** Not determined from the laptop. Ask directly: is it
-  Windows (PowerShell 5.1+/7, Task Scheduler access, Python available)? If
-  Linux or macOS, the scheduled-task equivalent, the `run_server.ps1`
-  equivalent, and the Python/venv setup all change (systemd unit or launchd
-  plist instead of `schtasks`, a shell script instead of `.ps1`). Don't draft
-  those specifics until this is confirmed.
-- [ ] **ericpc's actual reachability from the laptop's LAN, by IP, not just
-  name.** Get its current LAN IP and confirm `ping <ip>` and, once something
-  is listening, `Test-NetConnection <ip> -Port 8090` succeed. Separately
-  confirm whether the name `ericpc` is expected to resolve via the router's
-  local DNS, a static hosts-file entry, or mDNS, none of those were confirmed
-  working from this machine.
+- [x] **ericpc's OS.** Confirmed via a live SSH session: Windows 11 Pro,
+  build 22631. PowerShell and Task Scheduler are available as on the laptop;
+  Python still needs confirming/installing (see below).
+- [x] **ericpc's actual reachability from the laptop's LAN.** Confirmed at
+  `192.168.0.129`. The name `ericpc` itself does not resolve via the
+  router's DNS or mDNS from the laptop, use the IP directly, or set up a
+  hosts-file entry or local DNS record first if the name is wanted for
+  `local.properties`/documentation purposes. `Test-NetConnection
+  <ip> -Port 8090` still needs checking once something is actually listening
+  there (nothing is yet, this only confirms port 22/SSH so far).
+- [ ] **SSH access from the laptop, for driving the remaining setup steps
+  remotely.** Working as of this update (ed25519 key, no passphrase, `ericm`
+  account both sides). Leave this checkbox open as a reminder that the setup
+  steps below (Section 3) can now genuinely be run remotely via `ssh
+  192.168.0.129 "<command>"` rather than requiring Eric to type everything
+  at the machine directly, worth using.
 - [ ] **Git and Python tooling on ericpc**: `git`, a Python 3.12-ish
   interpreter, ability to create a venv and `pip install -r requirements.txt`.
 - [ ] **Enough free disk space on ericpc** for the repo, a venv, and the
