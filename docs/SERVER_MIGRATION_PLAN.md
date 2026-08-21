@@ -1,5 +1,59 @@
 # DriveTrace ingest server migration plan: laptop to ericpc
 
+## Update: PM2 chosen, build complete and tested, no cutover yet
+
+Process management (the "open choice" a few paragraphs down) is resolved:
+**PM2**, as a third entry in ericpc's existing `deploy/ecosystem.config.cjs`,
+same file that already manages Our Calendar's backend and its Caddy
+instance.
+
+Everything below is built and verified working over the LAN, without
+touching the router, DuckDNS, or the Android app:
+
+- Data migrated: `server/drivetrace.duckdb` and `server/.env` copied from the
+  laptop to ericpc via `scp`, SHA256-verified identical on both sides
+  (sessions=119, measurements=206810, locations=34941, events=9604). The
+  laptop's copy was left in place; its server was stopped only for the
+  seconds the copy took.
+- Python venv created on ericpc at
+  `C:\Users\ericm\projects\drivetrace-obd\.venv`, dependencies installed.
+- **`drivetrace-server` runs as a direct `uvicorn.exe` invocation under PM2**
+  (`interpreter: "none"`), not through `server/run_server.ps1`. First attempt
+  used `run_server.ps1` via `interpreter: "powershell.exe"`, matching how the
+  plan originally assumed PM2 would run it; that config launched, reported
+  "online," then was killed by SIGINT within the same second, every time (16
+  restarts, completely empty stdout/stderr logs both attempts). Root cause
+  wasn't chased further once triage showed the difference was specifically
+  the `powershell.exe`-interpreter path: the sibling `our-calendar-caddy`
+  entry, which also runs a non-Node binary but with `interpreter: "none"`,
+  has never had this problem. Switching `drivetrace-server` to the same
+  direct-exe pattern fixed it outright (0 restarts, stable). `.env`'s token
+  is read once by `ecosystem.config.cjs` itself at `pm2 start` time (via
+  `fs.readFileSync`, same moment the file's other secrets are pulled from
+  `process.env`) and passed through as a plain env var, since there's no
+  wrapper script left to do that loading. `server/run_server.ps1` is
+  unchanged and still what the **laptop's** Scheduled Task runs; nothing
+  above affects it.
+- Caddyfile's new `:8444` block (below) deployed and loaded via
+  `caddy.exe reload` (graceful, zero-downtime for the dashboard's existing
+  `:8443` block, confirmed by checking `netstat` for both ports on the same
+  PID before and after).
+- Full chain tested end to end from the laptop, LAN-only, via
+  `curl --resolve ericb.duckdns.org:8444:192.168.0.129 https://...`
+  (real DNS-01 cert, no `-k` needed): `/health` returns
+  `{"status":"ok","sessions":119,...}`; a request with no/wrong bearer token
+  returns 401; the same request with the correct token clears auth and
+  reaches the route's own validation instead (422 on an unrelated bad path
+  param), proving Caddy passes `Authorization` through untouched and the
+  ingest server's own auth check works unchanged.
+
+**Not done yet, deliberately** (per Eric: "build everything but don't
+perform any cutovers until everything is tested working"): the laptop's
+server/Scheduled Task is still the one live in production, the router still
+forwards nothing new, `local.properties`'s `ingest.baseUrl` still points at
+the laptop, and the Android app hasn't been touched. See Section 5 below for
+what the actual cutover involves once given the go-ahead.
+
 ## Update: routing through Caddy, not a bare port-forward
 
 ericpc already runs Caddy as a reverse proxy for another app ("Our
@@ -38,13 +92,13 @@ below, superseding the original guesses in Sections 3-6:
   ```
   `DUCKDNS_API_TOKEN` is already set in the environment for the existing
   Caddy process, no new secret needed.
-- **Process management, open choice**: either add DriveTrace's uvicorn as a
-  third entry in the existing `deploy/ecosystem.config.cjs` (PM2), matching
-  how the other app's backend and Caddy are both managed, or keep it on its
-  own independent Windows Scheduled Task as planned in Section 3 below,
-  fully separate from that repo. Both are consistent with "Caddy fronts
-  everything," this is only about which supervisor restarts uvicorn on
-  crash/reboot. Eric's call, not resolved here.
+- **Process management: resolved, PM2.** See the "PM2 chosen, build
+  complete" section above for the final config and the one real gotcha
+  hit along the way (a `powershell.exe`-interpreter entry got SIGINT'd
+  immediately on every launch; a direct `uvicorn.exe` invocation, matching
+  the existing Caddy entry's pattern, doesn't have that problem). Section 3
+  below's Scheduled Task approach was the rejected alternative, kept only
+  as a reference for the laptop's own still-unchanged Scheduled Task.
 - **No special timeout, header-forwarding, or client-IP config needed.**
   Confirmed against the existing Caddyfile's own minimalism: no custom
   timeouts anywhere in it today, `reverse_proxy` passes all headers
