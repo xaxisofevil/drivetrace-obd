@@ -1,5 +1,70 @@
 # DriveTrace ingest server migration plan: laptop to ericpc
 
+## Update: routing through Caddy, not a bare port-forward
+
+ericpc already runs Caddy as a reverse proxy for another app ("Our
+Calendar"), with real TLS via Let's Encrypt (DNS-01 challenge through the
+`caddy-dns/duckdns` plugin, a custom-built Caddy binary with that module
+compiled in). Confirmed directly against that app's own `deploy/Caddyfile`
+and `ARCHITECTURE.md` rather than assumed. This changes several specifics
+below, superseding the original guesses in Sections 3-6:
+
+- **DriveTrace's uvicorn binds `127.0.0.1:8090`, not `0.0.0.0:8090`.** Only
+  Caddy talks to it directly; nothing external reaches port 8090 at all,
+  not even via router forward.
+- **No router forward for port 8090, ever.** The only new forward needed is
+  for DriveTrace's new external port (see below), matching the existing
+  pattern where each service on this machine gets its own external port on
+  the same hostname, fronted by its own Caddy site block.
+- **New external port: 8444** (adjacent to the existing dashboard's 8443,
+  confirmed free). **New app URL: `https://ericb.duckdns.org:8444`**, HTTPS
+  instead of today's plain HTTP, a real upgrade since the bearer token
+  currently goes out in cleartext on every request. Requires an APK
+  rebuild either way (compiled constant), so worth doing at the same time.
+- **Caddyfile block** (add to ericpc's existing `deploy/Caddyfile` as a new,
+  separate site block, not nested inside the existing one):
+  ```caddyfile
+  ericb.duckdns.org:8444 {
+      tls {
+          dns duckdns {env.DUCKDNS_API_TOKEN}
+      }
+
+      handle {
+          reverse_proxy 127.0.0.1:8090
+      }
+
+      encode gzip
+  }
+  ```
+  `DUCKDNS_API_TOKEN` is already set in the environment for the existing
+  Caddy process, no new secret needed.
+- **Process management, open choice**: either add DriveTrace's uvicorn as a
+  third entry in the existing `deploy/ecosystem.config.cjs` (PM2), matching
+  how the other app's backend and Caddy are both managed, or keep it on its
+  own independent Windows Scheduled Task as planned in Section 3 below,
+  fully separate from that repo. Both are consistent with "Caddy fronts
+  everything," this is only about which supervisor restarts uvicorn on
+  crash/reboot. Eric's call, not resolved here.
+- **No special timeout, header-forwarding, or client-IP config needed.**
+  Confirmed against the existing Caddyfile's own minimalism: no custom
+  timeouts anywhere in it today, `reverse_proxy` passes all headers
+  (including `Authorization`) through untouched by default, and nothing in
+  the existing setup does anything IP-sensitive that DriveTrace would need
+  to account for.
+- **DriveTrace-side follow-ups this creates**, not yet done: update
+  `local.properties`'s `ingest.baseUrl` to `https://ericb.duckdns.org:8444`,
+  and remove (or at least reconsider) `network_security_config.xml`'s
+  cleartext-traffic exception for the old hostname, since everything moves
+  to real TLS.
+
+Sections 3-6 below still apply for the data migration, repo/venv setup, and
+validation steps, just substitute `127.0.0.1:8090` for the bind address and
+`8444`/`https://ericb.duckdns.org:8444` everywhere `8090` and the old plain
+HTTP URL appear. The port-forward-retarget language in the original cutover
+section assumed retargeting an existing 8090 forward; per the earlier
+finding in this doc, 8090 was never actually forwarded, so there's nothing
+to retarget, only a fresh 8444 forward to add.
+
 A plan, not an implementation. Written before any migration work started, so it
 could be checked against live system state rather than assumptions. Update or
 supersede this doc once the migration actually happens; don't leave it
