@@ -1,5 +1,49 @@
 # DriveTrace ingest server migration plan: laptop to ericpc
 
+## Update: cutover complete (2026-08-26)
+
+ericpc is now the live server. `local.properties`'s `ingest.baseUrl` was
+changed to `https://ericb.duckdns.org:8444`, `network_security_config.xml`'s
+cleartext exception for `ericb.duckdns.org` was removed (no longer needed -
+real TLS end to end now), the app was rebuilt (`assembleDebug`) and
+reinstalled over ADB, and a real start/stop session was verified end to end
+against the new server before anything on the laptop was touched.
+
+**The router forward for port 8090 turning out to already exist, contrary
+to this doc's own "never forwarded" finding below, is what triggered
+same-day investigation and then the cutover itself.** Live traffic
+(a real drive, streamed from cellular data straight to
+`http://ericb.duckdns.org:8090`) was observed in the server log, alongside
+routine internet background-scanner noise hitting the same open port -
+none of it reached any real DriveTrace endpoint, but it confirmed the
+bearer token had been travelling over plain HTTP to a port genuinely open
+to the internet, not just the LAN as assumed. That's now fixed: the token
+travels over real TLS via Caddy. The "never forwarded" finding below is
+stale as of whenever the router config actually changed (unknown - it
+predates this investigation) and is left in place only as history, not as
+current fact.
+
+**Data migration finished properly**, not just a single point-in-time copy:
+the laptop's DB (125 sessions, current as of the cutover) was merged into
+ericpc's copy (120 sessions - 119 from the original Aug 21 copy plus 1 from
+the pre-cutover smoke test) via a row-level `EXCEPT` diff, not a blind
+overwrite - a blind overwrite would have erased the smoke-test session.
+That diff also caught 3 sessions, already present on both sides from the
+original Aug 21 copy, whose rows differed on ericpc from what the laptop
+now had - almost certainly a backfill retry re-delivering that session's
+data at a later time (`received_at_utc_ms` and, for locations
+specifically, floating-point re-serialization noise were the only
+differences; drive content itself was identical). Reconciled by treating
+the laptop's version as authoritative for those 3 sessions. Final state,
+verified with a zero-diff row-level check across all four tables: 126
+sessions on ericpc, matching the laptop's 125 plus the 1 smoke-test
+session exactly.
+
+**Laptop's server is stopped and its Scheduled Task disabled** (not
+deleted - `schtasks /Change /TN "DriveTraceIngestServer" /DISABLE`, easy
+to re-enable if ericpc ever needs to be rolled back). `server/run_server.ps1`
+and the task itself are left in place, unused, as a fallback.
+
 ## Update: PM2 chosen, build complete and tested, no cutover yet
 
 Process management (the "open choice" a few paragraphs down) is resolved:
