@@ -25,39 +25,41 @@ up cleanly instead of re-deriving context or, worse, redoing work.
 
 ## Current state
 
-**Last commit:** `14039fc` "Fix Send Intent automation crash; add
-visible feedback for Stop" (2026-08-10)
+**Last commit:** `7f540ea` "Add GPS logging toggle to Settings, off by
+default" (2026-08-27/28)
 
-**On the phone right now:** a debug build of `daeef77`, installed and
-confirmed working (back-button navigation and Delete Trip both verified live
-on-device this session).
+**On the phone right now:** a debug build of `7f540ea`, installed and
+confirmed working (`adb install -r` succeeded, correctly signed - see the
+keystore gotcha below before assuming any future build will install cleanly
+by default).
 
-**Server:** running locally on this machine (`localhost:8090` /
-`0.0.0.0:8090`) as the Windows Scheduled Task `DriveTraceIngestServer`
-(action: `server/run_server.ps1`), not as a child process of any particular
-terminal or AI session, so it survives this session/terminal closing. It
-does NOT survive a machine reboot: no `ONLOGON`/`ONSTART` trigger is
-registered (creating one was blocked, Access Denied, in the sandbox this
-session ran in; plain task creation and `/Run` both worked fine). If the
-server's down, run `schtasks /Run /TN "DriveTraceIngestServer"` rather than
-launching uvicorn by hand, so it stays off any session's process tree. It
-has also died or gotten stuck on stale code repeatedly across sessions
-(manual kills for DuckDB single-writer-lock queries, or code changes that
-need a restart to take effect, see Gotchas below). **Check `curl
-http://localhost:8090/health` before assuming it's up and running the code
-you think it's running.**
+**Server has moved: it now runs on ericpc, not this laptop.** This
+laptop's own copy of the server (`server/run_server.ps1`, the
+`DriveTraceIngestServer` Scheduled Task) is stopped and the task disabled
+(not deleted - trivial to re-enable if ericpc ever needs to be rolled
+back), kept only as an inert fallback. Live URL is now
+`https://ericb.duckdns.org:8444` (real TLS via Caddy, replacing the old
+plain-HTTP `:8090`). Full history: `docs/SERVER_MIGRATION_PLAN.md`.
+**The Android build also moved to ericpc** (this laptop's SDK/Gradle
+cache/bundled JDK/AVD were removed to reclaim ~10.8 GB disk; only
+`platform-tools`/`adb` remains here for installing pulled APKs). See the
+`ericpc-ssh` skill (`~/.claude/skills/ericpc-ssh/`) for how to connect,
+what's running there, and every gotcha hit setting this up - don't
+re-derive any of it.
 
-**`schtasks /End` does NOT reliably kill it**, confirmed directly: it stops
-the outer PowerShell wrapper but the `uvicorn.exe` → `python.exe` → (a
-second, anaconda) `python.exe` process chain it spawns survives as an
-orphan, still bound to port 8090. After editing `server/*.py`, actually stop
-it with:
-```
-powershell -Command "Get-CimInstance Win32_Process -Filter \"CommandLine LIKE '%uvicorn%'\" | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }"
-```
-then `schtasks /Run /TN "DriveTraceIngestServer"`. Verify with the
-`Get-CimInstance` line alone (no processes listed = actually stopped) before
-assuming a restart worked.
+**PM2 on ericpc was NOT actually persistent until 2026-08-27** despite
+looking like it (see the `ericpc-ssh` skill for the full story) - it went
+down completely (both this app and the unrelated "Our Calendar" app it
+shares the machine with) on a routine reboot, and wasn't even surviving
+between separate SSH commands before that. Fixed with a SYSTEM-run,
+boot-time Scheduled Task. **After any ericpc reboot, verify rather than
+assume**: `ssh 192.168.0.129 "pm2 list"` should show all three apps
+`online` with a real uptime, not `0s`.
+
+**Check `curl --resolve ericb.duckdns.org:8444:192.168.0.129
+https://ericb.duckdns.org:8444/health` before assuming the server is up and
+running the code you think it's running** - same discipline as before, new
+URL.
 
 **Recently built and verified working:** live gauge cluster, PDF trip-report
 export, drive-to-drive comparison, premium display skins, Settings screen
@@ -90,16 +92,27 @@ note.
   recently idea #11 (cross-vehicle YMM comparison) and #12 (auto drive-end
   detection, designed but not built).
 
-## Environment gotchas (learned the hard way this session)
+## Environment gotchas (accumulated across sessions, not just one)
 
-- **`JAVA_HOME`** doesn't persist across separate shell invocations in this
-  environment. Set it explicitly every time before Gradle:
-  `C:\Users\ericm\AppData\Local\Android\jdk\jdk-21.0.12+8`
-- **adb over wireless debugging**: the phone's IP:port
-  (`192.168.0.138:37081` as of this session) changes unpredictably. If `adb
-  devices` comes up empty, ask Eric to check Settings → Developer options →
-  Wireless debugging on the phone for the current value; there's no way to
-  discover it from the PC side alone.
+- **The build now happens on ericpc, not this laptop** (see Current state
+  above and the `ericpc-ssh` skill) - this laptop has no Android SDK/Gradle
+  cache/JDK anymore, only `adb`. Don't try to `gradlew assembleDebug`
+  locally here; SSH to ericpc instead.
+- **ericpc's debug-signing keystore is NOT at the standard
+  `%USERPROFILE%\.android\debug.keystore` path** - it's at
+  `C:\Android\.android\debug.keystore`, a leftover from a pre-existing,
+  years-old install on that machine. A build signed with a keystore only
+  placed at the "textbook" path installs fine standalone but fails with
+  `INSTALL_FAILED_UPDATE_INCOMPATIBLE` over an existing install. Full
+  detail in the `ericpc-ssh` skill; don't re-diagnose this from scratch.
+- **adb over wireless debugging**: the phone's IP:port changes
+  unpredictably, and pairing (Settings → Developer options → Wireless
+  debugging → "Pair device with pairing code") is separate from the
+  connect address on the main screen - both rotate, there's no way to
+  discover either from the PC side alone. Once paired, `adb connect` can
+  also succeed via mDNS auto-discovery (shows up as
+  `adb-<id>._adb-tls-connect._tcp` in `adb devices`) without needing a
+  fresh IP:port each time - try that before asking Eric for a new address.
 - **PowerShell's `>` redirect corrupts binary data.** Confirmed directly:
   pulling the Room SQLite file via `adb ... exec-out ... > file.db` through
   PowerShell injected a UTF-8 BOM and mangled bytes mid-file. Use a
@@ -112,14 +125,16 @@ note.
   above). The token is already in `run_server.ps1`, it's also baked into
   the Android build via `BuildConfig.INGEST_TOKEN`; no need to ask Eric to
   retype it.
-- **The server runs as a Scheduled Task, not a shell child process, on
-  purpose** (`schtasks /Query /TN "DriveTraceIngestServer"` to check it,
-  `/Run` to start, `/End` to stop). Eric asked for this explicitly: he
-  switches between AI assistants and closes terminals/sessions between
-  them, and a server started as a plain background shell command dies with
-  whatever session started it. Don't "simplify" this back to a bare
-  `uvicorn ...` invocation in a terminal, that reintroduces the exact
-  problem this setup exists to avoid.
+- **The server must survive the session that started it, on purpose** -
+  Eric switches between AI assistants and closes terminals/sessions between
+  them. On ericpc this is PM2 plus the boot-time `PM2Resurrect` Scheduled
+  Task (see Current state above); on this laptop, if the disabled fallback
+  is ever re-enabled, it's `server/run_server.ps1` via the
+  `DriveTraceIngestServer` Scheduled Task. Never "simplify" either back to
+  a bare command in an interactive terminal or SSH session - that
+  reintroduces the exact problem this setup exists to avoid, and on ericpc
+  specifically, a PM2 daemon spawned that way dies the moment the launching
+  console closes (see the `ericpc-ssh` skill).
 - **Room's schema is on `fallbackToDestructiveMigration(dropAllTables =
   true)`** (see `AppDatabase.kt`'s own comment). Bumping the DB version
   wipes every session on the phone with no migration path. If a real schema
@@ -340,3 +355,72 @@ note.
   look right.
 - Server was healthy and untouched this entry, no server-side changes.
 - Committed as `14039fc`.
+
+### 2026-08-26 to 2026-08-28 (Claude Code)
+
+Large scope, several distinct threads. Summary here; full detail lives in
+`docs/SERVER_MIGRATION_PLAN.md` and the `ericpc-ssh` skill
+(`~/.claude/skills/ericpc-ssh/`) rather than duplicated in this file.
+
+- **Server migration to ericpc, completed and cut over.** Real TLS via
+  Caddy at `https://ericb.duckdns.org:8444` replaces the old plain-HTTP
+  `:8090` (that port turned out to be genuinely internet-reachable despite
+  being documented as never-forwarded - background scanner noise
+  confirmed it, no evidence of actual unauthorized access to real
+  DriveTrace endpoints, but the bearer token had been going out in
+  cleartext to the open internet, which real TLS now fixes). Database
+  migrated with a row-level diff, not a blind overwrite, after discovering
+  a naive copy would have both lost a smoke-test session on ericpc's side
+  and missed a few sessions that had drifted on the laptop's side from a
+  backfill retry re-delivering data after the original snapshot. Android
+  app rebuilt against the new URL, `network_security_config.xml`'s
+  cleartext exception removed. Laptop's own server stopped, its Scheduled
+  Task disabled (not deleted).
+- **PM2 on ericpc was silently non-persistent** - discovered when both this
+  app and "Our Calendar" (a separate app sharing that machine) were found
+  completely down after a routine reboot. Root cause and fix in the
+  `ericpc-ssh` skill; the short version is PM2's daemon was never
+  registered as a real Windows Service, so it wasn't surviving reboots or
+  even separate SSH sessions. Fixed with a SYSTEM-run, boot-time Scheduled
+  Task. This should be treated as resolved but **worth a skeptical check**
+  after any future ericpc reboot rather than assumed.
+- **Android build moved to ericpc too**, specifically to reclaim disk space
+  on this laptop (~10.8 GB: SDK, Gradle cache, bundled JDK, and an unused
+  AVD emulator - confirmed unused by grepping this file's own history for
+  "emulator"/"AVD" and finding zero real hits despite extensive real-device
+  testing logged here). Real debugging required, not just a config copy -
+  three separate issues, all in the `ericpc-ssh` skill: a Gradle
+  wrapper-download timeout against `services.gradle.org` specific to
+  ericpc's network path, this laptop's Bash tool silently mangling
+  Windows backslashes when writing `local.properties` there, and (the real
+  one) ericpc's debug-signing keystore resolving to `C:\Android\.android\`
+  instead of the standard path, which silently signed builds with the
+  wrong key until found and fixed.
+- **GPS logging toggle added to Settings, off by default** (`7f540ea`).
+  Motivated by battery drain: `LocationCollector.kt`'s
+  `PRIORITY_HIGH_ACCURACY` + 1-second interval is one of the largest
+  battery draws on Android, and a real-data check (9,000+ matched
+  samples, GPS vs OBD's own Vehicle Speed PID) found 0.996 correlation
+  and 1.57 km/h mean absolute difference between the two - meaning
+  turning GPS off costs route/position data, not speed accuracy. New
+  `LocationSettings.kt` mirrors `DisplaySettings.kt`'s
+  StateFlow-over-SharedPreferences shape.
+  `DriveLoggingService`'s location-collection job is only launched when
+  the toggle is on; off means no `FusedLocationProviderClient` request is
+  made at all, not merely a discarded result. Built on ericpc, installed
+  on the real phone, confirmed installing cleanly (correct signing cert).
+  **Not yet used on a real drive** - the toggle itself hasn't been
+  exercised end to end, only confirmed to build/install without breaking
+  anything.
+- **Still open, planned for next session**: a live logcat capture while
+  Eric actually connects to the car, to find a MacroDroid trigger more
+  reliable than raw Bluetooth Device Connected/Disconnected for
+  starting/stopping a session automatically. That trigger bounces through
+  connect→drop→reconnect→Android Auto handshake→settle, which is the
+  actual source of unreliable start/stop, not anything in
+  `AutomationReceiver` itself (it doesn't care what triggers the Send
+  Intent). Likely candidates going in: MacroDroid's Notification Listener
+  trigger on Android Auto's "Connected to car" notification, or an
+  Application Launched trigger on Android Auto's own package - but confirm
+  against the real logcat sequence rather than assuming either works
+  before actually watching what happens on a real connect.
