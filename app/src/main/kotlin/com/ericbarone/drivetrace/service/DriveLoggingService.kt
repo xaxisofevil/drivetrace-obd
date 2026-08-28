@@ -23,6 +23,7 @@ import com.ericbarone.drivetrace.data.SessionEntity
 import com.ericbarone.drivetrace.location.LocationCollector
 import com.ericbarone.drivetrace.obd.BluetoothTransport
 import com.ericbarone.drivetrace.obd.ElmSession
+import com.ericbarone.drivetrace.ui.LocationSettings
 import com.ericbarone.drivetrace.obd.PidScheduler
 import com.ericbarone.drivetrace.obd.VehicleProfile
 import kotlinx.coroutines.CoroutineScope
@@ -203,27 +204,36 @@ class DriveLoggingService : Service() {
             startedAtMs = System.currentTimeMillis(),
         )
 
-        // GPS runs for the whole session regardless of Bluetooth reconnects.
-        val locationJob = serviceScope.launch {
-            LocationCollector(applicationContext).samples(startElapsedNs).collect { sample ->
-                dao.insertLocation(
-                    LocationEntity(
-                        sessionId = sessionId,
-                        elapsedNs = sample.elapsedNs,
-                        wallTimeUtc = sample.wallTimeUtc,
-                        latitude = sample.latitude,
-                        longitude = sample.longitude,
-                        altitudeM = sample.altitudeM,
-                        speedMps = sample.speedMps,
-                        bearingDeg = sample.bearingDeg,
-                        horizontalAccuracyM = sample.horizontalAccuracyM,
-                        provider = sample.provider,
-                    ),
-                )
-                streamingClient.postLocation(sessionId, sample)
-                val current = LoggingStatus.state.value
-                LoggingStatus.state.value = current.copy(locationCount = current.locationCount + 1)
+        // GPS runs for the whole session regardless of Bluetooth reconnects - but only if the
+        // Settings toggle has it on (see LocationSettings; off by default). When off, no
+        // FusedLocationProviderClient request is ever made, not just an ignored result: the
+        // point is avoiding the GPS chip's own battery cost, not merely discarding fixes after
+        // the fact. OBD's own Vehicle Speed PID keeps working either way (see LocationSettings'
+        // doc comment for why that's an acceptable trade, not just a cheaper one).
+        val locationJob = if (LocationSettings.enabled.value) {
+            serviceScope.launch {
+                LocationCollector(applicationContext).samples(startElapsedNs).collect { sample ->
+                    dao.insertLocation(
+                        LocationEntity(
+                            sessionId = sessionId,
+                            elapsedNs = sample.elapsedNs,
+                            wallTimeUtc = sample.wallTimeUtc,
+                            latitude = sample.latitude,
+                            longitude = sample.longitude,
+                            altitudeM = sample.altitudeM,
+                            speedMps = sample.speedMps,
+                            bearingDeg = sample.bearingDeg,
+                            horizontalAccuracyM = sample.horizontalAccuracyM,
+                            provider = sample.provider,
+                        ),
+                    )
+                    streamingClient.postLocation(sessionId, sample)
+                    val current = LoggingStatus.state.value
+                    LoggingStatus.state.value = current.copy(locationCount = current.locationCount + 1)
+                }
             }
+        } else {
+            null
         }
 
         // CONFIRMED REAL BUG, fixed here: updateNotification() used to only ever be called once,
@@ -384,7 +394,7 @@ class DriveLoggingService : Service() {
                 }
             }
         } finally {
-            locationJob.cancel()
+            locationJob?.cancel()
             notificationTickerJob.cancel()
             transport.close()
         }

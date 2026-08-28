@@ -73,6 +73,7 @@ fun SettingsScreen(onBack: () -> Unit) {
     val context = LocalContext.current
     val skinId by DisplaySettings.skin.collectAsState()
     val highContrast by DisplaySettings.highContrast.collectAsState()
+    val gpsEnabled by LocationSettings.enabled.collectAsState()
     // First read is also what generates it, so the token exists from the first time anyone could
     // want to copy it and never before.
     val automationToken = remember { AutomationReceiver.token(context) }
@@ -121,6 +122,19 @@ fun SettingsScreen(onBack: () -> Unit) {
                 onToggle = { DisplaySettings.setHighContrast(context, it) },
                 title = "Daylight readout boost",
                 detail = "Brighter hero numerals for direct sun. Background stays dark.",
+            )
+
+            Spacer(Modifier.height(Space.xs))
+            SectionLabel("Location")
+
+            ToggleRow(
+                checked = gpsEnabled,
+                onToggle = { LocationSettings.setEnabled(context, it) },
+                title = "GPS logging",
+                detail = "Off by default: GPS is one of the biggest battery draws on Android. " +
+                    "OBD's own Vehicle Speed keeps logging either way (it tracks GPS speed to " +
+                    "within 1-2 km/h on average) - turning this off costs the route map and " +
+                    "position data, not speed.",
             )
 
             Spacer(Modifier.height(Space.xs))

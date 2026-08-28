@@ -16,6 +16,7 @@ import com.ericbarone.drivetrace.service.LoggingStatus
 import com.ericbarone.drivetrace.service.LoggingUiState
 import com.ericbarone.drivetrace.ui.CompareScreen
 import com.ericbarone.drivetrace.ui.DisplaySettings
+import com.ericbarone.drivetrace.ui.LocationSettings
 import com.ericbarone.drivetrace.ui.HistoryScreen
 import com.ericbarone.drivetrace.ui.LoggingScreen
 import com.ericbarone.drivetrace.ui.SettingsScreen
@@ -34,6 +35,7 @@ class MainActivity : ComponentActivity() {
         // Before setContent, so the first frame is already in the right display mode rather than
         // rendering the standard palette and correcting itself a frame later.
         DisplaySettings.load(applicationContext)
+        LocationSettings.load(applicationContext)
 
         setContent {
             val skinId by DisplaySettings.skin.collectAsState()
