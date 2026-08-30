@@ -25,14 +25,28 @@ from typing import Optional
 
 import duckdb
 from fastapi import Depends, FastAPI, Header, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
-from . import analysis_worker
+from . import analysis_worker, dashboard_stats
 
 DB_PATH = Path(os.environ.get("DRIVETRACE_DB_PATH", Path(__file__).resolve().parent / "drivetrace.duckdb"))
 EXPECTED_TOKEN = os.environ.get("DRIVETRACE_INGEST_TOKEN")
 
 app = FastAPI(title="DriveTrace ingest server")
+
+# Only needed for the read-only /dashboard/summary route below, fetched from the
+# quick-hosted dashboard (http://<site>.quick.localhost:8787) rather than from
+# the Android app, which never runs in a browser and so never triggers CORS at
+# all. Scoped to that one local-only origin family and GET, not a blanket
+# allow-all: the write endpoints above don't need it and shouldn't get it.
+app.add_middleware(
+    CORSMiddleware,
+    allow_origin_regex=r"^http://([a-zA-Z0-9-]+\.)?quick\.localhost:8787$",
+    allow_methods=["GET"],
+    allow_headers=["Authorization"],
+)
+
 _db_lock = threading.Lock()
 _conn = duckdb.connect(str(DB_PATH))
 
@@ -434,6 +448,30 @@ def delete_session(session_id: int):
             raise
     analysis_worker.forget(session_id)
     return {"ok": True, "session_id": session_id}
+
+
+@app.get("/dashboard/summary", dependencies=[Depends(_require_auth)])
+def dashboard_summary(refresh: bool = False):
+    """Read-only aggregate/summary JSON for the DriveTrace dashboard (see
+    dashboard-mockups/01-instrument-dense.html and its deployed counterpart in
+    xaxisofevil/quick's sites/drivetrace-dashboard/). Reuses scripts/analyze_drive.py's
+    per-session functions across every eligible session, the same way
+    analysis_worker.py does for one session at a time; see dashboard_stats.py for
+    why this has to live in-process here rather than as a standalone script.
+
+    Same bearer-token auth as every other route on this server, a deliberate choice
+    over leaving it open: this port is genuinely internet-reachable (see
+    docs/SERVER_MIGRATION_PLAN.md's port-8090-was-never-forwarded finding, which
+    turned out to be wrong), so an unauthenticated aggregate-stats endpoint would
+    still be handing driving data to the open internet. The token is safe to embed
+    client-side in the dashboard's JS because that dashboard is only ever served
+    locally via quick's *.quick.localhost:8787 pattern; it never leaves this
+    machine/network.
+
+    ?refresh=true bypasses dashboard_stats' short in-process cache for a manual
+    "get me the latest" reload; omit it for the normal cached path.
+    """
+    return dashboard_stats.compute_summary(_conn, _db_lock, force=refresh)
 
 
 @app.get("/health")
