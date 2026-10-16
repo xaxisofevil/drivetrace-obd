@@ -17,4 +17,7 @@ enum class VehicleProfile(
 ) {
     MAZDA_6_2020("2020 Mazda 6 2.5T", MazdaPidCatalog, MazdaPerformancePidCatalog),
     SUBARU_OUTBACK_2014("2014 Subaru Outback 2.5i", SubaruPidCatalog),
+
+    /** Standard Mode 01 only; where a car that announced itself but matches nothing else lands. */
+    GENERIC("Unassigned car (generic OBD-II)", GenericPidCatalog),
 }

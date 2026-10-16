@@ -41,6 +41,28 @@ macro.
 receiver does not receive implicit broadcasts, so an intent carrying only the
 action string is delivered to nothing at all and fails silently.
 
+### Car identity and vehicle state (Android Auto callers)
+
+A caller that can see the head unit (Pollux, in this project) sends more than start and
+stop. Every extra is a String; all are optional, and anything unrecognised is ignored.
+
+| Command | Extras | Effect |
+|---|---|---|
+| `start` | `trigger` (`gear`, `link`), `gear`, `car_make`, `car_model`, `car_year`, `car_vehicle_id`, `mode` | Starts a session. The car named by `car_*` overrides the Setup screen's vehicle and is added to the known-cars registry if new. Everything is recorded in a `SESSION_START` event. |
+| `stop` | `trigger` (`gear`, `link`, `deadman`), `gear` | Stops the session. Recorded in a `SESSION_STOP` event. |
+| `identity` | `car_make`, `car_model`, `car_year`, `car_vehicle_id`, `head_unit_make`, `head_unit_model`, `head_unit_sw`, `ts` | Identity that arrived after the start. Updates the registry; logged as an `IDENTITY` event, as a WARNING if the car resolves to a different profile than the one polling. |
+| `vehicle` | `gear`, `parking_brake`, `driving_status`, `ts` | Logged as a `VEHICLE_STATE` event on the running session. Dropped when no session is live. |
+
+Choosing the profile from `car_*`: an existing registry entry (matched on `car_vehicle_id`, else
+make/model/year); else a model with a dedicated profile (Mazda 6, Subaru Outback); else, for the
+very first car ever registered, whatever the Setup screen had selected; else the generic profile,
+which polls standard Mode 01 PIDs only and flags the session with an `UNASSIGNED_CAR` event.
+The registry lives in SharedPreferences, not Room.
+
+A session that never connects to the adapter within three minutes ends itself with
+completion status `NO_OBD` (and a `NO_OBD` event), so a start fired on a day the adapter is not
+in the car does not retry forever.
+
 ### Performance mode
 
 Performance logging is a mode of the running session, not a separate car or
@@ -219,7 +241,7 @@ nothing else in the app uses that tag.
 | `start accepted, dispatched to DriveLoggingService.` | Working as intended. |
 | `Rejected "start": no 'token' extra.` | The macro is missing the second extra. |
 | `Rejected "start": 'token' does not match...` | Wrong or stale token. Re-copy it from the Settings screen. Neither the sent nor the expected token is ever logged. |
-| `Authenticated but ignored: unknown command "..."` | The `command` extra is something other than `start`, `stop` or `performance`. |
+| `Authenticated but ignored: unknown command "..."` | The `command` extra is something other than `start`, `stop`, `performance`, `vehicle` or `identity`. |
 | `performance ignored: 'mode' must be on, off or toggle` | The `mode` extra is missing or misspelled. |
 | `performance "on" ignored: no session is running.` | Nothing is logging yet, so there is nothing to switch. Use `start` with `mode=performance` instead. |
 | `start ignored: no adapter has ever been selected...` | Step 1 above was skipped. |

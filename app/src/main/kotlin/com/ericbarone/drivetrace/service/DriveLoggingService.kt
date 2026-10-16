@@ -40,6 +40,7 @@ private const val NOTIFICATION_ID = 1
 private const val INITIAL_BACKOFF_MS = 1_000L
 private const val MAX_BACKOFF_MS = 15_000L
 private const val SETUP_TIMEOUT_MS = 30_000L
+private const val NO_OBD_TIMEOUT_NS = 180_000_000_000L
 // How often the foreground notification (shade + lock screen) is refreshed with live sample/GPS
 // counts. Matches Tier B's own "every 2-5s" cadence reasoning elsewhere in this project: fast
 // enough that a glance at the lock screen mid-drive looks alive, far below the rate that would
@@ -64,20 +65,48 @@ class DriveLoggingService : Service() {
         const val EXTRA_NOTES = "notes"
         const val EXTRA_START_PERFORMANCE = "start_performance"
         const val EXTRA_PERFORMANCE_MODE = "performance_mode"
+        const val EXTRA_START_DETAILS = "start_details"
+        const val EXTRA_STOP_DETAILS = "stop_details"
+        const val ACTION_RECORD_EVENT = "com.ericbarone.drivetrace.action.RECORD_EVENT"
+        const val EXTRA_EVENT_TYPE = "event_type"
+        const val EXTRA_EVENT_SEVERITY = "event_severity"
+        const val EXTRA_EVENT_MESSAGE = "event_message"
+        const val EXTRA_EXPECTED_PROFILE = "expected_profile"
 
         /** [performanceMode] starts the session on the car's performance catalog; ignored for a
-         * car with none. Without it every session starts in normal mode. */
+         * car with none. Without it every session starts in normal mode. [startDetails] is the
+         * free text recorded as the session's SESSION_START event (what triggered it, which car
+         * the head unit named). */
         fun startIntent(
             context: Context,
             deviceAddress: String,
             vehicleProfile: VehicleProfile,
             performanceMode: Boolean = false,
+            startDetails: String = "trigger=manual",
         ): Intent =
             Intent(context, DriveLoggingService::class.java).apply {
                 action = ACTION_START
                 putExtra(EXTRA_DEVICE_ADDRESS, deviceAddress)
                 putExtra(EXTRA_VEHICLE_PROFILE, vehicleProfile.name)
                 putExtra(EXTRA_START_PERFORMANCE, performanceMode)
+                putExtra(EXTRA_START_DETAILS, startDetails)
+            }
+
+        /** An event to log on the running session. [expectedProfile], when set, is the profile the
+         * caller resolved for the car; a session polling a different one gets a WARNING instead. */
+        fun recordEventIntent(
+            context: Context,
+            eventType: String,
+            message: String,
+            severity: String = "INFO",
+            expectedProfile: VehicleProfile? = null,
+        ): Intent =
+            Intent(context, DriveLoggingService::class.java).apply {
+                action = ACTION_RECORD_EVENT
+                putExtra(EXTRA_EVENT_TYPE, eventType)
+                putExtra(EXTRA_EVENT_SEVERITY, severity)
+                putExtra(EXTRA_EVENT_MESSAGE, message)
+                expectedProfile?.let { putExtra(EXTRA_EXPECTED_PROFILE, it.name) }
             }
 
         /** [mode] is "on", "off" or "toggle". */
@@ -90,10 +119,11 @@ class DriveLoggingService : Service() {
         /** [notes] is the optional free-text note typed into the Stop dialog. Null from the
          * notification's own Stop action, which has no way to collect one; a null note leaves
          * whatever is already on the session row alone rather than blanking it. */
-        fun stopIntent(context: Context, notes: String? = null): Intent =
+        fun stopIntent(context: Context, notes: String? = null, stopDetails: String? = null): Intent =
             Intent(context, DriveLoggingService::class.java).apply {
                 action = ACTION_STOP
                 if (!notes.isNullOrBlank()) putExtra(EXTRA_NOTES, notes)
+                stopDetails?.let { putExtra(EXTRA_STOP_DETAILS, it) }
             }
     }
 
@@ -168,11 +198,16 @@ class DriveLoggingService : Service() {
                     activeProfile = vehicleProfile
                     performanceMode = vehicleProfile.performanceCatalog != null &&
                         intent.getBooleanExtra(EXTRA_START_PERFORMANCE, false)
-                    sessionJob = serviceScope.launch { runSession(deviceAddress, vehicleProfile) }
+                    val startDetails = intent.getStringExtra(EXTRA_START_DETAILS) ?: "trigger=manual"
+                    sessionJob = serviceScope.launch { runSession(deviceAddress, vehicleProfile, startDetails) }
                 }
             }
-            ACTION_STOP -> stopSession(intent.getStringExtra(EXTRA_NOTES))
+            ACTION_STOP -> stopSession(
+                notes = intent.getStringExtra(EXTRA_NOTES),
+                stopDetails = intent.getStringExtra(EXTRA_STOP_DETAILS),
+            )
             ACTION_SET_PERFORMANCE_MODE -> setPerformanceMode(intent.getStringExtra(EXTRA_PERFORMANCE_MODE))
+            ACTION_RECORD_EVENT -> recordExternalEvent(intent)
         }
         return START_NOT_STICKY
     }
@@ -216,28 +251,46 @@ class DriveLoggingService : Service() {
         updateNotification()
     }
 
+    /** Event from the automation receiver (vehicle state, late car identity). Dropped when no
+     * session is running. */
+    private fun recordExternalEvent(intent: Intent) {
+        if (sessionJob == null) return
+        val eventType = intent.getStringExtra(EXTRA_EVENT_TYPE) ?: return
+        var severity = intent.getStringExtra(EXTRA_EVENT_SEVERITY) ?: "INFO"
+        var message = intent.getStringExtra(EXTRA_EVENT_MESSAGE) ?: ""
+        val expected = intent.getStringExtra(EXTRA_EXPECTED_PROFILE)
+        val running = activeProfile
+        if (expected != null && running != null && expected != running.name) {
+            severity = "WARNING"
+            message += " | session is polling ${running.displayName}, identity resolves to $expected"
+        }
+        logSessionEvent(eventType, severity, message)
+    }
+
     /** Event on the running session for callers outside runSession; dropped quietly if the
      * session row does not exist yet. */
     private fun logSessionEvent(eventType: String, severity: String, message: String) {
+        serviceScope.launch { insertSessionEvent(eventType, severity, message) }
+    }
+
+    private suspend fun insertSessionEvent(eventType: String, severity: String, message: String) {
         val sessionId = currentSessionId ?: return
         val elapsedNs = System.nanoTime() - sessionStartElapsedNs
         val wallTimeUtc = System.currentTimeMillis()
-        serviceScope.launch {
-            AppDatabase.getInstance(applicationContext).sessionDao().insertEvent(
-                EventEntity(
-                    sessionId = sessionId,
-                    elapsedNs = elapsedNs,
-                    wallTimeUtc = wallTimeUtc,
-                    eventType = eventType,
-                    severity = severity,
-                    message = message,
-                ),
-            )
-            streamingClient.postEvent(sessionId, elapsedNs, wallTimeUtc, eventType, severity, message)
-        }
+        AppDatabase.getInstance(applicationContext).sessionDao().insertEvent(
+            EventEntity(
+                sessionId = sessionId,
+                elapsedNs = elapsedNs,
+                wallTimeUtc = wallTimeUtc,
+                eventType = eventType,
+                severity = severity,
+                message = message,
+            ),
+        )
+        streamingClient.postEvent(sessionId, elapsedNs, wallTimeUtc, eventType, severity, message)
     }
 
-    private suspend fun runSession(deviceAddress: String, vehicleProfile: VehicleProfile) {
+    private suspend fun runSession(deviceAddress: String, vehicleProfile: VehicleProfile, startDetails: String) {
         val dao = AppDatabase.getInstance(applicationContext).sessionDao()
         acquireWakeLock()
 
@@ -295,6 +348,13 @@ class DriveLoggingService : Service() {
             performanceMode = performanceMode,
             performanceModeAvailable = vehicleProfile.performanceCatalog != null,
         )
+        recordEvent(0L, "SESSION_START", "INFO", "$startDetails profile=${vehicleProfile.name}")
+        if (vehicleProfile == VehicleProfile.GENERIC) {
+            recordEvent(
+                0L, "UNASSIGNED_CAR", "WARNING",
+                "no dedicated profile for this car; polling standard Mode 01 PIDs only",
+            )
+        }
         if (performanceMode) {
             recordEvent(0L, "PERFORMANCE_MODE", "INFO", "performance mode on (session start)")
         }
@@ -348,6 +408,7 @@ class DriveLoggingService : Service() {
         }
 
         var backoffMs = INITIAL_BACKOFF_MS
+        var everConnected = false
         val transport = BluetoothTransport(applicationContext)
 
         try {
@@ -476,6 +537,7 @@ class DriveLoggingService : Service() {
                     }
 
                     backoffMs = INITIAL_BACKOFF_MS // reset after a successful (re)connect
+                    everConnected = true
                     updateNotification()
                     scheduler.run { currentCoroutineIsActive() }
                 } catch (e: Exception) {
@@ -491,6 +553,17 @@ class DriveLoggingService : Service() {
                         System.nanoTime() - startElapsedNs, "RECONNECT", "WARNING",
                         e.message ?: e::class.simpleName ?: "unknown error",
                     )
+                    // An automation start fires every time the car links up, including the days
+                    // the adapter is not in this car or is unplugged. Without a limit that session
+                    // retries until someone notices the notification.
+                    if (!everConnected && System.nanoTime() - startElapsedNs > NO_OBD_TIMEOUT_NS) {
+                        recordEvent(
+                            System.nanoTime() - startElapsedNs, "NO_OBD", "WARNING",
+                            "no OBD connection after ${NO_OBD_TIMEOUT_NS / 1_000_000_000L}s; ending the session",
+                        )
+                        stopSession(notes = null, stopDetails = null, status = "NO_OBD")
+                        break
+                    }
                     delay(backoffMs)
                     backoffMs = (backoffMs * 2).coerceAtMost(MAX_BACKOFF_MS)
                 }
@@ -504,10 +577,12 @@ class DriveLoggingService : Service() {
 
     private fun currentCoroutineIsActive(): Boolean = sessionJob?.isActive == true
 
-    private fun stopSession(notes: String? = null) {
+    private fun stopSession(notes: String? = null, stopDetails: String? = null, status: String = "COMPLETED") {
         val sessionId = currentSessionId
         activeProfile = null
         serviceScope.launch {
+            // Inserted before anything else so the event is in Room by the time backfill reads it.
+            if (stopDetails != null) insertSessionEvent("SESSION_STOP", "INFO", stopDetails)
             sessionJob?.cancel()
             sessionJob = null
             if (sessionId != null) {
@@ -517,7 +592,7 @@ class DriveLoggingService : Service() {
                     dao.updateSession(
                         s.copy(
                             endWallTimeUtc = endWallTimeUtc,
-                            completionStatus = "COMPLETED",
+                            completionStatus = status,
                             // Written here, before backfill runs, so the note is already on the
                             // row when CsvExporter's metadata.json is written. A blank/absent
                             // note keeps whatever was there rather than clearing it.
@@ -525,7 +600,7 @@ class DriveLoggingService : Service() {
                         ),
                     )
                 }
-                streamingClient.endSession(sessionId, endWallTimeUtc, "COMPLETED")
+                streamingClient.endSession(sessionId, endWallTimeUtc, status)
                 // The note typed into the Stop dialog. /start fired before it existed and /end
                 // carries no note field, so without this the server's copy stays null for a note
                 // the driver typed thirty seconds ago. Fire-and-forget, after the local write:
