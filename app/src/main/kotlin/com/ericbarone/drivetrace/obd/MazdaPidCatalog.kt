@@ -65,6 +65,8 @@ object MazdaPidCatalog : PidCatalog {
             { IntakeManifoldPressureDesiredCommand() },
             { TurbochargerACompressorInletPressureCommand() },
             { TurbochargerBCompressorInletPressureCommand() },
+            { ChargeAirCoolerTemperatureCommand() }, // presumed post-intercooler, see MazdaEnhancedCommands.kt
+            { BoostedAirTemperatureCommand() }, // presumed pre-intercooler, same source
         )
 
     override fun tierC(): List<() -> ObdCommand> =

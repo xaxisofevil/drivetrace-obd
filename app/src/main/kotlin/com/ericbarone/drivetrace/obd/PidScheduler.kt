@@ -80,6 +80,9 @@ private val PLAUSIBLE_RANGES: Map<String, ClosedFloatingPointRange<Double>> = ma
     "Turbocharger B Compressor Inlet Pressure" to 0.0..2040.0,
     "Knock Retard" to -70.0..70.0, // formula's own extremes are -64..+64; generous margin beyond that
     "Knock Control System" to -3.0..3.0, // formula's own extremes are -2.0..+2.0, see note above
+    // Same formula shape (A-40 / C-40) as the standard IAT PID, so the same plausible range.
+    "Charge Air Cooler Temperature" to -40.0..215.0,
+    "Boosted Air Temperature" to -40.0..215.0,
     "Intake Manifold Pressure" to 0.0..400.0,
     "Barometric Pressure" to 50.0..150.0,
     "Distance traveled since codes cleared" to 0.0..100_000.0,

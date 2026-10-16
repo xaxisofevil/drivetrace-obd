@@ -141,3 +141,42 @@ class KnockControlSystemCommand : ObdCommand() {
         "%.2f".format((signedA * 256 + byteB) / 16384f)
     }
 }
+
+/**
+ * Source: "Charge Air Cooler Temperature,CACT,0x22f477,C-40,-40,100,degC". Added for the
+ * intercooler-effectiveness question raised 2026-10: paired with BoostedAirTemperatureCommand
+ * (DID F446, read on the same request cadence), this is meant to be the post-intercooler side of
+ * a two-point delta, assuming the two DIDs' names mean what they say (unconfirmed, same
+ * community-CSV provenance as every other command in this file, no official Mazda documentation
+ * backing it). "C" is the third data byte per this file's established lettering, index 5 after
+ * the 3-byte mode-22 echo.
+ */
+class ChargeAirCoolerTemperatureCommand : ObdCommand() {
+    override val tag = "CHARGE_AIR_COOLER_TEMPERATURE"
+    override val name = "Charge Air Cooler Temperature"
+    override val mode = "22"
+    override val pid = "F477"
+    override val defaultUnit = "°C"
+    override val handler = { response: ObdRawResponse ->
+        "%.1f".format(bytesToInt(response.bufferedValue, start = 5, bytesToProcess = 1) - 40)
+    }
+}
+
+/**
+ * Source: "MZ Boosted Air Temperature,BOOST AIR TEMP,0x22f446,A-40,-40,100,degC". The presumed
+ * pre-intercooler half of the same delta as ChargeAirCoolerTemperatureCommand: "Boosted" (i.e.
+ * compressed, pre-cooling) air temperature, read from the first data byte (index 3), distinct
+ * from the standard PID 0F AirIntakeTemperatureCommand already polled elsewhere, which measures
+ * somewhere else in the intake tract entirely (exact location unconfirmed, see the 2026-10
+ * research that prompted adding this command).
+ */
+class BoostedAirTemperatureCommand : ObdCommand() {
+    override val tag = "BOOSTED_AIR_TEMPERATURE"
+    override val name = "Boosted Air Temperature"
+    override val mode = "22"
+    override val pid = "F446"
+    override val defaultUnit = "°C"
+    override val handler = { response: ObdRawResponse ->
+        "%.1f".format(bytesToInt(response.bufferedValue, start = 3, bytesToProcess = 1) - 40)
+    }
+}
