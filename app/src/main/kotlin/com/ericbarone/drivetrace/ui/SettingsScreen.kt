@@ -32,7 +32,11 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
+import androidx.compose.foundation.clickable
+import com.ericbarone.drivetrace.obd.VehicleProfile
 import com.ericbarone.drivetrace.service.AutomationReceiver
+import com.ericbarone.drivetrace.service.CarRegistry
+import com.ericbarone.drivetrace.ui.theme.Ash
 import com.ericbarone.drivetrace.ui.components.Caption
 import com.ericbarone.drivetrace.ui.components.HeaderBar
 import com.ericbarone.drivetrace.ui.components.InstrumentPanel
@@ -138,11 +142,79 @@ fun SettingsScreen(onBack: () -> Unit) {
             )
 
             Spacer(Modifier.height(Space.xs))
+            SectionLabel("Known cars")
+            KnownCarsSection()
+
+            Spacer(Modifier.height(Space.xs))
             SectionLabel("Automation")
 
             AutomationTokenRow(token = automationToken)
 
             Spacer(Modifier.height(Space.section))
+        }
+    }
+}
+
+/**
+ * Cars the head unit has identified, each with the profile its sessions poll. Tapping a car opens
+ * a profile picker and a Remove action; a reassignment applies from that car's next start. The
+ * main use is pointing an unassigned car (generic profile) at a dedicated one.
+ */
+@Composable
+private fun KnownCarsSection() {
+    val context = LocalContext.current
+    val type = LocalReadoutType.current
+    var version by remember { mutableStateOf(0) }
+    var expandedId by remember { mutableStateOf<Long?>(null) }
+    val cars = remember(version) { CarRegistry.list(context) }
+
+    if (cars.isEmpty()) {
+        Caption("No cars yet. A car appears here the first time the head unit identifies it.")
+        return
+    }
+
+    val dateFormat = remember { java.text.SimpleDateFormat("MMM d, HH:mm", java.util.Locale.getDefault()) }
+    for (car in cars) {
+        val expanded = expandedId == car.id
+        InstrumentPanel(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clickable { expandedId = if (expanded) null else car.id },
+            accent = if (car.profile == VehicleProfile.GENERIC) Ash else null,
+            contentPadding = PaddingValues(horizontal = Space.lg, vertical = Space.md),
+        ) {
+            Text(car.identity.label(), style = type.small, color = Chalk, maxLines = 1)
+            Text(
+                "${car.profile.displayName} | last seen ${dateFormat.format(java.util.Date(car.lastSeenMs))}",
+                style = type.unit,
+                color = Slate,
+                maxLines = 2,
+            )
+            if (car.identity.vehicleId.isNotBlank()) {
+                Text("id ${car.identity.vehicleId}", style = type.mono, color = Slate, maxLines = 1)
+            }
+        }
+        if (expanded) {
+            for (profile in VehicleProfile.entries) {
+                SelectableRow(
+                    selected = profile == car.profile,
+                    onSelect = {
+                        CarRegistry.reassign(context, car.id, profile)
+                        version++
+                    },
+                    title = profile.displayName,
+                    detail = if (profile == VehicleProfile.GENERIC) "Standard OBD-II PIDs only" else "Dedicated PID set",
+                )
+            }
+            SecondaryAction(
+                text = "Remove this car",
+                onClick = {
+                    CarRegistry.remove(context, car.id)
+                    expandedId = null
+                    version++
+                },
+                modifier = Modifier.fillMaxWidth(),
+            )
         }
     }
 }

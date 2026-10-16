@@ -91,6 +91,39 @@ object CarRegistry {
         return resolution
     }
 
+    /** One registry entry as the Known cars screen shows it. [id] is the first-seen timestamp. */
+    data class KnownCar(
+        val id: Long,
+        val identity: CarIdentity,
+        val profile: VehicleProfile,
+        val lastSeenMs: Long,
+    )
+
+    @Synchronized
+    fun list(context: Context): List<KnownCar> =
+        load(prefs(context)).sortedByDescending { it.lastSeenMs }.map {
+            KnownCar(it.firstSeenMs, it.identity, profileFor(it.profileName), it.lastSeenMs)
+        }
+
+    /** Points a known car at [profile]. Takes effect on the car's next start. */
+    @Synchronized
+    fun reassign(context: Context, id: Long, profile: VehicleProfile) {
+        val prefs = prefs(context)
+        val entries = load(prefs).map { if (it.firstSeenMs == id) it.copy(profileName = profile.name) else it }
+        prefs.edit().putString(PREF_KNOWN_CARS, serialize(entries)).commit()
+    }
+
+    /** Forgets a car. Its next appearance is treated as a new car. */
+    @Synchronized
+    fun remove(context: Context, id: Long) {
+        val prefs = prefs(context)
+        val entries = load(prefs).filterNot { it.firstSeenMs == id }
+        prefs.edit().putString(PREF_KNOWN_CARS, serialize(entries)).commit()
+    }
+
+    private fun prefs(context: Context) =
+        context.applicationContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+
     private fun profileFor(name: String): VehicleProfile =
         VehicleProfile.entries.find { it.name == name } ?: VehicleProfile.GENERIC
 

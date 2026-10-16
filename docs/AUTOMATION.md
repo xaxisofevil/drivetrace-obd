@@ -57,7 +57,8 @@ Choosing the profile from `car_*`: an existing registry entry (matched on `car_v
 make/model/year); else a model with a dedicated profile (Mazda 6, Subaru Outback); else, for the
 very first car ever registered, whatever the Setup screen had selected; else the generic profile,
 which polls standard Mode 01 PIDs only and flags the session with an `UNASSIGNED_CAR` event.
-The registry lives in SharedPreferences, not Room.
+The registry lives in SharedPreferences, not Room. Settings > Known cars lists every
+entry, reassigns a car to another profile (effective from its next start) and removes it.
 
 A session that never connects to the adapter within three minutes ends itself with
 completion status `NO_OBD` (and a `NO_OBD` event), so a start fired on a day the adapter is not
