@@ -54,7 +54,7 @@ stop. Every extra is a String; all are optional, and anything unrecognised is ig
 | `vehicle` | `gear`, `parking_brake`, `driving_status`, `ts` | Logged as a `VEHICLE_STATE` event on the running session. Dropped when no session is live. |
 
 Choosing the profile from `car_*`: an existing registry entry (matched on `car_vehicle_id`, else
-make/model/year); else a model with a dedicated profile (Mazda 6, Subaru Outback); else, for the
+make/model/year); else a make/model with a dedicated profile (Mazda, or Subaru Outback; the Mazda head unit sends a 32-character hash as the model, so any Mazda matches); else, for the
 very first car ever registered, whatever the Setup screen had selected; else the generic profile,
 which polls standard Mode 01 PIDs only and flags the session with an `UNASSIGNED_CAR` event.
 The registry lives in SharedPreferences, not Room. Settings > Known cars lists every

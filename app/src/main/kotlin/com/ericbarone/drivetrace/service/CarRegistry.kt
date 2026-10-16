@@ -8,6 +8,7 @@ import org.json.JSONArray
 import org.json.JSONObject
 
 private const val PREF_KNOWN_CARS = "known_cars_json"
+private val OPAQUE_MODEL = Regex("[0-9a-fA-F]{32}")
 
 /** What the head unit says about the car, as sent by the automation caller. Blank means unknown. */
 data class CarIdentity(
@@ -18,8 +19,12 @@ data class CarIdentity(
 ) {
     val isEmpty: Boolean get() = make.isBlank() && model.isBlank() && year.isBlank() && vehicleId.isBlank()
 
+    /** The Mazda head unit sends a 32-character hash as the model, which is no use to display. */
+    val modelIsOpaque: Boolean get() = OPAQUE_MODEL.matches(model.trim())
+
     fun label(): String =
-        listOf(make, model, year).filter { it.isNotBlank() }.joinToString(" ").ifBlank { "unknown car" }
+        listOf(make, if (modelIsOpaque) "" else model, year).filter { it.isNotBlank() }.joinToString(" ")
+            .ifBlank { "unknown car" }
 }
 
 data class CarResolution(
@@ -70,7 +75,10 @@ object CarRegistry {
             val existing = entries[matchIndex]
             val merged = mergeIdentity(existing.identity, identity)
             entries[matchIndex] = existing.copy(identity = merged, lastSeenMs = now)
-            resolution = CarResolution(profileFor(existing.profileName), "registry")
+            val stored = profileFor(existing.profileName)
+            val upgraded = if (stored == VehicleProfile.GENERIC) knownModelProfile(merged) else null
+            if (upgraded != null) entries[matchIndex] = entries[matchIndex].copy(profileName = upgraded.name)
+            resolution = if (upgraded != null) CarResolution(upgraded, "known-model") else CarResolution(stored, "registry")
         } else {
             val known = knownModelProfile(identity)
             val selected = prefs.getString(PREF_VEHICLE_PROFILE, null)
@@ -130,9 +138,10 @@ object CarRegistry {
     private fun knownModelProfile(identity: CarIdentity): VehicleProfile? {
         val make = identity.make.trim().lowercase()
         val model = identity.model.trim().lowercase()
+        val opaque = identity.modelIsOpaque
         return when {
-            make == "mazda" && model.removePrefix("mazda").trim() == "6" -> VehicleProfile.MAZDA_6_2020
-            make == "subaru" && model.contains("outback") -> VehicleProfile.SUBARU_OUTBACK_2014
+            make == "mazda" && (opaque || model.removePrefix("mazda").trim() == "6") -> VehicleProfile.MAZDA_6_2020
+            make == "subaru" && (opaque || model.contains("outback")) -> VehicleProfile.SUBARU_OUTBACK_2014
             else -> null
         }
     }
