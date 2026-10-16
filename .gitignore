@@ -17,3 +17,6 @@ __pycache__/
 server/.env
 server/*.duckdb
 server/*.duckdb.wal
+
+# Agent worktrees
+.claude/worktrees/
