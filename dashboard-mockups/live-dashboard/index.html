@@ -1,0 +1,397 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>DriveTrace — Results (Instrument)</title>
+<style>
+:root{
+  --ink:#06090E; --panel:#0D131B; --panel-raised:#141C26; --panel-active:#1A2431;
+  --hairline:#202B39; --hairline-bright:#33455A;
+  --chalk:#F2F6FA; --mist:#9AA9BA; --ash:#7C8B9E; --slate:#4A5768;
+  --mixture:#2ED3C6; --ignition:#FF66C4; --motion:#F2F6FA;
+  --live:#31C56A; --caution:#FFC53D; --fault:#FF4D4F;
+  --caution-fill: rgba(255,197,61,0.10); --fault-fill: rgba(255,77,79,0.10);
+}
+*{box-sizing:border-box;}
+html,body{background:var(--ink);color:var(--chalk);margin:0;padding:0;
+  font-family:'Roboto','Segoe UI',system-ui,sans-serif;}
+.tnum{font-feature-settings:'tnum' 1;font-variant-numeric:tabular-nums;}
+header.hdr{display:flex;align-items:center;justify-content:space-between;
+  padding:14px 24px;border-bottom:1px solid var(--hairline);position:sticky;top:0;
+  background:var(--ink);z-index:5;flex-wrap:wrap;gap:10px;}
+.wordmark{font-weight:700;font-size:18px;letter-spacing:3.5px;color:var(--chalk);}
+.wordmark span{color:var(--mixture);}
+.hdr-right{display:flex;gap:18px;align-items:center;color:var(--ash);font-size:12px;
+  letter-spacing:.4px;flex-wrap:wrap;}
+.hdr-right b{color:var(--chalk);font-weight:600;}
+.live-dot{width:7px;height:7px;border-radius:50%;background:var(--live);display:inline-block;
+  margin-right:6px;box-shadow:0 0 0 0 rgba(49,197,106,.6);animation:pulse 2.2s infinite;}
+.live-dot.stale{background:var(--caution);animation:none;}
+.live-dot.error{background:var(--fault);animation:none;}
+@keyframes pulse{0%{box-shadow:0 0 0 0 rgba(49,197,106,.5);}70%{box-shadow:0 0 0 6px rgba(49,197,106,0);}100%{box-shadow:0 0 0 0 rgba(49,197,106,0);}}
+.refresh-btn{background:var(--panel-raised);border:1px solid var(--hairline);color:var(--mist);
+  font-size:11px;font-weight:600;letter-spacing:.6px;text-transform:uppercase;padding:6px 12px;
+  border-radius:7px;cursor:pointer;}
+.refresh-btn:hover{border-color:var(--hairline-bright);color:var(--chalk);}
+.refresh-btn:disabled{opacity:.5;cursor:default;}
+main{max-width:1180px;margin:0 auto;padding:22px 24px 60px;}
+.section-label{display:flex;align-items:center;gap:10px;margin:30px 0 12px;
+  text-transform:uppercase;font-size:11px;font-weight:700;letter-spacing:1.3px;color:var(--ash);}
+.section-label::after{content:'';flex:1;height:1px;background:var(--hairline);}
+.section-label.first{margin-top:4px;}
+.tile-row{display:grid;grid-template-columns:repeat(5,1fr);gap:10px;}
+.tile{background:var(--panel);border:1px solid var(--hairline);border-radius:10px;
+  padding:14px 16px;position:relative;overflow:hidden;}
+.tile::before{content:'';position:absolute;left:0;top:0;bottom:0;width:3px;background:var(--mixture);}
+.tile.grey::before{background:var(--slate);}
+.tile .lbl{font-size:11px;font-weight:700;letter-spacing:1.1px;text-transform:uppercase;color:var(--ash);}
+.tile .val{font-size:28px;font-weight:300;margin-top:6px;color:var(--chalk);}
+.tile .val .unit{font-size:13px;font-weight:500;color:var(--mist);margin-left:4px;}
+.tile .sub{font-size:12px;color:var(--mist);margin-top:4px;}
+.panel{background:var(--panel);border:1px solid var(--hairline);border-radius:14px;
+  padding:18px 20px;margin-bottom:6px;}
+.panel h2{font-size:13px;font-weight:700;letter-spacing:.6px;margin:0 0 2px;color:var(--chalk);}
+.panel .desc{font-size:12px;color:var(--ash);margin:0 0 10px;}
+.chart-wrap{width:100%;}
+svg.chart{width:100%;height:auto;display:block;}
+.axis-line{stroke:var(--hairline);stroke-width:1;}
+.zero-line{stroke:var(--hairline-bright);stroke-width:1;stroke-dasharray:3,3;}
+.grid-label{fill:var(--ash);font-size:10px;font-family:'Roboto',sans-serif;}
+.series-line{fill:none;stroke:var(--mixture);stroke-width:2;stroke-linecap:round;stroke-linejoin:round;}
+.series-dot{fill:var(--ink);stroke:var(--mixture);stroke-width:2;}
+.series-dot:hover{fill:var(--mixture);}
+.caption{font-size:11.5px;color:var(--ash);margin-top:10px;line-height:1.5;}
+.two-col{display:grid;grid-template-columns:1.3fr 1fr;gap:6px;}
+.phase-bars{display:flex;gap:26px;align-items:flex-end;height:150px;padding-top:6px;}
+.phase-group{flex:1;display:flex;flex-direction:column;align-items:center;gap:8px;}
+.phase-bar-track{width:100%;max-width:64px;height:110px;display:flex;align-items:flex-end;
+  justify-content:center;position:relative;}
+.phase-bar{width:34px;border-radius:4px 4px 0 0;background:var(--mixture);position:relative;}
+.phase-bar-val{position:absolute;top:-20px;font-size:12px;font-weight:600;color:var(--chalk);}
+.phase-name{font-size:11px;text-transform:uppercase;letter-spacing:1px;color:var(--ash);font-weight:700;}
+.phase-sub{font-size:10.5px;color:var(--mist);}
+table.log{width:100%;border-collapse:collapse;font-size:12.5px;}
+table.log th{text-align:left;font-size:10.5px;text-transform:uppercase;letter-spacing:.8px;
+  color:var(--ash);font-weight:700;padding:8px 10px;border-bottom:1px solid var(--hairline);
+  position:sticky;top:0;background:var(--panel);}
+table.log td{padding:7px 10px;border-bottom:1px solid var(--hairline);color:var(--mist);}
+table.log tr:hover td{background:var(--panel-raised);}
+table.log td.num{text-align:right;}
+table.log td.chalk{color:var(--chalk);font-weight:500;}
+.badge{display:inline-flex;align-items:center;gap:5px;font-weight:600;}
+.dot{width:7px;height:7px;border-radius:50%;display:inline-block;}
+.dot.mixture{background:var(--mixture);}
+.dot.slate{background:var(--slate);}
+.scroll-log{max-height:420px;overflow-y:auto;border-top:1px solid var(--hairline);}
+.flags{display:flex;flex-direction:column;gap:8px;margin-top:4px;}
+.flag{display:flex;gap:10px;padding:10px 12px;border-radius:8px;border:1px solid var(--hairline);
+  background:var(--panel-raised);font-size:12.5px;color:var(--mist);line-height:1.5;}
+.flag .glyph{color:var(--caution);font-weight:700;flex-shrink:0;}
+.flag.neutral .glyph{color:var(--slate);}
+.notice{font-size:11px;color:var(--slate);margin-top:26px;padding-top:14px;border-top:1px solid var(--hairline);
+  line-height:1.6;}
+.load-state{padding:60px 24px;text-align:center;color:var(--ash);font-size:13px;}
+.error-banner{display:none;background:var(--fault-fill);border:1px solid var(--fault);
+  border-radius:10px;padding:12px 16px;margin:0 0 18px;font-size:12.5px;color:var(--mist);
+  align-items:center;justify-content:space-between;gap:12px;}
+.error-banner.show{display:flex;}
+.error-banner b{color:var(--chalk);}
+.error-banner button{background:var(--panel-raised);border:1px solid var(--hairline-bright);
+  color:var(--chalk);font-size:11px;font-weight:600;padding:6px 12px;border-radius:7px;cursor:pointer;}
+main.hidden{display:none;}
+@media (max-width:900px){.tile-row{grid-template-columns:repeat(2,1fr);} .two-col{grid-template-columns:1fr;}}
+</style>
+</head>
+<body>
+<header class="hdr">
+  <div class="wordmark">DRIVE<span>TRACE</span></div>
+  <div class="hdr-right tnum">
+    <span id="liveStatus"><span class="live-dot" id="liveDot"></span><span id="liveLabel">Loading…</span></span>
+    <span id="hdrSessions"></span>
+    <span id="hdrDateRange"></span>
+    <span id="hdrVehicles"></span>
+    <button class="refresh-btn" id="refreshBtn">Refresh</button>
+  </div>
+</header>
+
+<div id="loadState" class="load-state">Loading live data from the DriveTrace server…</div>
+
+<main id="mainContent" class="hidden">
+  <div class="error-banner" id="errorBanner">
+    <span><b>Couldn't reach the DriveTrace server.</b> <span id="errorDetail"></span> Showing the last data loaded this session.</span>
+    <button id="errorRetryBtn">Retry</button>
+  </div>
+
+  <div class="section-label first">Overview</div>
+  <div class="tile-row tnum" id="tileRow"></div>
+
+  <div class="section-label">Economy — MPG over time</div>
+  <div class="panel">
+    <h2>Overall trip MPG, distance / fuel-burned</h2>
+    <p class="desc" id="mpgDesc"></p>
+    <div class="chart-wrap"><svg class="chart" id="mpgChart" viewBox="0 0 1120 260"></svg></div>
+    <p class="caption" id="mpgCaption"></p>
+  </div>
+
+  <div class="section-label">Mixture — Combined fuel trim over time</div>
+  <div class="panel">
+    <h2>STFT + LTFT Bank 1, session mean</h2>
+    <p class="desc">Positive and consistent since Long Term Fuel Trim data became reliable (Aug 7, 2026) is the MAF-under-reporting signature, not a vacuum leak (which would spike hard at idle only).</p>
+    <div class="chart-wrap"><svg class="chart" id="trimChart" viewBox="0 0 1120 260"></svg></div>
+    <p class="caption">Dashed line at 0% is a clean sensor with no learned correction. <code>anomaly_flags()</code> only fires above ±10% during cruise — none of these drives cross that threshold individually, which is why this pattern needed a multi-drive view to see at all.</p>
+  </div>
+
+  <div class="section-label">Status — MAF cleaned, bias persists</div>
+  <div class="panel">
+    <h2>The sensor has already been cleaned. The trend didn't go away.</h2>
+    <p class="desc">This predates the dashboard itself, not a pending next step below.</p>
+    <div class="flags">
+      <div class="flag"><span class="glyph">!</span><span>MAF sensor cleaned before this dashboard existed. Two full tanks of post-cleaning 93-octane data since: mean combined trim dropped from roughly +4.9% to roughly +4.4% — same direction, not gone — and the dash-vs-DriveTrace gap held at roughly 4 MPG on two independent same-day comparison drives.</span></div>
+      <div class="flag"><span class="glyph">!</span><span>Cleaning helped consistency; it did not fix the underlying calibration. Leaning toward the sensor needing <b style="color:var(--chalk)">replacement</b>, not another cleaning, as the next concrete step.</span></div>
+    </div>
+  </div>
+
+  <div class="section-label">Phase breakdown — mean combined trim by driving band</div>
+  <div class="panel">
+    <h2>City (&lt;30 km/h) · Backroad (30–90) · Highway (&gt;90), averaged across all drives in trend</h2>
+    <p class="desc">Same sign, same rough magnitude at every speed band is the MAF-calibration signature specifically — an idle-only spike would instead point at a vacuum/PCV leak.</p>
+    <div class="phase-bars" id="phaseBars"></div>
+  </div>
+
+  <div class="section-label">Ruled out — knock retard</div>
+  <div class="panel two-col">
+    <div>
+      <h2>Knock Retard, session mean</h2>
+      <p class="desc">Stays near zero across every drive with valid data. No evidence of chronic knock mitigation on current fuel, which rules out the dramatic version of the octane-driven-timing-retard hypothesis.</p>
+    </div>
+    <div class="flags">
+      <div class="flag neutral"><span class="glyph">–</span><span>Mean Knock Retard across sessions with data: <b class="tnum" id="knockMean" style="color:var(--chalk)"></b>°. Brief spikes only, never sustained.</span></div>
+      <div class="flag"><span class="glyph">!</span><span>Combined trim remains the more consistent, higher-magnitude signal here — see the MAF-cleaned status note above. Knock isn't the mechanism at play.</span></div>
+    </div>
+  </div>
+
+  <div class="section-label">Drive log — every session behind the charts above</div>
+  <div class="panel" style="padding:0;">
+    <div style="padding:18px 20px 4px;">
+      <h2 id="logHeading"></h2>
+      <p class="desc">Filtered to sessions with valid combined-trim data, a confirmed vehicle profile, and &gt;1 km distance (excludes short test/idle sessions).</p>
+    </div>
+    <div class="scroll-log">
+      <table class="log tnum" id="logTable"></table>
+    </div>
+  </div>
+
+  <p class="notice" id="footNotice"></p>
+</main>
+
+<script>
+// ---------- live data source ----------
+// Read-only aggregate endpoint added to server/ingest_server.py specifically for this
+// dashboard (see server/dashboard_stats.py). Bearer token embedded here deliberately —
+// this page is only ever served locally via quick's *.quick.localhost:8787 pattern, so
+// it never leaves this machine/network. See the phase-2 handoff note for why a second
+// direct DuckDB connection from this dashboard was not an option (single-writer lock
+// against drivetrace-server's own open write connection).
+const SUMMARY_URL = 'https://ericb.duckdns.org:8444/dashboard/summary';
+const INGEST_TOKEN = 'Q4fYfSRMQ4mHxn7yQtlUiMqNsIF9KRQFeaoUWCL6Mms';
+const AUTO_REFRESH_MS = 5 * 60 * 1000;
+
+let lastGoodData = null;
+
+async function fetchSummary(force){
+  const url = SUMMARY_URL + (force ? '?refresh=true' : '');
+  const res = await fetch(url, { headers: { 'Authorization': 'Bearer ' + INGEST_TOKEN } });
+  if(!res.ok) throw new Error('Server responded ' + res.status);
+  return res.json();
+}
+
+function setLiveStatus(state, label){
+  const dot = document.getElementById('liveDot');
+  dot.className = 'live-dot' + (state==='error' ? ' error' : state==='stale' ? ' stale' : '');
+  document.getElementById('liveLabel').textContent = label;
+}
+
+async function loadDashboard(force){
+  const btn = document.getElementById('refreshBtn');
+  btn.disabled = true;
+  try{
+    const data = await fetchSummary(force);
+    lastGoodData = data;
+    document.getElementById('errorBanner').classList.remove('show');
+    document.getElementById('loadState').style.display = 'none';
+    document.getElementById('mainContent').classList.remove('hidden');
+    render(data);
+    const asOf = new Date(data.computed_at_ms);
+    setLiveStatus('live', 'Live — updated ' + asOf.toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'}));
+  }catch(err){
+    if(lastGoodData){
+      document.getElementById('errorDetail').textContent = err.message + '.';
+      document.getElementById('errorBanner').classList.add('show');
+      setLiveStatus('stale', 'Stale — last update failed');
+    }else{
+      document.getElementById('loadState').textContent =
+        'Could not reach the DriveTrace server (' + err.message + '). ' +
+        'Check that drivetrace-server is running on ericpc and that this page is being ' +
+        'served from a *.quick.localhost:8787 origin, then retry.';
+      setLiveStatus('error', 'Unreachable');
+    }
+  }finally{
+    btn.disabled = false;
+  }
+}
+
+document.getElementById('refreshBtn').addEventListener('click', () => loadDashboard(true));
+document.getElementById('errorRetryBtn').addEventListener('click', () => loadDashboard(true));
+
+// ---------- chart helper ----------
+function lineChart(svgEl, points, opts){
+  const W=1120,H=260,padL=46,padR=20,padT=18,padB=34;
+  const {color='#2ED3C6', zero=false, yFmt=v=>v.toFixed(1), suffix=''} = opts||{};
+  if(points.length===0){ svgEl.innerHTML = ''; return; }
+  const ys = points.map(p=>p.y);
+  let yMin = Math.min(...ys), yMax = Math.max(...ys);
+  if(zero){ yMin=Math.min(yMin,0); yMax=Math.max(yMax,0); }
+  const pad = (yMax-yMin)*0.15 || 1;
+  const y0=yMin-pad, y1=yMax+pad;
+  const innerW=W-padL-padR, innerH=H-padT-padB;
+  const xAt = i => padL + (points.length<=1?innerW/2:(i/(points.length-1))*innerW);
+  const yAt = v => padT + innerH - ((v-y0)/(y1-y0))*innerH;
+  let svg = '';
+  const steps=4;
+  for(let s=0;s<=steps;s++){
+    const v = y0 + (y1-y0)*(s/steps);
+    const yy = yAt(v);
+    svg += `<line class="axis-line" x1="${padL}" y1="${yy.toFixed(1)}" x2="${W-padR}" y2="${yy.toFixed(1)}"/>`;
+    svg += `<text class="grid-label" x="${padL-8}" y="${(yy+3).toFixed(1)}" text-anchor="end">${yFmt(v)}${suffix}</text>`;
+  }
+  if(zero){
+    const yy=yAt(0);
+    svg += `<line class="zero-line" x1="${padL}" y1="${yy.toFixed(1)}" x2="${W-padR}" y2="${yy.toFixed(1)}"/>`;
+  }
+  [0, Math.floor((points.length-1)/2), points.length-1].forEach(i=>{
+    svg += `<text class="grid-label" x="${xAt(i).toFixed(1)}" y="${H-10}" text-anchor="middle">${points[i].label}</text>`;
+  });
+  let d = points.map((p,i)=> (i===0?'M':'L') + xAt(i).toFixed(1) + ',' + yAt(p.y).toFixed(1)).join(' ');
+  svg += `<path class="series-line" style="stroke:${color}" d="${d}"/>`;
+  points.forEach((p,i)=>{
+    svg += `<circle class="series-dot" style="stroke:${color}" cx="${xAt(i).toFixed(1)}" cy="${yAt(p.y).toFixed(1)}" r="3.4"><title>${p.tooltip}</title></circle>`;
+  });
+  svgEl.setAttribute('viewBox', `0 0 ${W} ${H}`);
+  svgEl.innerHTML = svg;
+}
+
+function fmtDateRange(minMs, maxMs){
+  if(minMs==null || maxMs==null) return '';
+  const f = ms => new Date(ms).toLocaleDateString('en-US', {month:'short', day:'numeric', year:'numeric', timeZone:'UTC'});
+  return f(minMs) + ' – ' + f(maxMs);
+}
+
+function render(DATA){
+  const overview = DATA.overview;
+  const drives = DATA.drives;
+
+  // ---------- header ----------
+  document.getElementById('hdrSessions').innerHTML = `<b>${overview.session_count}</b> sessions logged`;
+  document.getElementById('hdrDateRange').textContent = fmtDateRange(overview.date_min_ms, overview.date_max_ms);
+  document.getElementById('hdrVehicles').textContent = Object.keys(overview.vehicle_profiles || {}).join(' · ');
+
+  // ---------- overview tiles ----------
+  const withMpg = drives.filter(d=>d.mpg!=null);
+  const withTrim = drives.filter(d=>d.trim!=null);
+  const avgMpg = withMpg.length ? withMpg.reduce((a,d)=>a+d.mpg,0)/withMpg.length : null;
+  const avgTrim = withTrim.length ? withTrim.reduce((a,d)=>a+d.trim,0)/withTrim.length : null;
+  const posCount = withTrim.filter(d=>d.trim>0).length;
+  const dashDrives = drives.filter(d=>d.dash_gap_mpg!=null);
+  const meanGap = dashDrives.length ? dashDrives.reduce((a,d)=>a+d.dash_gap_mpg,0)/dashDrives.length : null;
+  const aboveDashCount = dashDrives.filter(d=>d.dash_gap_mpg>0).length;
+
+  const statuses = overview.completion_statuses || {};
+  const statusSub = Object.entries(statuses).map(([k,v])=>`${v} ${k.toLowerCase()}`).join(' · ');
+
+  const tiles = [
+    {lbl:'Sessions logged', val: overview.session_count, unit:'', sub: statusSub},
+    {lbl:'Drives in trend (valid trim)', val: drives.length, unit:'', sub: fmtDateRange(overview.date_min_ms, overview.date_max_ms)},
+    {lbl:'Avg overall MPG', val: avgMpg!=null?avgMpg.toFixed(1):'—', unit:'mpg',
+      sub: withMpg.length ? 'range ' + Math.min(...withMpg.map(d=>d.mpg)).toFixed(1) + '–' + Math.max(...withMpg.map(d=>d.mpg)).toFixed(1) : 'no data'},
+    {lbl:'Avg combined trim', val: avgTrim!=null?(avgTrim>0?'+':'')+avgTrim.toFixed(1):'—', unit:'%',
+      sub: withTrim.length ? posCount+' of '+withTrim.length+' drives positive' : 'no data'},
+    {lbl:'Dash-vs-DriveTrace gap', val: meanGap!=null?(meanGap>0?'+':'')+meanGap.toFixed(1):'—', unit: meanGap!=null?'mpg high':'',
+      sub: dashDrives.length ? `${dashDrives.length} logged comparison${dashDrives.length===1?'':'s'}, ${aboveDashCount} above dash` : 'no dash comparisons logged yet'},
+  ];
+  document.getElementById('tileRow').innerHTML = tiles.map(t=>`
+    <div class="tile"><div class="lbl">${t.lbl}</div><div class="val">${t.val}<span class="unit">${t.unit}</span></div><div class="sub">${t.sub}</div></div>
+  `).join('');
+
+  // ---------- MPG chart ----------
+  document.getElementById('mpgDesc').textContent =
+    `${withMpg.length} drives with valid fuel-trim data, ${fmtDateRange(overview.date_min_ms, overview.date_max_ms)}. ` +
+    `Estimate is MAF-derived — treat as relative/trend signal more than an absolute number.`;
+  lineChart(document.getElementById('mpgChart'),
+    withMpg.map(d=>({y:d.mpg, label:d.date.slice(5), tooltip:`${d.datetime} — ${d.mpg} MPG (${d.dist_km} km)${d.notes?' — note: '+d.notes:''}`})),
+    {color:'#2ED3C6', yFmt:v=>v.toFixed(0), suffix:' mpg'});
+  document.getElementById('mpgCaption').textContent = dashDrives.length
+    ? `${dashDrives.length} drive${dashDrives.length===1?' has':'s have'} a driver-logged dash reading in its/their notes. ` +
+      `DriveTrace read high on ${aboveDashCount} of them (mean gap ${meanGap>0?'+':''}${meanGap.toFixed(1)} mpg).`
+    : 'No drives currently have a driver-logged dash-reading comparison in their notes.';
+
+  // ---------- trim chart ----------
+  lineChart(document.getElementById('trimChart'),
+    withTrim.map(d=>({y:d.trim, label:d.date.slice(5), tooltip:`${d.datetime} — combined trim ${d.trim>0?'+':''}${d.trim}% (idle ${d.trim_idle==null?'n/a':d.trim_idle+'%'}, moving ${d.trim_moving==null?'n/a':d.trim_moving+'%'})`})),
+    {color:'#2ED3C6', zero:true, yFmt:v=>(v>0?'+':'')+v.toFixed(0), suffix:'%'});
+
+  // ---------- phase bars ----------
+  const phaseNames = ['city','backroad','highway'];
+  const phaseAgg = {};
+  phaseNames.forEach(p=>phaseAgg[p]={sum:0,n:0});
+  drives.forEach(d=>(d.phases||[]).forEach(ph=>{
+    if(phaseAgg[ph.phase] && ph.combined_trim_pct!=null){ phaseAgg[ph.phase].sum+=ph.combined_trim_pct; phaseAgg[ph.phase].n++; }
+  }));
+  const means = phaseNames.map(p=>phaseAgg[p].n ? phaseAgg[p].sum/phaseAgg[p].n : null);
+  const maxAbs = Math.max(...means.filter(m=>m!=null).map(m=>Math.abs(m)), 1);
+  document.getElementById('phaseBars').innerHTML = phaseNames.map((p,i)=>{
+    const mean = means[i];
+    const hpx = mean==null ? 6 : Math.max(6, Math.round((Math.abs(mean)/maxAbs)*100));
+    return `<div class="phase-group">
+      <div class="phase-bar-track">
+        <div class="phase-bar" style="height:${hpx}px;"><span class="phase-bar-val">${mean==null?'n/a':(mean>0?'+':'')+mean.toFixed(1)+'%'}</span></div>
+      </div>
+      <div class="phase-name">${p}</div>
+      <div class="phase-sub">n=${phaseAgg[p].n} drives</div>
+    </div>`;
+  }).join('');
+
+  // ---------- knock ----------
+  const knockVals = drives.map(d=>d.knock_deg).filter(v=>v!=null);
+  const knockMean = knockVals.length ? knockVals.reduce((a,b)=>a+b,0)/knockVals.length : null;
+  document.getElementById('knockMean').textContent = knockMean!=null ? knockMean.toFixed(2) : '—';
+
+  // ---------- log table ----------
+  document.getElementById('logHeading').textContent = `${drives.length} drives, most recent first`;
+  const rows = [...drives].reverse().map(d=>`
+    <tr>
+      <td class="chalk">${d.date}</td>
+      <td>${(d.vehicle||'').replace('2020 ','').replace('2014 ','')}</td>
+      <td class="num chalk">${d.dist_km.toFixed(1)} km</td>
+      <td class="num chalk">${d.mpg!=null?d.mpg.toFixed(1)+' mpg':'—'}</td>
+      <td class="num"><span class="badge"><span class="dot mixture"></span>${d.trim>0?'+':''}${d.trim.toFixed(1)}%</span></td>
+      <td class="num">${d.idle_pct!=null?d.idle_pct.toFixed(0)+'%':'—'}</td>
+      <td class="num">${d.cruise_windows}</td>
+      <td>${d.notes || ''}</td>
+    </tr>`).join('');
+  document.getElementById('logTable').innerHTML = `
+    <thead><tr><th>Date</th><th>Vehicle</th><th>Distance</th><th>MPG</th><th>Trim</th><th>Idle %</th><th>Cruise wins</th><th>Note</th></tr></thead>
+    <tbody>${rows}</tbody>`;
+
+  // ---------- footer ----------
+  const nullVehicleNote = 'Vehicle-profile field is null on some sessions (pre-dates the field, or logged via pc_logger) — those are excluded from the trend where a vehicle can\'t be confirmed.';
+  document.getElementById('footNotice').textContent =
+    `Live — fetched directly from server/drivetrace.duckdb on ericpc via a dedicated read-only endpoint ` +
+    `(server/dashboard_stats.py), no snapshot lag and no write-connection interruption. ` +
+    `Estimated-MPG and fuel-trim figures use the same formulas as scripts/analyze_drive.py. ${nullVehicleNote}`;
+}
+
+loadDashboard(false);
+setInterval(() => loadDashboard(false), AUTO_REFRESH_MS);
+</script>
+</body>
+</html>

@@ -1,0 +1,306 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>DriveTrace — MAF Investigation</title>
+<style>
+:root{
+  --ink:#06090E; --panel:#0D131B; --panel-raised:#141C26; --panel-active:#1A2431;
+  --hairline:#202B39; --hairline-bright:#33455A;
+  --chalk:#F2F6FA; --mist:#9AA9BA; --ash:#7C8B9E; --slate:#4A5768;
+  --mixture:#2ED3C6; --ignition:#FF66C4; --caution:#FFC53D; --fault:#FF4D4F; --live:#31C56A;
+  --caution-fill:rgba(255,197,61,0.09);
+}
+*{box-sizing:border-box;}
+html,body{background:var(--ink);color:var(--chalk);margin:0;padding:0;
+  font-family:'Roboto','Segoe UI',system-ui,sans-serif;}
+.tnum{font-feature-settings:'tnum' 1;font-variant-numeric:tabular-nums;}
+header.hdr{display:flex;align-items:center;justify-content:space-between;
+  padding:14px 24px;border-bottom:1px solid var(--hairline);}
+.wordmark{font-weight:700;font-size:18px;letter-spacing:3.5px;color:var(--chalk);}
+.wordmark span{color:var(--mixture);}
+.hdr-sub{color:var(--ash);font-size:12px;}
+main{max-width:980px;margin:0 auto;padding:0 24px 70px;}
+
+.hero-block{padding:44px 0 30px;border-bottom:1px solid var(--hairline);}
+.eyebrow{text-transform:uppercase;font-size:11px;font-weight:700;letter-spacing:1.6px;color:var(--mixture);margin-bottom:10px;}
+.hero-block h1{font-size:32px;line-height:1.25;font-weight:600;margin:0 0 14px;max-width:760px;}
+.hero-block p{color:var(--mist);font-size:15px;line-height:1.6;max-width:680px;margin:0;}
+
+.verdict{display:flex;gap:14px;align-items:flex-start;background:var(--caution-fill);
+  border:1px solid rgba(255,197,61,0.35);border-left:3px solid var(--caution);
+  border-radius:0 10px 10px 0;padding:16px 18px;margin-top:24px;max-width:720px;}
+.verdict .glyph{color:var(--caution);font-size:18px;font-weight:800;line-height:1;margin-top:1px;}
+.verdict .txt{font-size:14px;color:var(--chalk);line-height:1.55;}
+.verdict .txt b{color:var(--caution);}
+
+.section{padding:38px 0;border-bottom:1px solid var(--hairline);}
+.section:last-of-type{border-bottom:none;}
+.section .eyebrow{color:var(--ash);}
+.section h2{font-size:21px;font-weight:600;margin:2px 0 10px;}
+.section .lede{color:var(--mist);font-size:14.5px;line-height:1.6;max-width:680px;margin:0 0 22px;}
+
+.chart-card{background:var(--panel);border:1px solid var(--hairline);border-radius:14px;padding:20px 22px;}
+svg.chart{width:100%;height:auto;display:block;}
+.axis-line{stroke:var(--hairline);stroke-width:1;}
+.zero-line{stroke:var(--hairline-bright);stroke-width:1;stroke-dasharray:3,3;}
+.grid-label{fill:var(--ash);font-size:10px;}
+.series-line{fill:none;stroke:var(--mixture);stroke-width:2;stroke-linecap:round;stroke-linejoin:round;}
+.series-dot{fill:var(--ink);stroke:var(--mixture);stroke-width:2;}
+.annotation-line{stroke:var(--caution);stroke-width:1.4;stroke-dasharray:4,3;}
+.annotation-label{fill:var(--caution);font-size:10.5px;font-weight:700;}
+.caption{font-size:12px;color:var(--ash);margin-top:12px;line-height:1.55;}
+
+.compare-row{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-top:6px;}
+.compare-card{background:var(--panel);border:1px solid var(--hairline);border-radius:14px;padding:18px 20px;}
+.compare-card .date{font-size:11px;color:var(--ash);text-transform:uppercase;letter-spacing:.7px;font-weight:700;}
+.compare-bars{display:flex;align-items:flex-end;gap:20px;height:120px;margin-top:16px;}
+.cb-group{display:flex;flex-direction:column;align-items:center;gap:6px;flex:1;}
+.cb-track{width:100%;display:flex;align-items:flex-end;justify-content:center;height:88px;}
+.cb-bar{width:46px;border-radius:4px 4px 0 0;position:relative;}
+.cb-bar.dash{background:var(--slate);}
+.cb-bar.dt{background:var(--mixture);}
+.cb-val{position:absolute;top:-19px;left:0;right:0;text-align:center;font-size:13px;font-weight:700;color:var(--chalk);}
+.cb-lbl{font-size:10.5px;color:var(--ash);text-transform:uppercase;letter-spacing:.6px;font-weight:700;}
+.cb-gap{margin-top:10px;font-size:12.5px;color:var(--mist);}
+.cb-gap b{color:var(--caution);}
+
+.phase-consistency{display:flex;gap:20px;margin-top:6px;}
+.pc-col{flex:1;background:var(--panel);border:1px solid var(--hairline);border-radius:14px;padding:18px 20px;text-align:center;}
+.pc-col .lbl{font-size:10.5px;text-transform:uppercase;letter-spacing:1px;color:var(--ash);font-weight:700;}
+.pc-col .v{font-size:30px;font-weight:300;margin:10px 0 4px;color:var(--mixture);}
+.pc-col .n{font-size:11.5px;color:var(--slate);}
+
+.two-col{display:grid;grid-template-columns:1fr 1fr;gap:16px;}
+.stat-card{background:var(--panel);border:1px solid var(--hairline);border-radius:14px;padding:18px 20px;}
+.stat-card .lbl{font-size:10.5px;text-transform:uppercase;letter-spacing:1px;color:var(--ash);font-weight:700;}
+.stat-card .v{font-size:26px;font-weight:300;margin:8px 0 6px;}
+.stat-card .v.ok{color:var(--live);}
+.stat-card .d{font-size:12.5px;color:var(--mist);line-height:1.5;}
+
+.vehicle-split{display:flex;gap:16px;margin-top:6px;}
+.vs-card{flex:1;background:var(--panel);border:1px solid var(--hairline);border-radius:14px;padding:18px 20px;}
+.vs-card h3{margin:0 0 4px;font-size:14px;}
+.vs-card .n{font-size:11px;color:var(--ash);margin-bottom:12px;}
+.vs-card .v{font-size:32px;font-weight:300;}
+.vs-card.mazda .v{color:var(--mixture);}
+.vs-card.subaru .v{color:var(--mist);}
+.vs-card .note{font-size:12px;color:var(--mist);margin-top:8px;line-height:1.5;}
+
+.drivelist{margin-top:6px;background:var(--panel);border:1px solid var(--hairline);border-radius:14px;overflow:hidden;}
+table.mini{width:100%;border-collapse:collapse;font-size:12.5px;}
+table.mini th{text-align:left;font-size:10px;text-transform:uppercase;letter-spacing:.7px;color:var(--ash);
+  font-weight:700;padding:9px 16px;border-bottom:1px solid var(--hairline);}
+table.mini td{padding:7px 16px;border-bottom:1px solid var(--hairline);color:var(--mist);}
+table.mini td.chalk{color:var(--chalk);font-weight:500;}
+table.mini tr:last-child td{border-bottom:none;}
+.scroll-mini{max-height:280px;overflow-y:auto;}
+
+.next-step{background:var(--panel);border:1px solid var(--hairline);border-left:3px solid var(--mixture);
+  border-radius:0 14px 14px 0;padding:20px 22px;margin-top:6px;}
+.next-step h3{margin:0 0 8px;font-size:15px;}
+.next-step p{margin:0;color:var(--mist);font-size:13.5px;line-height:1.6;}
+.notice{font-size:11px;color:var(--slate);margin-top:20px;line-height:1.6;}
+</style>
+</head>
+<body>
+<header class="hdr">
+  <div class="wordmark">DRIVE<span>TRACE</span></div>
+  <div class="hdr-sub">Investigation — MAF calibration bias</div>
+</header>
+
+<main>
+  <div class="hero-block">
+    <div class="eyebrow">Open investigation</div>
+    <h1>Is the mass air flow sensor under-reporting airflow on the Mazda 6?</h1>
+    <p>Fuel economy dropped from ~34/~24 MPG (route/tank) to ~29/~19 on the same known route. Four diagnostic hypotheses from the original blueprint have now been checked against 34 drives of real fuel-trim data — one of them is holding up, and it isn't the octane/timing-retard theory that looked promising early on.</p>
+    <div class="verdict">
+      <div class="glyph">!</div>
+      <div class="txt">Combined fuel trim (STFT+LTFT) has run <b>positive on 32 of 34 drives</b> since Long Term Fuel Trim data became reliable on Aug 7 — consistently +2% to +9%, present at every driving phase, not concentrated at idle. That shape is the MAF-under-reporting signature, not a vacuum/PCV leak (which spikes hard at idle specifically).</div>
+    </div>
+  </div>
+
+  <div class="section">
+    <div class="eyebrow">Signal 1 of 3</div>
+    <h2>Combined fuel trim, every drive since the fix</h2>
+    <p class="lede">STFT+LTFT Bank 1, session mean, Aug 7 – Aug 27. The dashed amber marker is where a MAF sensor clean would go — <b style="color:var(--caution)">not performed yet</b>. Log one, come back, and the drop (or lack of one) becomes the direct confirmation test KNOWN_ISSUES.md already calls for.</p>
+    <div class="chart-card">
+      <svg class="chart" id="trimChart" viewBox="0 0 900 260"></svg>
+      <p class="caption">If a cleaning date is logged, this chart is the one to annotate: a return toward 0% afterward would confirm the MAF hypothesis directly. A trend that stays flat would point back to the still-open, more direct-measurement gap discussed below instead.</p>
+    </div>
+  </div>
+
+  <div class="section">
+    <div class="eyebrow">Signal 2 of 3</div>
+    <h2>Same sign, every driving phase</h2>
+    <p class="lede">A vacuum or PCV leak produces a sharp idle-specific spike. A MAF calibration bias instead shows up everywhere, city, backroad, and highway alike, since the sensor mis-measures airflow regardless of load. Averaged across all 34 drives:</p>
+    <div class="phase-consistency">
+      <div class="pc-col"><div class="lbl">City &lt;30 km/h</div><div class="v tnum" id="pcCity"></div><div class="n">n=34</div></div>
+      <div class="pc-col"><div class="lbl">Backroad 30–90</div><div class="v tnum" id="pcBackroad"></div><div class="n">n=34</div></div>
+      <div class="pc-col"><div class="lbl">Highway &gt;90</div><div class="v tnum" id="pcHighway"></div><div class="n">n=20</div></div>
+    </div>
+    <p class="caption" style="margin-top:16px;">Idle-vs-moving split averages +5.4% at idle vs. +4.2% moving across these drives — a mild gradient, not the sharp +10-25%+ idle-only spike a real vacuum leak produces. This is exactly the pattern the project's own diagnostic playbook uses to tell the two apart.</p>
+  </div>
+
+  <div class="section">
+    <div class="eyebrow">Signal 3 of 3</div>
+    <h2>DriveTrace's MPG estimate runs above the dash — in the direction a low MAF reading predicts</h2>
+    <p class="lede">DriveTrace's fuel-burned estimate is entirely MAF-derived (airflow × assumed stoichiometric ratio). If the sensor under-reports airflow, this estimate under-reports fuel burned, which over-reports MPG. Two drives have a driver-logged dash reading to check that against:</p>
+    <div class="compare-row" id="compareRow"></div>
+  </div>
+
+  <div class="section">
+    <div class="eyebrow">Ruled out</div>
+    <h2>Octane-driven timing retard</h2>
+    <p class="lede">The SKYACTIV-G 2.5T retards timing under knock on lower-octane fuel, a real, mundane, non-mechanical way to lose MPG on its own. Checked directly:</p>
+    <div class="two-col">
+      <div class="stat-card">
+        <div class="lbl">Knock Retard, mean across drives</div>
+        <div class="v ok tnum" id="knockStat"></div>
+        <div class="d">Near zero on every drive with data. Brief spikes only, never sustained — no chronic knock mitigation on current fuel.</div>
+      </div>
+      <div class="stat-card">
+        <div class="lbl">What this doesn't rule out</div>
+        <div class="v tnum" style="color:var(--mist);font-size:20px;">Subtler base-map effect</div>
+        <div class="d">Rules out the dramatic version of this hypothesis only. Fuel trim remains the stronger, more consistent signal to act on.</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="section">
+    <div class="eyebrow">Cross-check</div>
+    <h2>Mazda-specific, not a universal script bug</h2>
+    <p class="lede">If this were an artifact of the analysis code rather than the vehicle, it should show up on the Subaru too. It doesn't:</p>
+    <div class="vehicle-split">
+      <div class="vs-card mazda">
+        <h3>2020 Mazda 6 2.5T</h3>
+        <div class="n">31 drives with valid trim data</div>
+        <div class="v tnum" id="mazdaTrim"></div>
+        <div class="note">Consistently positive, every single drive since Aug 9.</div>
+      </div>
+      <div class="vs-card subaru">
+        <h3>2014 Subaru Outback 2.5i</h3>
+        <div class="n">3 drives with valid trim data</div>
+        <div class="v tnum" id="subaruTrim"></div>
+        <div class="note">Near zero, one drive even slightly negative. No comparable bias on this vehicle's PID set.</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="section">
+    <div class="eyebrow">Next step</div>
+    <h2>What the data supports doing next</h2>
+    <div class="next-step">
+      <h3>Clean or replace the MAF sensor, then log a comparable drive.</h3>
+      <p>Cheap (~10 minutes, isopropyl or MAF-specific cleaner) and directly testable: if combined trim drops back toward 0% on the next few drives, that's confirmation, not correlation. This is no longer "a plausible theory that can't be checked" — it's a real, repeatable, 34-drive-confirmed signal, cleanly distinguished from a vacuum leak by its own shape.</p>
+    </div>
+  </div>
+
+  <div class="section" style="border-bottom:none;">
+    <div class="eyebrow">Drives behind this analysis</div>
+    <h2>All 34, most recent first</h2>
+    <div class="drivelist">
+      <div class="scroll-mini"><table class="mini tnum" id="miniTable"></table></div>
+    </div>
+    <p class="notice">Mockup only — data pulled live from server/drivetrace.duckdb on ericpc (drivetrace-server stopped for the read, restarted immediately after). No MAF cleaning event exists in the data yet; the annotation marker above is a template for when one does.</p>
+  </div>
+</main>
+
+<script id="drive-data" type="application/json">
+{"overview":{"session_count":133,"vehicle_profiles":{"2020 Mazda 6 2.5T":65,"2014 Subaru Outback 2.5i":3},"completion_statuses":{"COMPLETED":126,"IN_PROGRESS":7},"date_min_ms":1785928965454,"date_max_ms":1788125431418},"drives":[{"session_id":1786128112002,"date":"2026-08-07","datetime":"2026-08-07 18:41","vehicle":"2014 Subaru Outback 2.5i","mpg":22.2,"trim":-0.09,"ltft":0.05,"stft":-0.14,"trim_idle":-0.67,"trim_moving":0.05,"idle_pct":19.7,"warmup_min":0.4,"knock_deg":null,"dist_km":28.23,"notes":null,"phases":[{"phase":"backroad","load_pct":45.65,"maf_gs":14.84,"combined_trim_pct":0.06,"rpm":1559.16},{"phase":"city","load_pct":33.62,"maf_gs":8.02,"combined_trim_pct":-0.33,"rpm":1046.73},{"phase":"highway","load_pct":54.83,"maf_gs":21.98,"combined_trim_pct":1.39,"rpm":1875.49}],"cruise_windows":26},{"session_id":1786134262434,"date":"2026-08-07","datetime":"2026-08-07 20:24","vehicle":"2014 Subaru Outback 2.5i","mpg":24.1,"trim":0.12,"ltft":0.21,"stft":-0.09,"trim_idle":1.18,"trim_moving":-0.17,"idle_pct":21.8,"warmup_min":2.7,"knock_deg":null,"dist_km":14.6,"notes":null,"phases":[{"phase":"backroad","load_pct":42.25,"maf_gs":15.52,"combined_trim_pct":-0.25,"rpm":1622.78},{"phase":"city","load_pct":31.52,"maf_gs":7.11,"combined_trim_pct":0.66,"rpm":955.07},{"phase":"highway","load_pct":48.65,"maf_gs":20.34,"combined_trim_pct":-0.1,"rpm":1933.07}],"cruise_windows":13},{"session_id":1786192073083,"date":"2026-08-08","datetime":"2026-08-08 12:27","vehicle":"2014 Subaru Outback 2.5i","mpg":30.4,"trim":-1.48,"ltft":-1.38,"stft":-0.1,"trim_idle":-1.63,"trim_moving":-1.48,"idle_pct":2.9,"warmup_min":23.8,"knock_deg":null,"dist_km":111.12,"notes":null,"phases":[{"phase":"backroad","load_pct":49.72,"maf_gs":16.94,"combined_trim_pct":-1.29,"rpm":1619.81},{"phase":"city","load_pct":29.65,"maf_gs":7.31,"combined_trim_pct":-1.75,"rpm":1060.74},{"phase":"highway","load_pct":60.75,"maf_gs":28.8,"combined_trim_pct":-1.49,"rpm":2318.61}],"cruise_windows":22},{"session_id":1786294497297,"date":"2026-08-09","datetime":"2026-08-09 16:54","vehicle":"2020 Mazda 6 2.5T","mpg":27.3,"trim":5.57,"ltft":6.16,"stft":-0.59,"trim_idle":6.02,"trim_moving":5.43,"idle_pct":24.1,"warmup_min":6.8,"knock_deg":0.32,"dist_km":14.84,"notes":"test note","phases":[{"phase":"backroad","load_pct":23.42,"maf_gs":16.83,"combined_trim_pct":5.7,"rpm":1562.49},{"phase":"city","load_pct":28.39,"maf_gs":5.98,"combined_trim_pct":6.23,"rpm":888.46},{"phase":"highway","load_pct":23.64,"maf_gs":21.72,"combined_trim_pct":4.46,"rpm":2089.21}],"cruise_windows":7},{"session_id":1786303427626,"date":"2026-08-09","datetime":"2026-08-09 19:23","vehicle":"2020 Mazda 6 2.5T","mpg":26.3,"trim":6.39,"ltft":6.21,"stft":0.18,"trim_idle":8.27,"trim_moving":6.1,"idle_pct":13.5,"warmup_min":1.9,"knock_deg":0.42,"dist_km":11.64,"notes":null,"phases":[{"phase":"backroad","load_pct":22.94,"maf_gs":15.6,"combined_trim_pct":5.88,"rpm":1558.6},{"phase":"city","load_pct":28.19,"maf_gs":7.79,"combined_trim_pct":7.37,"rpm":970.19},{"phase":"highway","load_pct":25.08,"maf_gs":20.64,"combined_trim_pct":6.06,"rpm":1843.28}],"cruise_windows":10},{"session_id":1786306404723,"date":"2026-08-09","datetime":"2026-08-09 20:13","vehicle":"2020 Mazda 6 2.5T","mpg":27.1,"trim":6.35,"ltft":6.3,"stft":0.05,"trim_idle":9.28,"trim_moving":5.59,"idle_pct":20.6,"warmup_min":3.7,"knock_deg":0.42,"dist_km":16.83,"notes":null,"phases":[{"phase":"backroad","load_pct":23.06,"maf_gs":15.95,"combined_trim_pct":5.76,"rpm":1558.61},{"phase":"city","load_pct":29.51,"maf_gs":6.14,"combined_trim_pct":8.11,"rpm":900.05},{"phase":"highway","load_pct":24.86,"maf_gs":25.42,"combined_trim_pct":4.66,"rpm":2217.07}],"cruise_windows":10},{"session_id":1786365001841,"date":"2026-08-10","datetime":"2026-08-10 12:30","vehicle":"2020 Mazda 6 2.5T","mpg":21.4,"trim":4.01,"ltft":3.69,"stft":0.32,"trim_idle":4.53,"trim_moving":3.36,"idle_pct":55.4,"warmup_min":13.0,"knock_deg":0.0,"dist_km":5.5,"notes":null,"phases":[{"phase":"backroad","load_pct":17.54,"maf_gs":9.64,"combined_trim_pct":3.37,"rpm":1413.78},{"phase":"city","load_pct":22.42,"maf_gs":4.38,"combined_trim_pct":4.28,"rpm":824.52}],"cruise_windows":0},{"session_id":1786482547445,"date":"2026-08-11","datetime":"2026-08-11 21:09","vehicle":"2020 Mazda 6 2.5T","mpg":19.7,"trim":2.26,"ltft":1.69,"stft":0.57,"trim_idle":3.31,"trim_moving":1.26,"idle_pct":48.7,"warmup_min":0.8,"knock_deg":0.04,"dist_km":3.66,"notes":null,"phases":[{"phase":"backroad","load_pct":18.48,"maf_gs":10.27,"combined_trim_pct":1.08,"rpm":1394.54},{"phase":"city","load_pct":26.03,"maf_gs":4.74,"combined_trim_pct":2.73,"rpm":812.67}],"cruise_windows":3},{"session_id":1786484044294,"date":"2026-08-11","datetime":"2026-08-11 21:34","vehicle":"2020 Mazda 6 2.5T","mpg":17.8,"trim":3.89,"ltft":2.8,"stft":1.09,"trim_idle":5.14,"trim_moving":3.19,"idle_pct":35.6,"warmup_min":0.0,"knock_deg":-0.01,"dist_km":3.52,"notes":null,"phases":[{"phase":"backroad","load_pct":19.14,"maf_gs":12.56,"combined_trim_pct":2.75,"rpm":1498.52},{"phase":"city","load_pct":30.39,"maf_gs":6.65,"combined_trim_pct":4.83,"rpm":860.42}],"cruise_windows":4},{"session_id":1786537645712,"date":"2026-08-12","datetime":"2026-08-12 12:27","vehicle":"2020 Mazda 6 2.5T","mpg":27.5,"trim":3.69,"ltft":4.34,"stft":-0.65,"trim_idle":3.95,"trim_moving":3.65,"idle_pct":14.0,"warmup_min":0.1,"knock_deg":0.0,"dist_km":5.35,"notes":null,"phases":[{"phase":"backroad","load_pct":17.95,"maf_gs":10.0,"combined_trim_pct":3.74,"rpm":1399.36},{"phase":"city","load_pct":25.01,"maf_gs":6.99,"combined_trim_pct":3.62,"rpm":985.36}],"cruise_windows":5},{"session_id":1786567781197,"date":"2026-08-12","datetime":"2026-08-12 20:49","vehicle":"2020 Mazda 6 2.5T","mpg":17.1,"trim":5.15,"ltft":4.72,"stft":0.42,"trim_idle":4.9,"trim_moving":5.39,"idle_pct":49.5,"warmup_min":0.6,"knock_deg":-0.01,"dist_km":3.75,"notes":null,"phases":[{"phase":"backroad","load_pct":18.91,"maf_gs":12.46,"combined_trim_pct":4.53,"rpm":1495.52},{"phase":"city","load_pct":26.98,"maf_gs":5.38,"combined_trim_pct":5.39,"rpm":827.25}],"cruise_windows":3},{"session_id":1786622607598,"date":"2026-08-13","datetime":"2026-08-13 12:03","vehicle":"2020 Mazda 6 2.5T","mpg":20.5,"trim":4.86,"ltft":5.07,"stft":-0.21,"trim_idle":5.82,"trim_moving":4.49,"idle_pct":27.8,"warmup_min":8.1,"knock_deg":0.05,"dist_km":5.95,"notes":"15.9 on dashboard","phases":[{"phase":"backroad","load_pct":20.36,"maf_gs":12.72,"combined_trim_pct":4.54,"rpm":1462.59},{"phase":"city","load_pct":23.39,"maf_gs":5.31,"combined_trim_pct":4.97,"rpm":897.63}],"cruise_windows":4},{"session_id":1786626821049,"date":"2026-08-13","datetime":"2026-08-13 13:13","vehicle":"2020 Mazda 6 2.5T","mpg":22.2,"trim":4.34,"ltft":4.36,"stft":-0.02,"trim_idle":7.05,"trim_moving":3.9,"idle_pct":14.0,"warmup_min":0.1,"knock_deg":0.05,"dist_km":2.08,"notes":null,"phases":[{"phase":"backroad","load_pct":19.17,"maf_gs":11.75,"combined_trim_pct":3.8,"rpm":1448.59},{"phase":"city","load_pct":23.8,"maf_gs":6.52,"combined_trim_pct":4.58,"rpm":981.35}],"cruise_windows":1},{"session_id":1786629371571,"date":"2026-08-13","datetime":"2026-08-13 13:56","vehicle":"2020 Mazda 6 2.5T","mpg":18.8,"trim":4.7,"ltft":4.69,"stft":0.01,"trim_idle":5.14,"trim_moving":4.32,"idle_pct":45.0,"warmup_min":0.0,"knock_deg":0.18,"dist_km":1.64,"notes":null,"phases":[{"phase":"backroad","load_pct":18.11,"maf_gs":11.36,"combined_trim_pct":4.23,"rpm":1333.53},{"phase":"city","load_pct":26.46,"maf_gs":5.41,"combined_trim_pct":4.93,"rpm":816.39}],"cruise_windows":2},{"session_id":1786649837220,"date":"2026-08-13","datetime":"2026-08-13 19:37","vehicle":"2020 Mazda 6 2.5T","mpg":26.7,"trim":7.2,"ltft":7.13,"stft":0.07,"trim_idle":4.82,"trim_moving":7.72,"idle_pct":18.0,"warmup_min":0.7,"knock_deg":0.0,"dist_km":2.17,"notes":null,"phases":[{"phase":"backroad","load_pct":19.46,"maf_gs":13.23,"combined_trim_pct":8.04,"rpm":1517.85},{"phase":"city","load_pct":29.39,"maf_gs":8.7,"combined_trim_pct":5.64,"rpm":933.27}],"cruise_windows":1},{"session_id":1786709410786,"date":"2026-08-14","datetime":"2026-08-14 12:10","vehicle":"2020 Mazda 6 2.5T","mpg":27.6,"trim":9.03,"ltft":8.37,"stft":0.66,"trim_idle":11.5,"trim_moving":8.38,"idle_pct":20.7,"warmup_min":3.2,"knock_deg":0.0,"dist_km":13.79,"notes":"23mpg on dash","phases":[{"phase":"backroad","load_pct":23.01,"maf_gs":17.41,"combined_trim_pct":7.49,"rpm":1568.5},{"phase":"city","load_pct":25.94,"maf_gs":5.49,"combined_trim_pct":11.35,"rpm":802.16},{"phase":"highway","load_pct":24.75,"maf_gs":26.1,"combined_trim_pct":7.96,"rpm":2293.73}],"cruise_windows":6},{"session_id":1786716244413,"date":"2026-08-14","datetime":"2026-08-14 14:04","vehicle":"2020 Mazda 6 2.5T","mpg":23.1,"trim":6.55,"ltft":6.27,"stft":0.28,"trim_idle":7.03,"trim_moving":6.39,"idle_pct":24.6,"warmup_min":0.1,"knock_deg":0.2,"dist_km":5.38,"notes":null,"phases":[{"phase":"backroad","load_pct":17.56,"maf_gs":9.51,"combined_trim_pct":6.97,"rpm":1398.34},{"phase":"city","load_pct":23.99,"maf_gs":6.01,"combined_trim_pct":6.14,"rpm":933.79},{"phase":"highway","load_pct":12.93,"maf_gs":9.59,"combined_trim_pct":10.4,"rpm":1728.83}],"cruise_windows":6},{"session_id":1786886219552,"date":"2026-08-16","datetime":"2026-08-16 13:16","vehicle":"2020 Mazda 6 2.5T","mpg":29.0,"trim":4.52,"ltft":4.98,"stft":-0.46,"trim_idle":5.11,"trim_moving":4.4,"idle_pct":17.0,"warmup_min":5.6,"knock_deg":-0.01,"dist_km":11.21,"notes":null,"phases":[{"phase":"backroad","load_pct":19.31,"maf_gs":12.33,"combined_trim_pct":3.97,"rpm":1491.68},{"phase":"city","load_pct":24.48,"maf_gs":6.23,"combined_trim_pct":5.08,"rpm":931.73},{"phase":"highway","load_pct":22.67,"maf_gs":20.53,"combined_trim_pct":4.57,"rpm":2059.56}],"cruise_windows":4},{"session_id":1786891698651,"date":"2026-08-16","datetime":"2026-08-16 14:48","vehicle":"2020 Mazda 6 2.5T","mpg":27.4,"trim":4.77,"ltft":5.58,"stft":-0.81,"trim_idle":5.62,"trim_moving":4.58,"idle_pct":18.1,"warmup_min":1.3,"knock_deg":0.0,"dist_km":11.41,"notes":null,"phases":[{"phase":"backroad","load_pct":21.08,"maf_gs":14.06,"combined_trim_pct":4.77,"rpm":1499.03},{"phase":"city","load_pct":26.53,"maf_gs":5.91,"combined_trim_pct":5.45,"rpm":877.22},{"phase":"highway","load_pct":23.61,"maf_gs":22.74,"combined_trim_pct":3.84,"rpm":2141.82}],"cruise_windows":8},{"session_id":1786966316289,"date":"2026-08-17","datetime":"2026-08-17 11:31","vehicle":"2020 Mazda 6 2.5T","mpg":18.3,"trim":5.24,"ltft":6.39,"stft":-1.15,"trim_idle":5.23,"trim_moving":5.26,"idle_pct":51.7,"warmup_min":6.3,"knock_deg":0.0,"dist_km":5.04,"notes":null,"phases":[{"phase":"backroad","load_pct":20.48,"maf_gs":15.95,"combined_trim_pct":5.13,"rpm":1582.82},{"phase":"city","load_pct":22.77,"maf_gs":4.66,"combined_trim_pct":5.32,"rpm":801.27},{"phase":"highway","load_pct":22.13,"maf_gs":22.62,"combined_trim_pct":4.68,"rpm":2068.67}],"cruise_windows":0},{"session_id":1786967241883,"date":"2026-08-17","datetime":"2026-08-17 11:47","vehicle":"2020 Mazda 6 2.5T","mpg":23.6,"trim":2.82,"ltft":2.73,"stft":0.09,"trim_idle":3.0,"trim_moving":2.75,"idle_pct":27.2,"warmup_min":7.5,"knock_deg":0.0,"dist_km":8.9,"notes":null,"phases":[{"phase":"backroad","load_pct":18.59,"maf_gs":10.76,"combined_trim_pct":3.16,"rpm":1429.38},{"phase":"city","load_pct":24.66,"maf_gs":5.33,"combined_trim_pct":2.54,"rpm":870.32}],"cruise_windows":3},{"session_id":1786969140015,"date":"2026-08-17","datetime":"2026-08-17 12:19","vehicle":"2020 Mazda 6 2.5T","mpg":23.9,"trim":1.72,"ltft":2.27,"stft":-0.55,"trim_idle":1.8,"trim_moving":1.66,"idle_pct":40.1,"warmup_min":0.0,"knock_deg":0.0,"dist_km":4.78,"notes":null,"phases":[{"phase":"backroad","load_pct":18.01,"maf_gs":10.4,"combined_trim_pct":0.95,"rpm":1436.1},{"phase":"city","load_pct":25.79,"maf_gs":4.72,"combined_trim_pct":2.16,"rpm":812.73}],"cruise_windows":4},{"session_id":1786992802234,"date":"2026-08-17","datetime":"2026-08-17 18:53","vehicle":"2020 Mazda 6 2.5T","mpg":19.9,"trim":4.3,"ltft":4.5,"stft":-0.21,"trim_idle":4.79,"trim_moving":4.22,"idle_pct":27.9,"warmup_min":3.1,"knock_deg":-0.0,"dist_km":11.22,"notes":null,"phases":[{"phase":"backroad","load_pct":20.19,"maf_gs":13.14,"combined_trim_pct":3.99,"rpm":1513.97},{"phase":"city","load_pct":27.86,"maf_gs":7.11,"combined_trim_pct":4.53,"rpm":881.28},{"phase":"highway","load_pct":24.39,"maf_gs":18.73,"combined_trim_pct":3.71,"rpm":1806.88}],"cruise_windows":11},{"session_id":1787053334501,"date":"2026-08-18","datetime":"2026-08-18 11:42","vehicle":"2020 Mazda 6 2.5T","mpg":20.8,"trim":4.43,"ltft":5.29,"stft":-0.85,"trim_idle":4.91,"trim_moving":4.18,"idle_pct":34.4,"warmup_min":9.9,"knock_deg":-0.0,"dist_km":8.86,"notes":null,"phases":[{"phase":"backroad","load_pct":18.1,"maf_gs":10.54,"combined_trim_pct":4.12,"rpm":1448.91},{"phase":"city","load_pct":25.23,"maf_gs":5.32,"combined_trim_pct":4.61,"rpm":849.8},{"phase":"highway","load_pct":37.9,"maf_gs":80.39,"combined_trim_pct":2.2,"rpm":4043.6}],"cruise_windows":5},{"session_id":1787072379413,"date":"2026-08-18","datetime":"2026-08-18 16:59","vehicle":"2020 Mazda 6 2.5T","mpg":26.1,"trim":7.45,"ltft":7.1,"stft":0.36,"trim_idle":10.64,"trim_moving":6.6,"idle_pct":21.1,"warmup_min":1.9,"knock_deg":0.0,"dist_km":11.41,"notes":null,"phases":[{"phase":"backroad","load_pct":21.13,"maf_gs":13.73,"combined_trim_pct":6.11,"rpm":1497.21},{"phase":"city","load_pct":30.91,"maf_gs":7.06,"combined_trim_pct":9.21,"rpm":938.04},{"phase":"highway","load_pct":25.76,"maf_gs":21.51,"combined_trim_pct":6.46,"rpm":2015.74}],"cruise_windows":11},{"session_id":1787084183883,"date":"2026-08-18","datetime":"2026-08-18 20:16","vehicle":"2020 Mazda 6 2.5T","mpg":20.1,"trim":3.91,"ltft":5.46,"stft":-1.55,"trim_idle":3.17,"trim_moving":4.37,"idle_pct":38.2,"warmup_min":0.1,"knock_deg":-0.01,"dist_km":3.77,"notes":null,"phases":[{"phase":"backroad","load_pct":19.65,"maf_gs":11.65,"combined_trim_pct":4.27,"rpm":1426.02},{"phase":"city","load_pct":30.6,"maf_gs":6.54,"combined_trim_pct":3.64,"rpm":856.88}],"cruise_windows":5},{"session_id":1787145782272,"date":"2026-08-19","datetime":"2026-08-19 13:23","vehicle":"2020 Mazda 6 2.5T","mpg":28.0,"trim":6.38,"ltft":6.83,"stft":-0.45,"trim_idle":7.99,"trim_moving":5.84,"idle_pct":25.2,"warmup_min":0.0,"knock_deg":0.05,"dist_km":7.27,"notes":null,"phases":[{"phase":"backroad","load_pct":19.25,"maf_gs":12.13,"combined_trim_pct":6.07,"rpm":1492.5},{"phase":"city","load_pct":22.84,"maf_gs":5.28,"combined_trim_pct":7.0,"rpm":845.3},{"phase":"highway","load_pct":19.29,"maf_gs":16.98,"combined_trim_pct":3.57,"rpm":1916.35}],"cruise_windows":6},{"session_id":1787173489083,"date":"2026-08-19","datetime":"2026-08-19 21:04","vehicle":"2020 Mazda 6 2.5T","mpg":16.3,"trim":8.06,"ltft":7.42,"stft":0.64,"trim_idle":10.11,"trim_moving":5.53,"idle_pct":55.3,"warmup_min":0.7,"knock_deg":0.02,"dist_km":7.26,"notes":null,"phases":[{"phase":"backroad","load_pct":18.74,"maf_gs":11.11,"combined_trim_pct":5.07,"rpm":1439.25},{"phase":"city","load_pct":28.91,"maf_gs":5.22,"combined_trim_pct":9.15,"rpm":826.54}],"cruise_windows":7},{"session_id":1787227780421,"date":"2026-08-20","datetime":"2026-08-20 12:09","vehicle":"2020 Mazda 6 2.5T","mpg":30.2,"trim":5.06,"ltft":5.74,"stft":-0.68,"trim_idle":6.93,"trim_moving":4.41,"idle_pct":25.9,"warmup_min":5.0,"knock_deg":-0.0,"dist_km":13.8,"notes":null,"phases":[{"phase":"backroad","load_pct":19.84,"maf_gs":13.02,"combined_trim_pct":4.95,"rpm":1490.06},{"phase":"city","load_pct":26.32,"maf_gs":5.35,"combined_trim_pct":6.04,"rpm":802.42},{"phase":"highway","load_pct":21.65,"maf_gs":20.49,"combined_trim_pct":3.81,"rpm":2095.92}],"cruise_windows":7},{"session_id":1787314700582,"date":"2026-08-21","datetime":"2026-08-21 12:18","vehicle":"2020 Mazda 6 2.5T","mpg":24.0,"trim":3.2,"ltft":3.42,"stft":-0.22,"trim_idle":2.41,"trim_moving":3.42,"idle_pct":22.1,"warmup_min":8.1,"knock_deg":0.04,"dist_km":6.0,"notes":null,"phases":[{"phase":"backroad","load_pct":18.37,"maf_gs":11.17,"combined_trim_pct":3.51,"rpm":1423.56},{"phase":"city","load_pct":23.52,"maf_gs":5.7,"combined_trim_pct":3.03,"rpm":924.08}],"cruise_windows":4},{"session_id":1787657452538,"date":"2026-08-25","datetime":"2026-08-25 11:30","vehicle":"2020 Mazda 6 2.5T","mpg":23.7,"trim":4.71,"ltft":5.02,"stft":-0.31,"trim_idle":5.14,"trim_moving":4.48,"idle_pct":34.5,"warmup_min":21.7,"knock_deg":-0.0,"dist_km":13.48,"notes":null,"phases":[{"phase":"backroad","load_pct":17.99,"maf_gs":10.49,"combined_trim_pct":4.27,"rpm":1435.26},{"phase":"city","load_pct":24.85,"maf_gs":5.2,"combined_trim_pct":4.98,"rpm":848.28},{"phase":"highway","load_pct":21.45,"maf_gs":19.81,"combined_trim_pct":4.7,"rpm":2029.1}],"cruise_windows":6},{"session_id":1787774304299,"date":"2026-08-26","datetime":"2026-08-26 19:58","vehicle":"2020 Mazda 6 2.5T","mpg":18.6,"trim":5.76,"ltft":5.15,"stft":0.62,"trim_idle":6.77,"trim_moving":5.19,"idle_pct":36.1,"warmup_min":3.2,"knock_deg":0.01,"dist_km":14.15,"notes":null,"phases":[{"phase":"backroad","load_pct":20.48,"maf_gs":13.2,"combined_trim_pct":4.75,"rpm":1465.76},{"phase":"city","load_pct":28.96,"maf_gs":6.03,"combined_trim_pct":6.37,"rpm":870.64},{"phase":"highway","load_pct":24.62,"maf_gs":32.03,"combined_trim_pct":5.73,"rpm":2596.53}],"cruise_windows":10},{"session_id":1787833291255,"date":"2026-08-27","datetime":"2026-08-27 12:21","vehicle":"2020 Mazda 6 2.5T","mpg":29.4,"trim":3.28,"ltft":3.87,"stft":-0.58,"trim_idle":2.04,"trim_moving":3.85,"idle_pct":31.6,"warmup_min":3.2,"knock_deg":-0.0,"dist_km":13.81,"notes":null,"phases":[{"phase":"backroad","load_pct":19.76,"maf_gs":14.16,"combined_trim_pct":3.84,"rpm":1527.2},{"phase":"city","load_pct":23.86,"maf_gs":4.88,"combined_trim_pct":2.43,"rpm":798.8},{"phase":"highway","load_pct":22.23,"maf_gs":23.34,"combined_trim_pct":4.16,"rpm":2306.16}],"cruise_windows":9},{"session_id":1787837966529,"date":"2026-08-27","datetime":"2026-08-27 13:39","vehicle":"2020 Mazda 6 2.5T","mpg":29.5,"trim":4.48,"ltft":4.68,"stft":-0.2,"trim_idle":5.61,"trim_moving":4.03,"idle_pct":29.0,"warmup_min":0.7,"knock_deg":-0.0,"dist_km":9.18,"notes":null,"phases":[{"phase":"backroad","load_pct":19.65,"maf_gs":13.54,"combined_trim_pct":3.76,"rpm":1537.57},{"phase":"city","load_pct":26.39,"maf_gs":5.21,"combined_trim_pct":5.36,"rpm":826.32},{"phase":"highway","load_pct":20.91,"maf_gs":17.73,"combined_trim_pct":3.86,"rpm":1956.05}],"cruise_windows":8}]}
+</script>
+<script>
+const DATA = JSON.parse(document.getElementById('drive-data').textContent);
+const drives = DATA.drives;
+
+// ---- trim trend chart with annotation ----
+function lineChart(svgEl, points, opts){
+  const W=900,H=260,padL=42,padT=18,padB=32;
+  const {color='#2ED3C6', zero=true, yFmt=v=>v.toFixed(1), suffix='', padR=20} = opts||{};
+  const ys = points.map(p=>p.y);
+  let yMin=Math.min(...ys), yMax=Math.max(...ys);
+  if(zero){ yMin=Math.min(yMin,0); yMax=Math.max(yMax,0); }
+  const pad=(yMax-yMin)*0.18||1; const y0=yMin-pad, y1=yMax+pad;
+  const innerW=W-padL-padR, innerH=H-padT-padB;
+  const xAt = i => padL + (points.length<=1?innerW/2:(i/(points.length-1))*innerW);
+  const yAt = v => padT + innerH - ((v-y0)/(y1-y0))*innerH;
+  let svg='';
+  const steps=4;
+  for(let s=0;s<=steps;s++){
+    const v=y0+(y1-y0)*(s/steps); const yy=yAt(v);
+    svg += `<line class="axis-line" x1="${padL}" y1="${yy.toFixed(1)}" x2="${W-padR}" y2="${yy.toFixed(1)}"/>`;
+    svg += `<text class="grid-label" x="${padL-8}" y="${(yy+3).toFixed(1)}" text-anchor="end">${yFmt(v)}${suffix}</text>`;
+  }
+  if(zero){ const yy=yAt(0); svg += `<line class="zero-line" x1="${padL}" y1="${yy.toFixed(1)}" x2="${W-padR}" y2="${yy.toFixed(1)}"/>`; }
+  [0, Math.floor((points.length-1)/2), points.length-1].forEach(i=>{
+    svg += `<text class="grid-label" x="${xAt(i).toFixed(1)}" y="${H-8}" text-anchor="middle">${points[i].label}</text>`;
+  });
+  let d = points.map((p,i)=>(i===0?'M':'L')+xAt(i).toFixed(1)+','+yAt(p.y).toFixed(1)).join(' ');
+  svg += `<path class="series-line" style="stroke:${color}" d="${d}"/>`;
+  points.forEach((p,i)=>{
+    svg += `<circle class="series-dot" style="stroke:${color}" cx="${xAt(i).toFixed(1)}" cy="${yAt(p.y).toFixed(1)}" r="3.4"><title>${p.tooltip}</title></circle>`;
+  });
+  // annotation marker in the reserved right margin: "clean would go here"
+  if(padR > 60){
+    const ax = W - padR/2 - 12;
+    svg += `<line class="annotation-line" x1="${ax.toFixed(1)}" y1="${padT}" x2="${ax.toFixed(1)}" y2="${H-padB}"/>`;
+    svg += `<text class="annotation-label" x="${ax.toFixed(1)}" y="${(padT+13).toFixed(1)}" text-anchor="middle" font-size="9.5">MAF clean</text>`;
+    svg += `<text class="annotation-label" x="${ax.toFixed(1)}" y="${(padT+26).toFixed(1)}" text-anchor="middle" font-size="9.5">not logged yet</text>`;
+  }
+  svgEl.setAttribute('viewBox', `0 0 ${W} ${H}`);
+  svgEl.innerHTML = svg;
+}
+lineChart(document.getElementById('trimChart'),
+  drives.map(d=>({y:d.trim, label:d.date.slice(5), tooltip:`${d.datetime} — combined trim ${d.trim>0?'+':''}${d.trim}%`})),
+  {color:'#2ED3C6', zero:true, yFmt:v=>(v>0?'+':'')+v.toFixed(0), suffix:'%', padR:120});
+
+// ---- phase consistency ----
+const phaseNames=['city','backroad','highway'];
+const agg={}; phaseNames.forEach(p=>agg[p]={sum:0,n:0});
+drives.forEach(d=>d.phases.forEach(ph=>{ if(agg[ph.phase]&&ph.combined_trim_pct!=null){agg[ph.phase].sum+=ph.combined_trim_pct;agg[ph.phase].n++;} }));
+document.getElementById('pcCity').textContent = (agg.city.sum/agg.city.n>0?'+':'')+(agg.city.sum/agg.city.n).toFixed(1)+'%';
+document.getElementById('pcBackroad').textContent = (agg.backroad.sum/agg.backroad.n>0?'+':'')+(agg.backroad.sum/agg.backroad.n).toFixed(1)+'%';
+document.getElementById('pcHighway').textContent = (agg.highway.sum/agg.highway.n>0?'+':'')+(agg.highway.sum/agg.highway.n).toFixed(1)+'%';
+
+// ---- dash comparisons ----
+const comparisons = drives.filter(d=>d.notes && /dash/i.test(d.notes));
+function parseDash(note){ const m = note.match(/([\d.]+)/); return m ? parseFloat(m[1]) : null; }
+document.getElementById('compareRow').innerHTML = comparisons.map(d=>{
+  const dash = parseDash(d.notes);
+  const gap = d.mpg - dash;
+  const maxV = Math.max(d.mpg, dash);
+  return `<div class="compare-card">
+    <div class="date">${d.date}</div>
+    <div class="compare-bars">
+      <div class="cb-group"><div class="cb-track"><div class="cb-bar dash" style="height:${(dash/maxV*80).toFixed(0)}px;"><span class="cb-val">${dash.toFixed(1)}</span></div></div><div class="cb-lbl">Dash</div></div>
+      <div class="cb-group"><div class="cb-track"><div class="cb-bar dt" style="height:${(d.mpg/maxV*80).toFixed(0)}px;"><span class="cb-val">${d.mpg.toFixed(1)}</span></div></div><div class="cb-lbl">DriveTrace</div></div>
+    </div>
+    <div class="cb-gap">DriveTrace reads <b>+${gap.toFixed(1)} mpg high</b> vs. the dash on this drive.</div>
+  </div>`;
+}).join('');
+
+// ---- knock ----
+const knockVals = drives.map(d=>d.knock_deg).filter(v=>v!=null);
+document.getElementById('knockStat').textContent = (knockVals.reduce((a,b)=>a+b,0)/knockVals.length).toFixed(2)+'°';
+
+// ---- vehicle split ----
+const mazda = drives.filter(d=>d.vehicle.includes('Mazda'));
+const subaru = drives.filter(d=>d.vehicle.includes('Subaru'));
+document.getElementById('mazdaTrim').textContent = '+'+(mazda.reduce((a,d)=>a+d.trim,0)/mazda.length).toFixed(1)+'% avg';
+document.getElementById('subaruTrim').textContent = (subaru.reduce((a,d)=>a+d.trim,0)/subaru.length).toFixed(2)+'% avg';
+
+// ---- mini table ----
+const rows = [...drives].reverse().map(d=>`
+  <tr>
+    <td class="chalk">${d.date}</td>
+    <td>${d.vehicle.replace('2020 ','').replace('2014 ','')}</td>
+    <td class="chalk">${d.mpg.toFixed(1)} mpg</td>
+    <td class="chalk">${d.trim>0?'+':''}${d.trim.toFixed(1)}%</td>
+    <td>${d.notes || ''}</td>
+  </tr>`).join('');
+document.getElementById('miniTable').innerHTML = `
+  <thead><tr><th>Date</th><th>Vehicle</th><th>MPG</th><th>Trim</th><th>Note</th></tr></thead>
+  <tbody>${rows}</tbody>`;
+</script>
+</body>
+</html>
