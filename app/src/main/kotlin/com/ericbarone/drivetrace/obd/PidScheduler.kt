@@ -131,17 +131,22 @@ class PidScheduler(
     private val elmSession: ElmSession,
     private val startElapsedNs: Long,
     /** Which vehicle's PID list to poll; see PidCatalog.kt for why this is per-vehicle rather
-     * than a single hardcoded catalog. */
+     * than a single hardcoded catalog. Also the source of the one-time reads, always, whichever
+     * catalog [catalogSelector] is currently polling. */
     private val catalog: PidCatalog,
     private val onMeasurement: suspend (MeasurementSample) -> Unit,
     private val onEvent: suspend (SchedulerEvent) -> Unit,
     /** Shared across reconnects within a session so sequence numbers stay monotonic. */
     private val sequence: AtomicLong = AtomicLong(0),
+    /** Which catalog to poll right now, asked once per loop pass. Lets the service swap between a
+     * car's normal and performance catalogs mid-session without tearing down the connection. */
+    private val catalogSelector: () -> PidCatalog = { catalog },
 ) {
 
-    private val tierA = catalog.tierA().map { RotatingCommand(it) }.toMutableList()
-    private val tierB = catalog.tierB().map { RotatingCommand(it) }.toMutableList()
-    private val tierC = catalog.tierC().map { RotatingCommand(it) }.toMutableList()
+    private var activeCatalog: PidCatalog = catalogSelector()
+    private var tierA = activeCatalog.tierA().map { RotatingCommand(it) }.toMutableList()
+    private var tierB = activeCatalog.tierB().map { RotatingCommand(it) }.toMutableList()
+    private var tierC = activeCatalog.tierC().map { RotatingCommand(it) }.toMutableList()
 
     private var tierAIndex = 0
     private var tierBIndex = 0
@@ -185,6 +190,9 @@ class PidScheduler(
     /** Runs continuously until [shouldContinue] returns false. Suspends naturally on each IO call. */
     suspend fun run(shouldContinue: () -> Boolean) {
         while (shouldContinue()) {
+            val wanted = catalogSelector()
+            if (wanted !== activeCatalog) switchCatalog(wanted)
+
             pollNext(tierA) { tierAIndex }?.let { tierAIndex = it }
 
             val now = elapsedNs()
@@ -197,6 +205,33 @@ class PidScheduler(
                 lastTierCRunNs = now
             }
         }
+    }
+
+    /**
+     * Rebuilds the tier lists between two polls, never mid-request. Tier B and C timers are reset
+     * so the new catalog's slow PIDs (barometric pressure especially) get read right away instead
+     * of waiting out the interval the previous catalog had been running.
+     */
+    private suspend fun switchCatalog(next: PidCatalog) {
+        val from = activeCatalog::class.simpleName
+        activeCatalog = next
+        tierA = next.tierA().map { RotatingCommand(it) }.toMutableList()
+        tierB = next.tierB().map { RotatingCommand(it) }.toMutableList()
+        tierC = next.tierC().map { RotatingCommand(it) }.toMutableList()
+        tierAIndex = 0
+        tierBIndex = 0
+        tierCIndex = 0
+        lastTierBRunNs = 0L
+        lastTierCRunNs = 0L
+        onEvent(
+            SchedulerEvent(
+                elapsedNs = elapsedNs(),
+                eventType = "CATALOG_SWITCH",
+                severity = "INFO",
+                message = "polling ${next::class.simpleName} (was $from): " +
+                    "${tierA.size} Tier A, ${tierB.size} Tier B, ${tierC.size} Tier C",
+            ),
+        )
     }
 
     private suspend fun pollNext(tier: MutableList<RotatingCommand>, currentIndex: () -> Int): Int? {

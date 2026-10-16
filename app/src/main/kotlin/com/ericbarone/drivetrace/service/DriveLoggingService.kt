@@ -58,15 +58,33 @@ class DriveLoggingService : Service() {
     companion object {
         const val ACTION_START = "com.ericbarone.drivetrace.action.START"
         const val ACTION_STOP = "com.ericbarone.drivetrace.action.STOP"
+        const val ACTION_SET_PERFORMANCE_MODE = "com.ericbarone.drivetrace.action.SET_PERFORMANCE_MODE"
         const val EXTRA_DEVICE_ADDRESS = "device_address"
         const val EXTRA_VEHICLE_PROFILE = "vehicle_profile"
         const val EXTRA_NOTES = "notes"
+        const val EXTRA_START_PERFORMANCE = "start_performance"
+        const val EXTRA_PERFORMANCE_MODE = "performance_mode"
 
-        fun startIntent(context: Context, deviceAddress: String, vehicleProfile: VehicleProfile): Intent =
+        /** [performanceMode] starts the session on the car's performance catalog; ignored for a
+         * car with none. Without it every session starts in normal mode. */
+        fun startIntent(
+            context: Context,
+            deviceAddress: String,
+            vehicleProfile: VehicleProfile,
+            performanceMode: Boolean = false,
+        ): Intent =
             Intent(context, DriveLoggingService::class.java).apply {
                 action = ACTION_START
                 putExtra(EXTRA_DEVICE_ADDRESS, deviceAddress)
                 putExtra(EXTRA_VEHICLE_PROFILE, vehicleProfile.name)
+                putExtra(EXTRA_START_PERFORMANCE, performanceMode)
+            }
+
+        /** [mode] is "on", "off" or "toggle". */
+        fun performanceModeIntent(context: Context, mode: String): Intent =
+            Intent(context, DriveLoggingService::class.java).apply {
+                action = ACTION_SET_PERFORMANCE_MODE
+                putExtra(EXTRA_PERFORMANCE_MODE, mode)
             }
 
         /** [notes] is the optional free-text note typed into the Stop dialog. Null from the
@@ -84,6 +102,13 @@ class DriveLoggingService : Service() {
     private var sessionJob: Job? = null
     private var wakeLock: PowerManager.WakeLock? = null
     private var currentSessionId: Long? = null
+    private var sessionStartElapsedNs: Long = 0L
+
+    // Both are set on the main thread in onStartCommand before the session coroutine launches, so a
+    // mode command arriving right behind a start finds them. @Volatile because the scheduler's
+    // catalog selector reads performanceMode from the session coroutine.
+    @Volatile private var activeProfile: VehicleProfile? = null
+    @Volatile private var performanceMode = false
     // Best-effort live stream (see server/), never the authoritative path; Room/CSV are.
     private val streamingClient = StreamingClient(BuildConfig.INGEST_BASE_URL, BuildConfig.INGEST_TOKEN)
 
@@ -140,12 +165,76 @@ class DriveLoggingService : Service() {
                         )
                         return START_NOT_STICKY
                     }
+                    activeProfile = vehicleProfile
+                    performanceMode = vehicleProfile.performanceCatalog != null &&
+                        intent.getBooleanExtra(EXTRA_START_PERFORMANCE, false)
                     sessionJob = serviceScope.launch { runSession(deviceAddress, vehicleProfile) }
                 }
             }
             ACTION_STOP -> stopSession(intent.getStringExtra(EXTRA_NOTES))
+            ACTION_SET_PERFORMANCE_MODE -> setPerformanceMode(intent.getStringExtra(EXTRA_PERFORMANCE_MODE))
         }
         return START_NOT_STICKY
+    }
+
+    /**
+     * Flips the live session between the car's normal and performance catalogs. The scheduler
+     * notices on its next loop pass (its catalog selector), so the connection, session row and
+     * sequence numbers all carry straight through. Every outcome is logged as a session event,
+     * refusals included, because a voice command that silently did nothing is the failure a
+     * driver cannot see.
+     */
+    private fun setPerformanceMode(request: String?) {
+        val profile = activeProfile
+        if (profile == null || sessionJob == null) {
+            android.util.Log.i("DriveLoggingService", "performance mode \"$request\" ignored: no session is running")
+            return
+        }
+        if (profile.performanceCatalog == null) {
+            logSessionEvent(
+                "PERFORMANCE_MODE", "INFO",
+                "\"$request\" ignored: ${profile.displayName} has no performance catalog",
+            )
+            return
+        }
+        val target = when (request?.trim()?.lowercase()) {
+            "on", "true", "1", "performance" -> true
+            "off", "false", "0", "normal" -> false
+            "toggle" -> !performanceMode
+            else -> {
+                logSessionEvent("PERFORMANCE_MODE", "WARNING", "ignored unknown mode \"$request\"")
+                return
+            }
+        }
+        if (target == performanceMode) {
+            logSessionEvent("PERFORMANCE_MODE", "INFO", "already ${if (target) "on" else "off"}")
+            return
+        }
+        performanceMode = target
+        LoggingStatus.state.value = LoggingStatus.state.value.copy(performanceMode = target)
+        logSessionEvent("PERFORMANCE_MODE", "INFO", "performance mode ${if (target) "on" else "off"}")
+        updateNotification()
+    }
+
+    /** Event on the running session for callers outside runSession; dropped quietly if the
+     * session row does not exist yet. */
+    private fun logSessionEvent(eventType: String, severity: String, message: String) {
+        val sessionId = currentSessionId ?: return
+        val elapsedNs = System.nanoTime() - sessionStartElapsedNs
+        val wallTimeUtc = System.currentTimeMillis()
+        serviceScope.launch {
+            AppDatabase.getInstance(applicationContext).sessionDao().insertEvent(
+                EventEntity(
+                    sessionId = sessionId,
+                    elapsedNs = elapsedNs,
+                    wallTimeUtc = wallTimeUtc,
+                    eventType = eventType,
+                    severity = severity,
+                    message = message,
+                ),
+            )
+            streamingClient.postEvent(sessionId, elapsedNs, wallTimeUtc, eventType, severity, message)
+        }
     }
 
     private suspend fun runSession(deviceAddress: String, vehicleProfile: VehicleProfile) {
@@ -168,6 +257,7 @@ class DriveLoggingService : Service() {
         val sessionId = session.sessionId
         currentSessionId = sessionId
         val startElapsedNs = session.startElapsedNs
+        sessionStartElapsedNs = startElapsedNs
         val sharedSequence = AtomicLong(0)
         // Persist across reconnects within the same session, not reset per attempt.
         var rpmSamplesSeen = 0
@@ -202,7 +292,12 @@ class DriveLoggingService : Service() {
             connectionState = ConnectionState.CONNECTING,
             sessionId = sessionId,
             startedAtMs = System.currentTimeMillis(),
+            performanceMode = performanceMode,
+            performanceModeAvailable = vehicleProfile.performanceCatalog != null,
         )
+        if (performanceMode) {
+            recordEvent(0L, "PERFORMANCE_MODE", "INFO", "performance mode on (session start)")
+        }
 
         // GPS runs for the whole session regardless of Bluetooth reconnects - but only if the
         // Settings toggle has it on (see LocationSettings; off by default). When off, no
@@ -356,6 +451,13 @@ class DriveLoggingService : Service() {
                                 recordEvent(event.elapsedNs, event.eventType, event.severity, event.message)
                             },
                             sequence = sharedSequence,
+                            catalogSelector = {
+                                if (performanceMode) {
+                                    vehicleProfile.performanceCatalog ?: vehicleProfile.catalog
+                                } else {
+                                    vehicleProfile.catalog
+                                }
+                            },
                         )
 
                         val oneTimeResults = scheduler.runOneTimeReads()
@@ -404,6 +506,7 @@ class DriveLoggingService : Service() {
 
     private fun stopSession(notes: String? = null) {
         val sessionId = currentSessionId
+        activeProfile = null
         serviceScope.launch {
             sessionJob?.cancel()
             sessionJob = null
@@ -545,7 +648,8 @@ class DriveLoggingService : Service() {
         } else {
             ""
         }
-        val text = "Samples: ${state.measurementCount} | GPS: ${state.locationCount} | ${state.connectionState}$warning"
+        val mode = if (state.performanceMode) " | PERF" else ""
+        val text = "Samples: ${state.measurementCount} | GPS: ${state.locationCount} | ${state.connectionState}$mode$warning"
         val manager = getSystemService(NotificationManager::class.java)
         manager.notify(NOTIFICATION_ID, buildNotification(text))
     }

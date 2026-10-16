@@ -9,7 +9,8 @@ import com.github.eltonvs.obd.command.temperature.AirIntakeTemperatureCommand
 import com.github.eltonvs.obd.command.temperature.AmbientAirTemperatureCommand
 
 /**
- * Dedicated high-frequency profile for the 2026-10 intercooler/heat-soak investigation, not a
+ * High-frequency catalog for the 2026-10 intercooler/heat-soak investigation, selected as the
+ * Mazda's performance logging mode (switchable live, see VehicleProfile.performanceCatalog), not a
  * replacement for MazdaPidCatalog's normal drive-logging list. The whole point is bandwidth: the
  * ELM327 link only has so many request/response round-trips per second, and MazdaPidCatalog's
  * normal 9-command Tier A already divides that budget nine ways. Repeated hard-acceleration

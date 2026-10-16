@@ -41,6 +41,23 @@ macro.
 receiver does not receive implicit broadcasts, so an intent carrying only the
 action string is delivered to nothing at all and fails silently.
 
+### Performance mode
+
+Performance logging is a mode of the running session, not a separate car or
+profile. It swaps the polled PID set between the car's normal catalog and its
+smaller, faster performance catalog (currently the Mazda only; other cars have
+none and ignore the commands). The connection and session carry straight
+through a switch, and every change is recorded as a `PERFORMANCE_MODE` session
+event plus a `CATALOG_SWITCH` event from the scheduler.
+
+| Command | Extras | Effect |
+|---|---|---|
+| `performance` | `mode` = `on`, `off` or `toggle` | Switch the live session. Ignored (logged) when no session is running. |
+| `start` | optional `mode` = `performance` | Start the session already in performance mode. Without it a session always starts in normal mode. |
+
+The same switch is a toggle on the Logging screen. `command` and `mode` are both
+plain String extras, like `token`.
+
 ## One-time setup, in order
 
 ### 1. Start a session from inside the app, once
@@ -202,7 +219,9 @@ nothing else in the app uses that tag.
 | `start accepted, dispatched to DriveLoggingService.` | Working as intended. |
 | `Rejected "start": no 'token' extra.` | The macro is missing the second extra. |
 | `Rejected "start": 'token' does not match...` | Wrong or stale token. Re-copy it from the Settings screen. Neither the sent nor the expected token is ever logged. |
-| `Authenticated but ignored: unknown command "..."` | The `command` extra is something other than `start` or `stop`. |
+| `Authenticated but ignored: unknown command "..."` | The `command` extra is something other than `start`, `stop` or `performance`. |
+| `performance ignored: 'mode' must be on, off or toggle` | The `mode` extra is missing or misspelled. |
+| `performance "on" ignored: no session is running.` | Nothing is logging yet, so there is nothing to switch. Use `start` with `mode=performance` instead. |
 | `start ignored: no adapter has ever been selected...` | Step 1 above was skipped. |
 | `start ignored: a session is already running` | A drive is already being logged; the second start is a no-op, not an error. |
 | `stop ignored: no session is running.` | The stop macro fired when nothing was logging, e.g. the car disconnected on a day the drive was never started. Deliberate: nothing is sent to the service in this case. |

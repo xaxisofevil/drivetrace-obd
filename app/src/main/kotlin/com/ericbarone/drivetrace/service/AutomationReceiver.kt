@@ -53,6 +53,8 @@ class AutomationReceiver : BroadcastReceiver() {
         const val EXTRA_TOKEN = "token"
         const val COMMAND_START = "start"
         const val COMMAND_STOP = "stop"
+        const val COMMAND_PERFORMANCE = "performance"
+        const val EXTRA_MODE = "mode"
 
         /**
          * The device's automation token, generated on first read and stable afterwards. Lives in
@@ -101,11 +103,30 @@ class AutomationReceiver : BroadcastReceiver() {
         }
 
         when (command) {
-            COMMAND_START -> startLogging(context)
+            COMMAND_START -> startLogging(context, intent.getStringExtra(EXTRA_MODE))
             COMMAND_STOP -> stopLogging(context)
-            null -> Log.w(TAG, "Authenticated but ignored: no '$EXTRA_COMMAND' extra. Expected \"$COMMAND_START\" or \"$COMMAND_STOP\".")
-            else -> Log.w(TAG, "Authenticated but ignored: unknown command \"$command\". Expected \"$COMMAND_START\" or \"$COMMAND_STOP\".")
+            COMMAND_PERFORMANCE -> setPerformanceMode(context, intent.getStringExtra(EXTRA_MODE))
+            null -> Log.w(TAG, "Authenticated but ignored: no '$EXTRA_COMMAND' extra. Expected \"$COMMAND_START\", \"$COMMAND_STOP\" or \"$COMMAND_PERFORMANCE\".")
+            else -> Log.w(TAG, "Authenticated but ignored: unknown command \"$command\". Expected \"$COMMAND_START\", \"$COMMAND_STOP\" or \"$COMMAND_PERFORMANCE\".")
         }
+    }
+
+    /**
+     * Live performance-logging toggle, `mode` = on | off | toggle. Guarded on a live session for the
+     * same foreground-service reason as [stopLogging]. A mode sent before the session is live is
+     * dropped; a start that wants performance sets it with its own `mode` extra instead.
+     */
+    private fun setPerformanceMode(context: Context, mode: String?) {
+        val requested = mode?.trim()?.lowercase()
+        if (requested !in setOf("on", "off", "toggle")) {
+            Log.w(TAG, "performance ignored: '$EXTRA_MODE' must be on, off or toggle (got \"$mode\").")
+            return
+        }
+        if (!sessionIsLive()) {
+            Log.i(TAG, "performance \"$requested\" ignored: no session is running.")
+            return
+        }
+        dispatch(context, DriveLoggingService.performanceModeIntent(context, requested!!), "performance $requested")
     }
 
     /**
@@ -115,7 +136,7 @@ class AutomationReceiver : BroadcastReceiver() {
      * session in-app has nothing to start with. That fails loudly in logcat rather than passing a
      * null address down and letting `onStartCommand` drop it silently.
      */
-    private fun startLogging(context: Context) {
+    private fun startLogging(context: Context, mode: String?) {
         if (sessionIsLive()) {
             Log.i(TAG, "start ignored: a session is already running (${LoggingStatus.state.value.connectionState}).")
             return
@@ -152,7 +173,8 @@ class AutomationReceiver : BroadcastReceiver() {
             )
         }
 
-        dispatch(context, DriveLoggingService.startIntent(context, address, vehicleProfile), "start")
+        val performance = mode?.trim()?.lowercase() == "performance"
+        dispatch(context, DriveLoggingService.startIntent(context, address, vehicleProfile, performance), "start")
     }
 
     /**

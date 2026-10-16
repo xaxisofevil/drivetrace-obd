@@ -34,6 +34,11 @@ data class LoggingUiState(
     val reconnectCount: Int = 0,
     val statusMessage: String = "",
     val engineDetected: TriState = TriState.PENDING,
+    /** Whether the running session is polling the car's performance catalog instead of its
+     * normal one. Always false for a car with no performance catalog. */
+    val performanceMode: Boolean = false,
+    /** Whether the running session's car has a performance catalog to switch to at all. */
+    val performanceModeAvailable: Boolean = false,
     /**
      * The most recent sample from every PID that has answered this session, keyed on
      * `canonicalName` (the real strings, see docs/DATA_SCHEMA.md). This is what makes a live

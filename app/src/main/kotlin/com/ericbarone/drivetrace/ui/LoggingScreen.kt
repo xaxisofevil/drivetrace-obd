@@ -106,7 +106,12 @@ import java.io.File
  *    figures, then the pipeline's own state and the methodology caveats underneath.
  */
 @Composable
-fun LoggingScreen(status: LoggingUiState, onStop: (String) -> Unit, onNewSession: () -> Unit) {
+fun LoggingScreen(
+    status: LoggingUiState,
+    onStop: (String) -> Unit,
+    onNewSession: () -> Unit,
+    onSetPerformanceMode: (Boolean) -> Unit,
+) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     var showStopConfirm by remember { mutableStateOf(false) }
@@ -238,7 +243,7 @@ fun LoggingScreen(status: LoggingUiState, onStop: (String) -> Unit, onNewSession
                 // nothing new to say from the adapter during that stretch regardless of what
                 // LoggingUiState still holds from the last sample before Stop was tapped.
                 stopping -> StoppingBody(status.statusMessage)
-                else -> LiveBody(status, elapsedSeconds, lastSampleAgeSeconds, nowMs)
+                else -> LiveBody(status, elapsedSeconds, lastSampleAgeSeconds, nowMs, onSetPerformanceMode)
             }
             Spacer(Modifier.height(Space.sm))
         }
@@ -443,6 +448,7 @@ private fun ColumnScope.LiveBody(
     elapsedSeconds: Long,
     lastSampleAgeSeconds: Long?,
     nowMs: Long,
+    onSetPerformanceMode: (Boolean) -> Unit,
 ) {
     // Table order, not arrival order, so nothing reshuffles under a glance as slow PIDs answer.
     val gauges: List<Pair<PidDisplay, MeasurementSample>> =
@@ -498,6 +504,15 @@ private fun ColumnScope.LiveBody(
             title = "No real data from the vehicle",
             body = "A response arriving isn't proof the car's awake, this adapter can fabricate " +
                 "placeholder values instead of erroring. Check the ignition and adapter connection.",
+        )
+    }
+
+    if (status.performanceModeAvailable) {
+        ToggleRow(
+            checked = status.performanceMode,
+            onToggle = onSetPerformanceMode,
+            title = "Performance logging",
+            detail = "Fewer PIDs, sampled faster: boost, timing, knock, charge temps. Switches live.",
         )
     }
 

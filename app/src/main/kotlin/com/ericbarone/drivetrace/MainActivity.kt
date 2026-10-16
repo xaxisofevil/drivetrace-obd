@@ -66,6 +66,11 @@ class MainActivity : ComponentActivity() {
                         status = status,
                         onStop = { note -> startService(DriveLoggingService.stopIntent(this, note)) },
                         onNewSession = { LoggingStatus.state.value = LoggingUiState() },
+                        onSetPerformanceMode = { on ->
+                            startService(
+                                DriveLoggingService.performanceModeIntent(this, if (on) "on" else "off"),
+                            )
+                        },
                     )
                     // Ahead of the logbook branch, and `showHistory` deliberately stays true
                     // underneath, so Back off this screen lands on the list that opened it.
