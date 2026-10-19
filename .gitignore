@@ -20,3 +20,4 @@ server/*.duckdb.wal
 
 # Agent worktrees
 .claude/worktrees/
+probe_out/

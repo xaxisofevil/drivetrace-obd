@@ -64,3 +64,11 @@ Everything above is unit-tested or schema-validated, but nothing has talked
 to an actual ELM327 yet. The first real test is a parked session: pair the
 adapter, run with the engine on, and confirm RPM/speed/coolant/voltage all
 populate sensibly before trusting it on the road.
+
+## Diagnostic probe
+
+`python -m pc_logger.probe` is a read-only explorer for modules beyond the engine ECU:
+`discover` finds which CAN request IDs answer, `candidates` tries the known TPMS requests,
+and `sweep` walks a range of Mode 22 data identifiers on one module. Replies are logged
+verbatim to `probe_out/*.jsonl`. Only read services leave the tool (see `READ_ONLY_SERVICES`
+in `probe.py`). Run it parked with the ignition on and the phone disconnected from the adapter.
