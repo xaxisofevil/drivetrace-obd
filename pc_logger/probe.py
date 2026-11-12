@@ -56,8 +56,6 @@ TPMS_CANDIDATES = [
 # Standard UDS identification DIDs, useful for naming each module that answers.
 IDENT_DIDS = ["F187", "F188", "F18A", "F190", "F191", "F193", "F194", "F195"]
 
-_HEX_TOKEN = re.compile(r"\b[0-9A-F]{2}\b")
-
 
 class Probe:
     def __init__(self, transport: SerialTransport, out_path: Path):
@@ -152,16 +150,23 @@ def classify(raw: str, request_hex: str) -> dict:
         return {"status": "silent"}
     if "CAN ERROR" in upper or "BUS" in upper or "?" in upper:
         return {"status": "adapter_error"}
-    tokens = _HEX_TOKEN.findall(upper)
-    service = request_hex[:2].upper()
-    # Negative reply: 7F <service> <nrc>.
-    for i in range(len(tokens) - 2):
-        if tokens[i] == "7F" and tokens[i + 1] == service:
-            nrc = int(tokens[i + 2], 16)
-            return {"status": "negative", "nrc": f"{nrc:02X}", "detail": NRC_NAMES.get(nrc, "")}
-    positive_service = f"{int(service, 16) + 0x40:02X}"
-    if positive_service in tokens:
-        return {"status": "positive"}
+    service = int(request_hex[:2], 16)
+    # Spaces are off (ATS0), so each reply line is one run of hex: a 3-digit CAN id, then an
+    # ISO-TP frame. Only single frames and first frames carry the service byte.
+    for line in upper.split():
+        if not re.fullmatch(r"[0-9A-F]{5,}", line) or len(line) % 2 == 0:
+            continue
+        frame = bytes.fromhex(line[3:])
+        if frame[0] >> 4 == 0 and len(frame) >= 3:
+            data = frame[1:1 + (frame[0] & 0x0F)]
+        elif frame[0] >> 4 == 1 and len(frame) >= 4:
+            data = frame[2:]
+        else:
+            continue
+        if len(data) >= 3 and data[0] == 0x7F and data[1] == service:
+            return {"status": "negative", "nrc": f"{data[2]:02X}", "detail": NRC_NAMES.get(data[2], "")}
+        if data and data[0] == service + 0x40:
+            return {"status": "positive"}
     return {"status": "other"}
 
 

@@ -8,13 +8,21 @@ def test_classify_silent():
     assert classify("", "3E00")["status"] == "silent"
 
 
-def test_classify_positive_with_header():
-    r = classify("728 06 62 2A 05 20 21 22", "222A05")
-    assert r["status"] == "positive"
+def test_classify_positive_single_frame():
+    assert classify("72806622A05202122", "222A05")["status"] == "positive"
+
+
+def test_classify_positive_first_frame_among_several_modules():
+    raw = "7E8101B62F188505834 7E821432D3138384B32 7E9101B62F188505948"
+    assert classify(raw, "22F188")["status"] == "positive"
+
+
+def test_classify_tester_present_positive():
+    assert classify("SEARCHING... 7E9027E00 7E8027E00", "3E00")["status"] == "positive"
 
 
 def test_classify_negative_names_the_nrc():
-    r = classify("728 03 7F 22 31", "222A05")
+    r = classify("7E8037F2231", "22F187")
     assert r == {"status": "negative", "nrc": "31", "detail": "requestOutOfRange"}
 
 
